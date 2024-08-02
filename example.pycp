@@ -1,0 +1,13 @@
+import stdio;
+import stdlib;
+
+stdio.files.console.write("Hello World!\n");
+
+var file = stdio.files.open("output.txt", "w");
+file.write("你好世界\n");
+file.close();
+
+var input = stdio.files.console.readline();
+stdio.files.console.writeline("你输入了：" + input);
+
+stdlib.system("echo Hello");
