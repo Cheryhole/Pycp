@@ -1,3 +1,6 @@
 [submodule "3rdparty/xxHash"]
 	path = 3rdparty/xxHash
 	url = https://github.com/Cyan4973/xxHash.git
+[submodule "3rdparty/mpdecimal"]
+	path = 3rdparty/mpdecimal
+	url = https://github.com/Cheryhole/mpdecimal-clone.git
