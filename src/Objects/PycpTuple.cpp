@@ -2,6 +2,16 @@
 
 namespace Pycp{
 
+PycpTuple::PycpTuple(PycpList* list): PycpObject("Tuple"){
+	PycpSize_t size = list->length();
+	this->container = (PycpObject**)calloc(size, sizeof(PycpObject*));
+	for (PycpSize_t i = PycpSize_c(0); i < size; i++){
+		PycpObject* obj = list->get(i);
+		obj->incref();
+		this->container[i] = obj;
+	}
+}
+
 PycpTuple::PycpTuple(PycpSize_t size, ...): PycpObject("Tuple"){
 	this->container = (PycpObject**)calloc(size, sizeof(PycpObject*));
 	va_list items;
@@ -60,6 +70,43 @@ PycpExceptions PycpTuple::set(PycpSize_t index, PycpObject* obj){
 }
 
 
+int64_t PycpTuple::parse2int64(int index){
+	PycpObject* obj = this->container[index];
+	if (!PycpCheckType(PycpInteger*, obj)){
+		char* msg;
+		sprintf(msg, "Tuple item at index %d is not an integer (should be an integer).", index);
+		PycpTypeException(std::string(msg));
+		return 0;
+	}
+	return PycpCast(PycpInteger*, obj)->raw();
+}
+
+const char* PycpTuple::parse2string(int index){
+	PycpObject* obj = this->container[index];
+	if (!PycpCheckType(PycpString*, obj)){
+		char* msg;
+		sprintf(msg, "Tuple item at index %d is not a string (should be a string).", index);
+		PycpTypeException(std::string(msg));
+		return 0;
+	}
+	return PycpCast(PycpString*, obj)->raw();
+}
+
+long double PycpTuple::parse2longdouble(int index){
+	PycpObject* obj = this->container[index];
+	if (!PycpCheckType(PycpDecimal*, obj)){
+		char* msg;
+		sprintf(msg, "Tuple item at index %d is not a decimal (should be a decimal).", index);
+		PycpTypeException(std::string(msg));
+		return 0;
+	}
+	return PycpCast(PycpDecimal*, obj)->raw();
+}
+
+PycpObject* PycpTuple::parse2object(int index){
+	return this->container[index];
+}
+
 PycpExceptions PycpTuple::parse(const char* format, ...){
 	va_list items; // the pointers
 	int count = 0; // pointers count
@@ -87,11 +134,11 @@ PycpExceptions PycpTuple::parse(const char* format, ...){
 				break;
 			case 'd':
 				long double* dp = va_arg(items, long double*);
-				*dp = this->parse2decimal(i);
+				*dp = this->parse2longdouble(i);
 				break;
 			case 's':
 				char** cp = va_arg(items, char**);
-				*cp = this->parse2char(i);
+				*cp = strdup(this->parse2string(i));
 				break;
 			case 'o':
 				PycpObject** op =va_arg(items, PycpObject**);
@@ -141,7 +188,7 @@ PycpObject* PycpTuple::__boolean__(){
 }
 
 PycpObject* PycpTuple::__list__(){
-	return PycpCastobj();
+	return PycpCastobj(new PycpList(this));
 }
 
 PycpObject* PycpTuple::__tuple__(){

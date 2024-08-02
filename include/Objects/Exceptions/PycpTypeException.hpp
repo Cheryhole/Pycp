@@ -7,10 +7,8 @@ namespace Pycp{
 
 class PycpTypeException : public PycpException{
 	public:
-		PycpTypeException(std::string message): 
-			PycpException(message, "TypeException"){
-
-		}
+		PycpTypeException(std::string message, PycpSize_t line = UINT64_C(0)): 
+			PycpException(message, "TypeException", line){}
 };
 
 } // namespace pycp

@@ -4,8 +4,8 @@ namespace Pycp{
 
 PycpList::PycpList(PycpTuple* tuple): PycpObject("List"){
 	this->container = new std::vector<PycpObject*>;
-	for (PycpSize_t i = PycpSize_c(0); i < tuple->count; i++){
-		PycpObject* obj = tuple->container[i];
+	for (PycpSize_t i = PycpSize_c(0); i < tuple->length(); i++){
+		PycpObject* obj = tuple->get(i);
 		obj->incref();
 		this->container->push_back(obj);
 	}
@@ -68,7 +68,7 @@ PycpObject* PycpList::__string__(){
 		strcat(result, ", ");
 	}
 	PycpSize_t strlength = strlen(result);
-	result[strlength - 2] = ')';
+	result[strlength - 2] = ']';
 	result[strlength - 1] = '\0';
 
 	PycpString* strobj = new PycpString(result);
@@ -85,15 +85,46 @@ PycpObject* PycpList::__list__(){
 }
 
 PycpObject* PycpList::__tuple__(){
-    // __tuple__ 方法实现
+	return PycpCastobj(new PycpTuple(this));
 }
 
 PycpObject* PycpList::__addition__(PycpObject* obj){
+	if (!this->IsItThisType(obj)){
+		std::string msg;
+		msg += "Can't concatenate ";
+		msg += this->name;
+		msg += " with";
+		msg += obj->name;
+		msg += ".";
+		PycpTypeException(msg.c_str());
+	}
+	PycpList* other = PycpCast(PycpList*, obj);
+	PycpList* result = new PycpList();
 
+	result->container->insert(result->container->end(), this->container->begin(), this->container->end());
+	result->container->insert(result->container->end(), other->container->begin(), other->container->end());
+	
+	return PycpCastobj(result);
 }
 
 PycpObject* PycpList::__multiplication__(PycpObject* obj){
-    // __multiplication__ 方法实现
+	if (!PycpCheckType(PycpInteger*, obj)){
+		std::string msg;
+		msg += "Can't multiply ";
+		msg += this->name;
+		msg += " with";
+		msg += obj->name;
+		msg += "(non-integer).";
+		PycpTypeException(msg.c_str());
+	}
+
+	PycpInteger* other = PycpCast(PycpInteger*, obj);
+	PycpList* result = new PycpList();
+	for (int64_t i = INT64_C(0); i < other->raw(); i++){
+		result->container->insert(result->container->end(), this->container->begin(), this->container->end());
+	}
+	return PycpCastobj(result);
 }
+
 
 } // namespace Pycp

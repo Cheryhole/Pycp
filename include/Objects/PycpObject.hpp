@@ -28,17 +28,19 @@ class PycpObject{
 		PycpSize_t ReferecenConut; // uint64_t
 
 	protected:
-		PycpObject(const PycpObject&) = delete;
-		PycpObject& operator=(const PycpObject&) = delete;
-
-		PycpObject();
 		PycpObject(const char* name);
-		~PycpObject();
 		
 	public:
 		char* name; // name of the type
 		std::string_view document; // documentation string
 		std::unordered_map<std::string, PycpObject*> obmap;
+
+	public:
+		PycpObject(const PycpObject&) = delete;
+		PycpObject& operator=(const PycpObject&) = delete;
+
+		PycpObject();
+		~PycpObject();
 
 		inline void incref();
 		inline void decref();

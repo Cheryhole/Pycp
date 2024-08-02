@@ -5,6 +5,25 @@
 
 namespace Pycp{
 
+class PycpInterpreterFrame{
+	public:
+		PycpObject* locals;
+		PycpObject* globals;
+
+		PycpException* PycpThrownException;
+
+	public:
+		PycpInterpreterFrame(PycpInterpreterFrame*) = delete;
+		PycpInterpreterFrame& operator=(PycpInterpreterFrame*) = delete;
+
+		PycpInterpreterFrame();
+		~PycpInterpreterFrame();
+
+		void ThrowException();
+};
+
+PycpInterpreterFrame* PycpGlobalInterpreterFrame;
+
 void PycpInitialize();
 void PycpFinalize();
 

@@ -1,8 +1,8 @@
 %{
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <stdint.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstdint>
+#include <cstring>
 #include "Pycp.hpp"
 #include "PycpParser.h"
 
@@ -34,11 +34,11 @@
 	return DECIMAL;
 }
 
-True|False {
-	if (yytext == "True"){
+"True" | "False" {
+	if (strcmp(yytext, "True") == 0){
 		yylval.object = new Pycp::PycpBoolean(true);
 	}
-	else if (yytext == "False"){
+	else if (strcmp(yytext, "False") == 0){
 		yylval.object = new Pycp::PycpBoolean(false);
 	}
 
@@ -50,14 +50,28 @@ True|False {
 	return IDENTIFIER;
 }
 
-None {
+"None" {
 	yylval.object = Pycp::PycpNoneRef;
 	return NONE;
 }
 
+[ \t\n]+ { }
+. { return yytext[0]; }
+"//"[^\n]* ;
 
-[ \t\n]+    { }
-.           { return yytext[0]; }
+";"          { return SEMICOLON; }
+"("          { return LPAREN; }
+")"          { return RPAREN; }
+"{"          { return LBRACE; }
+"}"          { return RBRACE; }
+"+"          { return PLUS; }
+"-"          { return MINUS; }
+"*"          { return TIMES; }
+"/"          { return DIVIDE; }
+"of"         { return OF; }
+"."          { return DOT; }
+","          { return COMMA; }
+
 
 %%
 

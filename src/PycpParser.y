@@ -1,7 +1,6 @@
 %{
 #include <cstdio>
 #include <cstdlib>
-#include <string_view>
 #include "Pycp.hpp"
 #include "PycpParser.h" // 包含生成的头文件
 
@@ -10,53 +9,60 @@ void yyerror(const char *s);
 
 %union {
 	PycpObject* object;
-	std::string_view identifer;
+	char* identifer;
 }
 
-%type YYSTYPE
-%token <intValue> INTEGER
-%token <strValue> STRING
-%token <decValue> DECIMAL
-%token <boolValue> BOOLEAN
+%token INTEGER
+%token STRING
+%token DECIMAL
+%token BOOLEAN
 %token NONE
-%token <identifier> IDENTIFIER
+%token IDENTIFIER
 
-%left '+' '-'
-%left '*' '/'
+%token SEMICOLON
+%token DOT OF
+%token COMMA
+%token PLUS MINUS TIMES DIVIDE
+%token RPAREN LPAREN
+%token LBRACE RBRACE
+
+%left PLUS MINUS
+%left TIMES DIVIDE
 
 %start program
 
 %%
 
-program
-	:
+program:
 	| program statement
-	;
+;
 
-statement
-	:
-	| statement statement
-	| statement expression ';'
-	| expression ';'
-	;
+statement:
+	| statement SEMICOLON statement
+	| statement expression SEMICOLON
+	| expression SEMICOLON
+;
 
-%type <objtype> expression
+%type <object> INTEGER STRING DECIMAL BOOLEAN NONE IDENTIFIER
+%type <object> expression
 
-expression
-	:
-	| INTEGER {
-		$$ = $1.intValue;
-	}
-	| STRING
-	| DECIMAL
-	| BOOLEAN
-	| NONE
-	| IDENTIFIER
-	| '(' expression ')'
-	| expression '+' expression
-	| expression '-' expression
-	| expression '*' expression
-	| expression '/' expression
+expression:
+	| INTEGER { $$ = yylval; }
+	| STRING { $$ = yylval; }
+	| DECIMAL { $$ = yylval; }
+	| BOOLEAN { $$ = yylval; }
+	| NONE { $$ = yylval; }
+	| IDENTIFIER { $$ = yylval.identifer; }
+	| LPAREN expression RPAREN
+	| expression PLUS expression
+	| expression MINUS expression
+	| expression TIMES expression
+	| expression DIVIDE expression
+;
+
+%destructor {
+	delete $$;
+} INTEGER STRING DECIMAL BOOLEAN
 
 %%
 

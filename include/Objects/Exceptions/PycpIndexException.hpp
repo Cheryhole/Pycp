@@ -7,10 +7,8 @@ namespace Pycp{
 
 class PycpIndexException : public PycpException{
 	public:
-		PycpIndexException(const std::string& message): 
-			PycpException(message, "IndexException"){
-			
-		}
+		PycpIndexException(const std::string& message, PycpSize_t line = UINT64_C(0)): 
+			PycpException(message, "IndexException", line){}
 
 }; // class PycpIndexException
 

@@ -21,42 +21,20 @@ class PycpException : public PycpObject{
 	public:
 		std::string name;
 		std::string message;
+		PycpSize_t line;
 
-		PycpException(std::string message): PycpObject("Exception"){
+		PycpException(std::string message, PycpSize_t line = UINT64_C(0)): PycpObject("Exception"){
 			this->name = "Exception";
 			this->message = message;
-			this->out();
+			this->line = line;
 		}
 
-		PycpException(std::string message, const char* name): PycpObject(name){
+		PycpException(std::string message, const char* name, PycpSize_t line): PycpObject(name){
 			this->name = name;
 			this->message = message;
-			this->out();
+			this->line = line;
 		}
-
-		virtual std::string PycpException::out(PycpSize_t line = UINT64_C(0)) const{
-			char* msg;
-			sprintf(msg, "%s: %s\n", 
-							this->name.c_str(), 
-							this->message.c_str());
-
-			PycpLastException->message = msg;
-			memcpy(PycpLastException->exception, 
-							this, 
-							sizeof(*this));
-
-			PycpLastException->line = line;
-			return PycpLastException->message;
-		}
-
 }; // class PycpException
-
-void PycpThrowLastException(){
-	std::string msg = PycpLastException->message;
-	PycpSize_t line = PycpLastException->line;
-	PycpException* exception = PycpLastException->exception;
-
-}
 
 } // namespace Pycp
 
