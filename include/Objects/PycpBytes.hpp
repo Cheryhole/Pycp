@@ -4,7 +4,7 @@
 #include "PycpObject.hpp"
 #include <vector>
 #include <cstring>
-#include <unicode/ucnv.h>
+//#include <unicode/ucnv.h>
 
 namespace Pycp{
 

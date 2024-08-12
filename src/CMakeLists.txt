@@ -1,11 +1,9 @@
 project(PycpLibrary)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
+file(GLOB SOURCE "*.cpp")
 
-execute_process(COMMAND flex --outfile=PycpLex.cpp PycpLex.l)
-execute_process(COMMAND bison --outfile=PycpParser.cpp --defines=PycpParser.h PycpParser.y)
+add_library(${PROJECT_NAME} ${SOURCE})
 
+target_include_directories(${PROJECT_NAME} PRIVATE ${XXHASH_INCLUDE_DIR})
 
-set(Sources 
-		)
+target_link_libraries(${PROJECT_NAME} PRIVATE ${XXHASH_LIBRARY})

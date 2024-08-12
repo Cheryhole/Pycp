@@ -3,7 +3,7 @@
 namespace Pycp{
 
 PycpBytes::PycpBytes(PycpSize_t input): PycpObject("Bytes"){
-	this->container = new std::vector<u_char>();
+	this->container = new std::vector<uint8_t>();
 	
 	for (PycpSize_t i = UINT64_C(0); i < input; i++){
 		this->container->push_back(PycpBytes::NULLCHAR);
@@ -11,14 +11,14 @@ PycpBytes::PycpBytes(PycpSize_t input): PycpObject("Bytes"){
 }
 
 PycpBytes::PycpBytes(std::string input): PycpObject("Bytes"){
-	this->container = new std::vector<u_char>(
+	this->container = new std::vector<uint8_t>(
 		input.begin(),
 		input.end()
 	);
 }
 
 PycpBytes::PycpBytes(): PycpObject("Bytes"){
-	this->container = new std::vector<u_char>();
+	this->container = new std::vector<uint8_t>();
 }
 
 PycpBytes::~PycpBytes(){
@@ -26,10 +26,10 @@ PycpBytes::~PycpBytes(){
 }
 
 PycpSize_t PycpBytes::hash() const{
-	PycpSize_t result = UINT64_C(0);
+	PycpSize_t result = PycpSize_c(0);
 
 	size_t bytesize = this->container->size();
-	for (size_t i = UINT64_C(0); i < bytesize; i++){
+	for (size_t i = PycpSize_c(0); i < bytesize; i++){
 		uint8_t byte = this->container->at(i);
 		result += PycpBytes::PRIME * result + byte;
 	}

@@ -2,7 +2,6 @@
 #define __PYCP_DECIMAL_HPP__
 
 #include "PycpObject.hpp"
-#include <cstdint>
 #include <decimal/decimal>
 
 namespace Pycp{

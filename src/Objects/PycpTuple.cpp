@@ -57,16 +57,15 @@ PycpObject* PycpTuple::get(PycpSize_t index){
 	return this->container[index];
 }
 
-PycpExceptions PycpTuple::set(PycpSize_t index, PycpObject* obj){
+void PycpTuple::set(PycpSize_t index, PycpObject* obj){
 	if (index >= this->count){
 		PycpIndexException("Tuple index out of range");
-		return PycpExceptions::IndexError;
+		return;
 	}
 	PycpObject* old = this->container[index];
 	old->decref();
 	obj->incref();
 	this->container[index] = obj;
-	return PycpExceptions::NoException;
 }
 
 
@@ -107,20 +106,17 @@ PycpObject* PycpTuple::parse2object(int index){
 	return this->container[index];
 }
 
-PycpExceptions PycpTuple::parse(const char* format, ...){
+void PycpTuple::parse(const char* format, ...){
 	va_list items; // the pointers
 	int count = 0; // pointers count
 
 	while (format[count] != ':' && format[count] != '\0') count++;
-	PycpDebugBlock({
-		char* msg;
-		sprintf(msg, "Tuple parsed items: %d", count);
-		PycpLog(msg);
-	})
+
+	PycpLog::debug("Tuple parsed items: %d", count);
 
 	if (count >= this->count){
 		PycpIndexException("Tuple index out of range");
-		return PycpExceptions::IndexError;
+		return;
 	}
 
 
@@ -150,7 +146,6 @@ PycpExceptions PycpTuple::parse(const char* format, ...){
 	}
 
 	va_end(items);
-	return PycpExceptions::NoException;
 }
 
 PycpSize_t PycpTuple::length() const{

@@ -32,7 +32,7 @@ class PycpTuple : public PycpObject{
 		~PycpTuple();
 
 		PycpObject* get(PycpSize_t index);
-		PycpExceptions set(PycpSize_t index, PycpObject* obj);
+		void set(PycpSize_t index, PycpObject* obj);
 
 		/*
 		the parse of PycpTuple is like PyTupleParse.
@@ -44,7 +44,7 @@ class PycpTuple : public PycpObject{
 			"o" represents object (to PycpObject*)
 		the characters after the colon are considered as resolved names
 		*/
-		PycpExceptions parse(const char* format, ...);
+		void parse(const char* format, ...);
 
 		PycpSize_t length() const;
 		virtual PycpSize_t hash() const;

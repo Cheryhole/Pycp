@@ -1,28 +1,36 @@
 #ifndef __PYCP_INTERPRETER_HPP
 #define __PYCP_INTERPRETER_HPP
 
+#include <vector>
+#include "PycpRuntime.hpp"
 #include "Objects/PycpObject.hpp"
 
 namespace Pycp{
 
-class PycpInterpreterFrame{
+class PycpInterpreterState{
+	private:
+		PycpSize_t threads_count;
+		PycpThreadState** threads;
+		PycpSize_t line; // current line
+
 	public:
+		static PycpInterpreterState* instance;
+
 		PycpObject* locals;
 		PycpObject* globals;
-
-		PycpException* PycpThrownException;
-
+		PycpInterpreterState* __old; // old interpreter state
 	public:
-		PycpInterpreterFrame(PycpInterpreterFrame*) = delete;
-		PycpInterpreterFrame& operator=(PycpInterpreterFrame*) = delete;
+		PycpInterpreterState(PycpInterpreterState*) = delete;
+		PycpInterpreterState& operator=(PycpInterpreterState*) = delete;
 
-		PycpInterpreterFrame();
-		~PycpInterpreterFrame();
+		PycpInterpreterState();
+		~PycpInterpreterState();
 
-		void ThrowException();
+		void AddThread(PycpThreadState* thread);
 };
 
-PycpInterpreterFrame* PycpGlobalInterpreterFrame;
+inline PycpInterpreterState* PycpInterpreterStateGet();
+inline void PycpInterpreterStateSet(PycpInterpreterState* state);
 
 void PycpInitialize();
 void PycpFinalize();

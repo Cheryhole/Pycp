@@ -2,18 +2,25 @@
 
 namespace Pycp{
 
+struct PycpHashCaller{
+	template <PycpObject*>
+	PycpSize_t operator()(const PycpObject* obj) const {
+		return obj->hash();
+	}
+};
+
 PycpObject::PycpObject(){
-	this->ReferecenConut = 0ull;
+	this->ReferecenConut = PycpSize_0;
 	this->name = strdup("Object");
 	this->document = "";
-	this->obmap = std::unordered_map<std::string, PycpObject*>();
+	this->obmap = PycpObjectMap();
 }
 
 PycpObject::PycpObject(const char* name){
-	this->ReferecenConut = 0ull;
+	this->ReferecenConut = PycpSize_0;
 	this->name = strdup(name);
 	this->document = "";
-	this->obmap = std::unordered_map<std::string, PycpObject*>();
+	this->obmap = PycpObjectMap();
 }
 
 PycpObject::~PycpObject(){
@@ -22,7 +29,7 @@ PycpObject::~PycpObject(){
 
 void PycpObject::incref(){
 	if (this->ReferecenConut >= UINT64_MAX){
-		printf("PycpObject::incref: %s's reference count overflowed.\n",
+		PycpLog::error("PycpObject::incref: %s's reference count overflowed.\n",
 						this->name);
 		return;
 	}
@@ -30,7 +37,7 @@ void PycpObject::incref(){
 }
 
 void PycpObject::decref(){
-	if (this->ReferecenConut == 0){
+	if (this->ReferecenConut == PycpSize_0){
 		delete this;
 		return;
 	}
@@ -43,31 +50,30 @@ PycpSize_t PycpObject::hash() const {
 }
 
 PycpSize_t PycpObject::length() const{
-	return PycpSize_c(0);
+	return PycpSize_0;
 }
 
 PycpObject* PycpObject::call(PycpObject* args){
 	return nullptr;
 }
 
-bool PycpObject::IsItThisType(PycpObject* obj){
-	bool expression = \
-		dynamic_cast<decltype(this)>(obj) == nullptr;
-	return expression ? false : true;
-}
 
-void PycpObject::buildmap(){
-}
-
-
-
-PycpObject* PycpObject::__string__(){
-	char* result;
-	sprintf(result, "<object %s at %p>",
-		this->name,
-		this);
-	PycpString* strobj = new PycpString(result);
-	return PycpCastobj(strobj);
+PycpObject* PycpObject::__string__() const{
+	char* result = "{";
+	for (std::pair<PycpObject*, PycpObject*> apair : this->obmap){
+		PycpString* key = PycpCast(PycpString*, apair.first->__string__());
+		PycpString* value = PycpCast(PycpString*, apair.second->__string__());
+		const char* ckey = key->raw();
+		const char* cvalue = value->raw();
+		strcat(result, ckey);
+		strcat(result, ": ");
+		strcat(result, cvalue);
+		strcat(result, ", ");
+	}
+	PycpSize_t strlength = strlen(result);
+	result[strlength - 2] = '}';
+	result[strlength - 1] = '\0';
+	return PycpCastobj(new PycpString(result));
 }
 
 PycpObject* PycpObject::__integer__(){
@@ -168,15 +174,48 @@ PycpObject* PycpObject::operator/(PycpObject* obj){
 }
 
 PycpObject* PycpObject::GetAttr(const char* name){
-	return this->obmap.at(name);
+	PycpObject* index = new PycpString(name);
+
+	PycpObjectMap::iterator obj = this->obmap.find(index);
+	if (obj == this->obmap.end()){
+		PycpIndexException(std::string("\"").append(name).append("\""));
+		delete index;
+		return nullptr;
+	}
+	delete index;
+	return obj->second;
 }
 
-int PycpObject::SetAttr(const char* name, PycpObject* obj){
-	std::pair<std::string, PycpObject*> apair;
-	apair.first = name;
+void PycpObject::DelAttr(const char* name){
+	PycpObject* index = new PycpString(name);
+
+	PycpObjectMap::iterator obj = this->obmap.find(index);
+	if (obj == this->obmap.end()){
+		PycpIndexException(std::string("\"").append(name).append("\""));
+		delete index;
+		return;
+	}
+	obj->first->decref(); // key
+	obj->second->decref(); // value
+
+	this->obmap.erase(obj);
+	delete index;
+}
+
+void PycpObject::SetAttr(const char* name, PycpObject* obj){
+	PycpObject* index = new PycpString(name);
+	index->incref();
+	obj->incref();
+
+	PycpObjectMap::iterator old = this->obmap.find(index);
+	if (old != this->obmap.end()){
+		this->DelAttr(name);
+	}
+
+	std::pair<PycpObject*, PycpObject*> apair;
+	apair.first = index;
 	apair.second = obj;
 	this->obmap.insert(apair);
-	return 0;
 }
 
 

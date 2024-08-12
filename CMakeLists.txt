@@ -1,20 +1,17 @@
-cmake_minimum_required(VERSION 3.28)
+cmake_minimum_required(VERSION 3.20)
 
 project(PycpLanguage)
 
-set(BUILD_SHARED_LIBS ON)
-set(CMAKE_INSTALL_PREFIX ${CMAKE_HOME_DIRECTORY}/build)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED True)
 
-# mpdecimal automatic building
-if (BUILD_SHARED_LIBS)
-	execute_process(COMMAND sh configure --enable-cxx "--prefix=${CMAKE_INSTALL_PREFIX}" --enable-shared --disable-static
-		WORKING_DIRECTORY ${CMAKE_HOME_DIRECTORY}/3rdparty/mpdecimal)
-else()
-	execute_process(COMMAND sh configure --enable-cxx "--prefix=${CMAKE_INSTALL_PREFIX}" --disable-shared --enable-static
-		WORKING_DIRECTORY ${CMAKE_HOME_DIRECTORY}/3rdparty/mpdecimal)
-endif()
-execute_process(COMMAND make -j4 "--makefile=${CMAKE_HOME_DIRECTORY}/3rdparty/mpdecimal/Makefile" && make install "--makefile=${CMAKE_HOME_DIRECTORY}/3rdparty/mpdecimal/Makefile"
-	WORKING_DIRECTORY ${CMAKE_HOME_DIRECTORY}/3rdparty/mpdecimal)
+option(BUILD_SHARED_LIBS "Build shared Pycp library." ON)
+set(CMAKE_INSTALL_PREFIX ${CMAKE_HOME_DIRECTORY}/build CACHE PATH "A directory which to install Pycp.")
+set(CMAKE_BUILD_TYPE "Release" CACHE STRING)
 
-#add_subdirectory(${CMAKE_HOME_DIRECTORY}/3rdparty/xxHash/cmake_unofficial)
-#add_subdirectory(${CMAKE_HOME_DIRECTORY}/src)
+set(XXHASH_INCLUDE_DIR "" CACHE PATH)
+set(XXHASH_LIBRARY "" CACHE FILEPATH)
+
+include_directories(${CMAKE_HOME_DIRECTORY}/include)
+
+add_subdirectory(${CMAKE_HOME_DIRECTORY}/src)

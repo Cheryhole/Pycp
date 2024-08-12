@@ -1,13 +1,24 @@
 import stdio;
 import stdlib;
 
-stdio.files.console.write("Hello World!\n");
+stdio.console.write("Hello World!\n");
+var input = stdio.console.readline();
+stdio.console.write("You entered: " + input + "\n");
 
-var file = stdio.files.open("output.txt", "w");
-file.write("你好世界\n");
-file.close();
+var pointer = new Integer(10);
+del pointer;
 
-var input = stdio.files.console.readline();
-stdio.files.console.writeline("你输入了：" + input);
+func double(num){
+	return num * 2;
+}
 
-stdlib.system("echo Hello");
+var obj = {
+	func constructor(){
+		this.a = 2;
+		this.b = "c";
+	}
+	a: 1,
+	b: "s"
+}
+
+stdio.console.write(obj);

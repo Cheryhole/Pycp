@@ -5,7 +5,6 @@
 #include "PycpBytes.hpp"
 #include "PycpBoolean.hpp"
 #include "PycpDecimal.hpp"
-#include "PycpHashmap.hpp"
 #include "PycpInteger.hpp"
 #include "PycpString.hpp"
 #include "PycpTuple.hpp"
@@ -23,17 +22,21 @@
 
 namespace Pycp{
 
+struct PycpHashCaller;
+class PycpObject;
+typedef std::unordered_map<PycpObject*, PycpObject*, PycpHashCaller> PycpObjectMap;
+
 class PycpObject{
 	private:
 		PycpSize_t ReferecenConut; // uint64_t
-
+		
 	protected:
 		PycpObject(const char* name);
+		PycpObjectMap obmap;
 		
 	public:
 		char* name; // name of the type
 		std::string_view document; // documentation string
-		std::unordered_map<std::string, PycpObject*> obmap;
 
 	public:
 		PycpObject(const PycpObject&) = delete;
@@ -48,13 +51,11 @@ class PycpObject{
 		inline virtual PycpSize_t length() const;
 		virtual PycpObject* call(PycpObject* args);
 		PycpObject* GetAttr(const char* name);
-		int SetAttr(const char* name, PycpObject* obj);
-
-		inline virtual bool IsItThisType(PycpObject* obj);
-		virtual void buildmap();
+		void DelAttr(const char* name);
+		void SetAttr(const char* name, PycpObject* obj);
 
 	// methods
-		virtual PycpObject* __string__(); // default to return PycpString(<'objectname' at 'address'>)
+		virtual PycpObject* __string__() const; // default to return PycpString(<'objectname' at 'address'>)
 		virtual PycpObject* __integer__(); // default to return nullptr
 		virtual PycpObject* __decimal__(); // default to return nullptr
 		virtual PycpObject* __boolean__(); // default to return PycpBoolean(true)

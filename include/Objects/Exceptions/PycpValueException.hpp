@@ -3,14 +3,16 @@
 
 #include "PycpException.hpp"
 
-namespace Pycp {
+namespace Pycp{
 
 class PycpValueException : public PycpException{
 	public:
-		PycpValueException(std::string message, PycpSize_t line = UINT64_C(0)):
-			PycpException(message, "ValueException", line){}
-};
+		PycpValueException(const std::string& message, PycpException* traceback=nullptr, PycpSize_t line=UINT64_C(0)): 
+			PycpException(message, traceback, line, "ValueException"){
+		}
 
-} // namespace pycp
+}; /* class PycpValueException */
 
-#endif // __PYCP_VALUE_EXCEPTION_HPP__
+} /* namespace Pycp */
+
+#endif /* __PYCP_VALUE_EXCEPTION_HPP__ */
