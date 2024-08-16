@@ -1,2 +1,0 @@
-from .ply import lex
-

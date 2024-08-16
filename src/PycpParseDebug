@@ -1,0 +1,1680 @@
+Created by PLY version 3.11 (http://www.dabeaz.com/ply)
+
+Unused terminals:
+
+    AND
+    BREAK
+    COMMENT
+    CONST
+    CONTINUE
+    DEL
+    ELIF
+    ELSE
+    FOR
+    FUNC
+    IF
+    IMPORT
+    IN
+    NEW
+    NOT
+    OR
+    PASS
+    RETURN
+    WHILE
+
+Grammar
+
+Rule 0     S' -> statement
+Rule 1     statement -> statements SEMICOLON
+Rule 2     statement -> statement SEMICOLON statements
+Rule 3     statements -> statement_new_var
+Rule 4     statements -> expression
+Rule 5     statement_new_var -> VAR IDENTIFIER EQUALS expression
+Rule 6     expression -> term
+Rule 7     expression -> expression PLUS term
+Rule 8     expression -> expression MINUS term
+Rule 9     expression -> expression DOT IDENTIFIER
+Rule 10    expression -> IDENTIFIER OF expression
+Rule 11    term -> factor
+Rule 12    term -> term TIMES factor
+Rule 13    term -> term DIVIDE factor
+Rule 14    term -> term MODULO factor
+Rule 15    factor -> list
+Rule 16    factor -> tuple
+Rule 17    factor -> object
+Rule 18    factor -> LPAREN expression RPAREN
+Rule 19    factor -> LPAREN term RPAREN
+Rule 20    factor -> LPAREN factor RPAREN
+Rule 21    factor -> LPAREN RPAREN
+Rule 22    factor -> IDENTIFIER
+Rule 23    factor -> STRING
+Rule 24    factor -> INTEGER
+Rule 25    factor -> DECIMAL
+Rule 26    factor -> TRUE
+Rule 27    factor -> FALSE
+Rule 28    factor -> NONE
+Rule 29    list -> LBRACKET list_items RBRACKET
+Rule 30    list -> LBRACKET RBRACKET
+Rule 31    list_items -> factor COMMA list_items
+Rule 32    list_items -> factor COMMA
+Rule 33    list_items -> factor
+Rule 34    tuple -> LPAREN tuple_items RPAREN
+Rule 35    tuple -> LPAREN RPAREN
+Rule 36    tuple_items -> factor COMMA tuple_items
+Rule 37    tuple_items -> factor COMMA
+Rule 38    object -> LBRACE object_items RBRACE
+Rule 39    object -> LBRACE RBRACE
+Rule 40    object_items -> factor COLON factor COMMA object_items
+Rule 41    object_items -> factor COLON factor COMMA
+Rule 42    object_items -> factor COLON factor
+
+Terminals, with rules where they appear
+
+AND                  : 
+BREAK                : 
+COLON                : 40 41 42
+COMMA                : 31 32 36 37 40 41
+COMMENT              : 
+CONST                : 
+CONTINUE             : 
+DECIMAL              : 25
+DEL                  : 
+DIVIDE               : 13
+DOT                  : 9
+ELIF                 : 
+ELSE                 : 
+EQUALS               : 5
+FALSE                : 27
+FOR                  : 
+FUNC                 : 
+IDENTIFIER           : 5 9 10 22
+IF                   : 
+IMPORT               : 
+IN                   : 
+INTEGER              : 24
+LBRACE               : 38 39
+LBRACKET             : 29 30
+LPAREN               : 18 19 20 21 34 35
+MINUS                : 8
+MODULO               : 14
+NEW                  : 
+NONE                 : 28
+NOT                  : 
+OF                   : 10
+OR                   : 
+PASS                 : 
+PLUS                 : 7
+RBRACE               : 38 39
+RBRACKET             : 29 30
+RETURN               : 
+RPAREN               : 18 19 20 21 34 35
+SEMICOLON            : 1 2
+STRING               : 23
+TIMES                : 12
+TRUE                 : 26
+VAR                  : 5
+WHILE                : 
+error                : 
+
+Nonterminals, with rules where they appear
+
+expression           : 4 5 7 8 9 10 18
+factor               : 11 12 13 14 20 31 32 33 36 37 40 40 41 41 42 42
+list                 : 15
+list_items           : 29 31
+object               : 17
+object_items         : 38 40
+statement            : 2 0
+statement_new_var    : 3
+statements           : 1 2
+term                 : 6 7 8 12 13 14 19
+tuple                : 16
+tuple_items          : 34 36
+
+Parsing method: LALR
+
+state 0
+
+    (0) S' -> . statement
+    (1) statement -> . statements SEMICOLON
+    (2) statement -> . statement SEMICOLON statements
+    (3) statements -> . statement_new_var
+    (4) statements -> . expression
+    (5) statement_new_var -> . VAR IDENTIFIER EQUALS expression
+    (6) expression -> . term
+    (7) expression -> . expression PLUS term
+    (8) expression -> . expression MINUS term
+    (9) expression -> . expression DOT IDENTIFIER
+    (10) expression -> . IDENTIFIER OF expression
+    (11) term -> . factor
+    (12) term -> . term TIMES factor
+    (13) term -> . term DIVIDE factor
+    (14) term -> . term MODULO factor
+    (15) factor -> . list
+    (16) factor -> . tuple
+    (17) factor -> . object
+    (18) factor -> . LPAREN expression RPAREN
+    (19) factor -> . LPAREN term RPAREN
+    (20) factor -> . LPAREN factor RPAREN
+    (21) factor -> . LPAREN RPAREN
+    (22) factor -> . IDENTIFIER
+    (23) factor -> . STRING
+    (24) factor -> . INTEGER
+    (25) factor -> . DECIMAL
+    (26) factor -> . TRUE
+    (27) factor -> . FALSE
+    (28) factor -> . NONE
+    (29) list -> . LBRACKET list_items RBRACKET
+    (30) list -> . LBRACKET RBRACKET
+    (34) tuple -> . LPAREN tuple_items RPAREN
+    (35) tuple -> . LPAREN RPAREN
+    (38) object -> . LBRACE object_items RBRACE
+    (39) object -> . LBRACE RBRACE
+
+    VAR             shift and go to state 5
+    IDENTIFIER      shift and go to state 6
+    LPAREN          shift and go to state 12
+    STRING          shift and go to state 13
+    INTEGER         shift and go to state 14
+    DECIMAL         shift and go to state 15
+    TRUE            shift and go to state 16
+    FALSE           shift and go to state 17
+    NONE            shift and go to state 18
+    LBRACKET        shift and go to state 19
+    LBRACE          shift and go to state 20
+
+    statement                      shift and go to state 1
+    statements                     shift and go to state 2
+    statement_new_var              shift and go to state 3
+    expression                     shift and go to state 4
+    term                           shift and go to state 7
+    factor                         shift and go to state 8
+    list                           shift and go to state 9
+    tuple                          shift and go to state 10
+    object                         shift and go to state 11
+
+state 1
+
+    (0) S' -> statement .
+    (2) statement -> statement . SEMICOLON statements
+
+    SEMICOLON       shift and go to state 21
+
+
+state 2
+
+    (1) statement -> statements . SEMICOLON
+
+    SEMICOLON       shift and go to state 22
+
+
+state 3
+
+    (3) statements -> statement_new_var .
+
+    SEMICOLON       reduce using rule 3 (statements -> statement_new_var .)
+    $end            reduce using rule 3 (statements -> statement_new_var .)
+
+
+state 4
+
+    (4) statements -> expression .
+    (7) expression -> expression . PLUS term
+    (8) expression -> expression . MINUS term
+    (9) expression -> expression . DOT IDENTIFIER
+
+    SEMICOLON       reduce using rule 4 (statements -> expression .)
+    $end            reduce using rule 4 (statements -> expression .)
+    PLUS            shift and go to state 23
+    MINUS           shift and go to state 24
+    DOT             shift and go to state 25
+
+
+state 5
+
+    (5) statement_new_var -> VAR . IDENTIFIER EQUALS expression
+
+    IDENTIFIER      shift and go to state 26
+
+
+state 6
+
+    (10) expression -> IDENTIFIER . OF expression
+    (22) factor -> IDENTIFIER .
+
+    OF              shift and go to state 27
+    TIMES           reduce using rule 22 (factor -> IDENTIFIER .)
+    DIVIDE          reduce using rule 22 (factor -> IDENTIFIER .)
+    MODULO          reduce using rule 22 (factor -> IDENTIFIER .)
+    PLUS            reduce using rule 22 (factor -> IDENTIFIER .)
+    MINUS           reduce using rule 22 (factor -> IDENTIFIER .)
+    DOT             reduce using rule 22 (factor -> IDENTIFIER .)
+    SEMICOLON       reduce using rule 22 (factor -> IDENTIFIER .)
+    RPAREN          reduce using rule 22 (factor -> IDENTIFIER .)
+    COMMA           reduce using rule 22 (factor -> IDENTIFIER .)
+    $end            reduce using rule 22 (factor -> IDENTIFIER .)
+
+
+state 7
+
+    (6) expression -> term .
+    (12) term -> term . TIMES factor
+    (13) term -> term . DIVIDE factor
+    (14) term -> term . MODULO factor
+
+    PLUS            reduce using rule 6 (expression -> term .)
+    MINUS           reduce using rule 6 (expression -> term .)
+    DOT             reduce using rule 6 (expression -> term .)
+    SEMICOLON       reduce using rule 6 (expression -> term .)
+    $end            reduce using rule 6 (expression -> term .)
+    RPAREN          reduce using rule 6 (expression -> term .)
+    TIMES           shift and go to state 28
+    DIVIDE          shift and go to state 29
+    MODULO          shift and go to state 30
+
+
+state 8
+
+    (11) term -> factor .
+
+    TIMES           reduce using rule 11 (term -> factor .)
+    DIVIDE          reduce using rule 11 (term -> factor .)
+    MODULO          reduce using rule 11 (term -> factor .)
+    PLUS            reduce using rule 11 (term -> factor .)
+    MINUS           reduce using rule 11 (term -> factor .)
+    DOT             reduce using rule 11 (term -> factor .)
+    SEMICOLON       reduce using rule 11 (term -> factor .)
+    $end            reduce using rule 11 (term -> factor .)
+    RPAREN          reduce using rule 11 (term -> factor .)
+
+
+state 9
+
+    (15) factor -> list .
+
+    TIMES           reduce using rule 15 (factor -> list .)
+    DIVIDE          reduce using rule 15 (factor -> list .)
+    MODULO          reduce using rule 15 (factor -> list .)
+    PLUS            reduce using rule 15 (factor -> list .)
+    MINUS           reduce using rule 15 (factor -> list .)
+    DOT             reduce using rule 15 (factor -> list .)
+    SEMICOLON       reduce using rule 15 (factor -> list .)
+    RPAREN          reduce using rule 15 (factor -> list .)
+    COMMA           reduce using rule 15 (factor -> list .)
+    RBRACKET        reduce using rule 15 (factor -> list .)
+    COLON           reduce using rule 15 (factor -> list .)
+    $end            reduce using rule 15 (factor -> list .)
+    RBRACE          reduce using rule 15 (factor -> list .)
+
+
+state 10
+
+    (16) factor -> tuple .
+
+    TIMES           reduce using rule 16 (factor -> tuple .)
+    DIVIDE          reduce using rule 16 (factor -> tuple .)
+    MODULO          reduce using rule 16 (factor -> tuple .)
+    PLUS            reduce using rule 16 (factor -> tuple .)
+    MINUS           reduce using rule 16 (factor -> tuple .)
+    DOT             reduce using rule 16 (factor -> tuple .)
+    SEMICOLON       reduce using rule 16 (factor -> tuple .)
+    RPAREN          reduce using rule 16 (factor -> tuple .)
+    COMMA           reduce using rule 16 (factor -> tuple .)
+    RBRACKET        reduce using rule 16 (factor -> tuple .)
+    COLON           reduce using rule 16 (factor -> tuple .)
+    $end            reduce using rule 16 (factor -> tuple .)
+    RBRACE          reduce using rule 16 (factor -> tuple .)
+
+
+state 11
+
+    (17) factor -> object .
+
+    TIMES           reduce using rule 17 (factor -> object .)
+    DIVIDE          reduce using rule 17 (factor -> object .)
+    MODULO          reduce using rule 17 (factor -> object .)
+    PLUS            reduce using rule 17 (factor -> object .)
+    MINUS           reduce using rule 17 (factor -> object .)
+    DOT             reduce using rule 17 (factor -> object .)
+    SEMICOLON       reduce using rule 17 (factor -> object .)
+    RPAREN          reduce using rule 17 (factor -> object .)
+    COMMA           reduce using rule 17 (factor -> object .)
+    RBRACKET        reduce using rule 17 (factor -> object .)
+    COLON           reduce using rule 17 (factor -> object .)
+    $end            reduce using rule 17 (factor -> object .)
+    RBRACE          reduce using rule 17 (factor -> object .)
+
+
+state 12
+
+    (18) factor -> LPAREN . expression RPAREN
+    (19) factor -> LPAREN . term RPAREN
+    (20) factor -> LPAREN . factor RPAREN
+    (21) factor -> LPAREN . RPAREN
+    (34) tuple -> LPAREN . tuple_items RPAREN
+    (35) tuple -> LPAREN . RPAREN
+    (6) expression -> . term
+    (7) expression -> . expression PLUS term
+    (8) expression -> . expression MINUS term
+    (9) expression -> . expression DOT IDENTIFIER
+    (10) expression -> . IDENTIFIER OF expression
+    (11) term -> . factor
+    (12) term -> . term TIMES factor
+    (13) term -> . term DIVIDE factor
+    (14) term -> . term MODULO factor
+    (15) factor -> . list
+    (16) factor -> . tuple
+    (17) factor -> . object
+    (18) factor -> . LPAREN expression RPAREN
+    (19) factor -> . LPAREN term RPAREN
+    (20) factor -> . LPAREN factor RPAREN
+    (21) factor -> . LPAREN RPAREN
+    (22) factor -> . IDENTIFIER
+    (23) factor -> . STRING
+    (24) factor -> . INTEGER
+    (25) factor -> . DECIMAL
+    (26) factor -> . TRUE
+    (27) factor -> . FALSE
+    (28) factor -> . NONE
+    (36) tuple_items -> . factor COMMA tuple_items
+    (37) tuple_items -> . factor COMMA
+    (29) list -> . LBRACKET list_items RBRACKET
+    (30) list -> . LBRACKET RBRACKET
+    (34) tuple -> . LPAREN tuple_items RPAREN
+    (35) tuple -> . LPAREN RPAREN
+    (38) object -> . LBRACE object_items RBRACE
+    (39) object -> . LBRACE RBRACE
+
+    RPAREN          shift and go to state 32
+    IDENTIFIER      shift and go to state 6
+    LPAREN          shift and go to state 12
+    STRING          shift and go to state 13
+    INTEGER         shift and go to state 14
+    DECIMAL         shift and go to state 15
+    TRUE            shift and go to state 16
+    FALSE           shift and go to state 17
+    NONE            shift and go to state 18
+    LBRACKET        shift and go to state 19
+    LBRACE          shift and go to state 20
+
+    expression                     shift and go to state 31
+    term                           shift and go to state 33
+    factor                         shift and go to state 34
+    tuple_items                    shift and go to state 35
+    list                           shift and go to state 9
+    tuple                          shift and go to state 10
+    object                         shift and go to state 11
+
+state 13
+
+    (23) factor -> STRING .
+
+    TIMES           reduce using rule 23 (factor -> STRING .)
+    DIVIDE          reduce using rule 23 (factor -> STRING .)
+    MODULO          reduce using rule 23 (factor -> STRING .)
+    PLUS            reduce using rule 23 (factor -> STRING .)
+    MINUS           reduce using rule 23 (factor -> STRING .)
+    DOT             reduce using rule 23 (factor -> STRING .)
+    SEMICOLON       reduce using rule 23 (factor -> STRING .)
+    RPAREN          reduce using rule 23 (factor -> STRING .)
+    COMMA           reduce using rule 23 (factor -> STRING .)
+    RBRACKET        reduce using rule 23 (factor -> STRING .)
+    COLON           reduce using rule 23 (factor -> STRING .)
+    $end            reduce using rule 23 (factor -> STRING .)
+    RBRACE          reduce using rule 23 (factor -> STRING .)
+
+
+state 14
+
+    (24) factor -> INTEGER .
+
+    TIMES           reduce using rule 24 (factor -> INTEGER .)
+    DIVIDE          reduce using rule 24 (factor -> INTEGER .)
+    MODULO          reduce using rule 24 (factor -> INTEGER .)
+    PLUS            reduce using rule 24 (factor -> INTEGER .)
+    MINUS           reduce using rule 24 (factor -> INTEGER .)
+    DOT             reduce using rule 24 (factor -> INTEGER .)
+    SEMICOLON       reduce using rule 24 (factor -> INTEGER .)
+    RPAREN          reduce using rule 24 (factor -> INTEGER .)
+    COMMA           reduce using rule 24 (factor -> INTEGER .)
+    RBRACKET        reduce using rule 24 (factor -> INTEGER .)
+    COLON           reduce using rule 24 (factor -> INTEGER .)
+    $end            reduce using rule 24 (factor -> INTEGER .)
+    RBRACE          reduce using rule 24 (factor -> INTEGER .)
+
+
+state 15
+
+    (25) factor -> DECIMAL .
+
+    TIMES           reduce using rule 25 (factor -> DECIMAL .)
+    DIVIDE          reduce using rule 25 (factor -> DECIMAL .)
+    MODULO          reduce using rule 25 (factor -> DECIMAL .)
+    PLUS            reduce using rule 25 (factor -> DECIMAL .)
+    MINUS           reduce using rule 25 (factor -> DECIMAL .)
+    DOT             reduce using rule 25 (factor -> DECIMAL .)
+    SEMICOLON       reduce using rule 25 (factor -> DECIMAL .)
+    RPAREN          reduce using rule 25 (factor -> DECIMAL .)
+    COMMA           reduce using rule 25 (factor -> DECIMAL .)
+    RBRACKET        reduce using rule 25 (factor -> DECIMAL .)
+    COLON           reduce using rule 25 (factor -> DECIMAL .)
+    $end            reduce using rule 25 (factor -> DECIMAL .)
+    RBRACE          reduce using rule 25 (factor -> DECIMAL .)
+
+
+state 16
+
+    (26) factor -> TRUE .
+
+    TIMES           reduce using rule 26 (factor -> TRUE .)
+    DIVIDE          reduce using rule 26 (factor -> TRUE .)
+    MODULO          reduce using rule 26 (factor -> TRUE .)
+    PLUS            reduce using rule 26 (factor -> TRUE .)
+    MINUS           reduce using rule 26 (factor -> TRUE .)
+    DOT             reduce using rule 26 (factor -> TRUE .)
+    SEMICOLON       reduce using rule 26 (factor -> TRUE .)
+    RPAREN          reduce using rule 26 (factor -> TRUE .)
+    COMMA           reduce using rule 26 (factor -> TRUE .)
+    RBRACKET        reduce using rule 26 (factor -> TRUE .)
+    COLON           reduce using rule 26 (factor -> TRUE .)
+    $end            reduce using rule 26 (factor -> TRUE .)
+    RBRACE          reduce using rule 26 (factor -> TRUE .)
+
+
+state 17
+
+    (27) factor -> FALSE .
+
+    TIMES           reduce using rule 27 (factor -> FALSE .)
+    DIVIDE          reduce using rule 27 (factor -> FALSE .)
+    MODULO          reduce using rule 27 (factor -> FALSE .)
+    PLUS            reduce using rule 27 (factor -> FALSE .)
+    MINUS           reduce using rule 27 (factor -> FALSE .)
+    DOT             reduce using rule 27 (factor -> FALSE .)
+    SEMICOLON       reduce using rule 27 (factor -> FALSE .)
+    RPAREN          reduce using rule 27 (factor -> FALSE .)
+    COMMA           reduce using rule 27 (factor -> FALSE .)
+    RBRACKET        reduce using rule 27 (factor -> FALSE .)
+    COLON           reduce using rule 27 (factor -> FALSE .)
+    $end            reduce using rule 27 (factor -> FALSE .)
+    RBRACE          reduce using rule 27 (factor -> FALSE .)
+
+
+state 18
+
+    (28) factor -> NONE .
+
+    TIMES           reduce using rule 28 (factor -> NONE .)
+    DIVIDE          reduce using rule 28 (factor -> NONE .)
+    MODULO          reduce using rule 28 (factor -> NONE .)
+    PLUS            reduce using rule 28 (factor -> NONE .)
+    MINUS           reduce using rule 28 (factor -> NONE .)
+    DOT             reduce using rule 28 (factor -> NONE .)
+    SEMICOLON       reduce using rule 28 (factor -> NONE .)
+    RPAREN          reduce using rule 28 (factor -> NONE .)
+    COMMA           reduce using rule 28 (factor -> NONE .)
+    RBRACKET        reduce using rule 28 (factor -> NONE .)
+    COLON           reduce using rule 28 (factor -> NONE .)
+    $end            reduce using rule 28 (factor -> NONE .)
+    RBRACE          reduce using rule 28 (factor -> NONE .)
+
+
+state 19
+
+    (29) list -> LBRACKET . list_items RBRACKET
+    (30) list -> LBRACKET . RBRACKET
+    (31) list_items -> . factor COMMA list_items
+    (32) list_items -> . factor COMMA
+    (33) list_items -> . factor
+    (15) factor -> . list
+    (16) factor -> . tuple
+    (17) factor -> . object
+    (18) factor -> . LPAREN expression RPAREN
+    (19) factor -> . LPAREN term RPAREN
+    (20) factor -> . LPAREN factor RPAREN
+    (21) factor -> . LPAREN RPAREN
+    (22) factor -> . IDENTIFIER
+    (23) factor -> . STRING
+    (24) factor -> . INTEGER
+    (25) factor -> . DECIMAL
+    (26) factor -> . TRUE
+    (27) factor -> . FALSE
+    (28) factor -> . NONE
+    (29) list -> . LBRACKET list_items RBRACKET
+    (30) list -> . LBRACKET RBRACKET
+    (34) tuple -> . LPAREN tuple_items RPAREN
+    (35) tuple -> . LPAREN RPAREN
+    (38) object -> . LBRACE object_items RBRACE
+    (39) object -> . LBRACE RBRACE
+
+    RBRACKET        shift and go to state 37
+    LPAREN          shift and go to state 12
+    IDENTIFIER      shift and go to state 39
+    STRING          shift and go to state 13
+    INTEGER         shift and go to state 14
+    DECIMAL         shift and go to state 15
+    TRUE            shift and go to state 16
+    FALSE           shift and go to state 17
+    NONE            shift and go to state 18
+    LBRACKET        shift and go to state 19
+    LBRACE          shift and go to state 20
+
+    list_items                     shift and go to state 36
+    factor                         shift and go to state 38
+    list                           shift and go to state 9
+    tuple                          shift and go to state 10
+    object                         shift and go to state 11
+
+state 20
+
+    (38) object -> LBRACE . object_items RBRACE
+    (39) object -> LBRACE . RBRACE
+    (40) object_items -> . factor COLON factor COMMA object_items
+    (41) object_items -> . factor COLON factor COMMA
+    (42) object_items -> . factor COLON factor
+    (15) factor -> . list
+    (16) factor -> . tuple
+    (17) factor -> . object
+    (18) factor -> . LPAREN expression RPAREN
+    (19) factor -> . LPAREN term RPAREN
+    (20) factor -> . LPAREN factor RPAREN
+    (21) factor -> . LPAREN RPAREN
+    (22) factor -> . IDENTIFIER
+    (23) factor -> . STRING
+    (24) factor -> . INTEGER
+    (25) factor -> . DECIMAL
+    (26) factor -> . TRUE
+    (27) factor -> . FALSE
+    (28) factor -> . NONE
+    (29) list -> . LBRACKET list_items RBRACKET
+    (30) list -> . LBRACKET RBRACKET
+    (34) tuple -> . LPAREN tuple_items RPAREN
+    (35) tuple -> . LPAREN RPAREN
+    (38) object -> . LBRACE object_items RBRACE
+    (39) object -> . LBRACE RBRACE
+
+    RBRACE          shift and go to state 41
+    LPAREN          shift and go to state 12
+    IDENTIFIER      shift and go to state 39
+    STRING          shift and go to state 13
+    INTEGER         shift and go to state 14
+    DECIMAL         shift and go to state 15
+    TRUE            shift and go to state 16
+    FALSE           shift and go to state 17
+    NONE            shift and go to state 18
+    LBRACKET        shift and go to state 19
+    LBRACE          shift and go to state 20
+
+    object_items                   shift and go to state 40
+    factor                         shift and go to state 42
+    list                           shift and go to state 9
+    tuple                          shift and go to state 10
+    object                         shift and go to state 11
+
+state 21
+
+    (2) statement -> statement SEMICOLON . statements
+    (3) statements -> . statement_new_var
+    (4) statements -> . expression
+    (5) statement_new_var -> . VAR IDENTIFIER EQUALS expression
+    (6) expression -> . term
+    (7) expression -> . expression PLUS term
+    (8) expression -> . expression MINUS term
+    (9) expression -> . expression DOT IDENTIFIER
+    (10) expression -> . IDENTIFIER OF expression
+    (11) term -> . factor
+    (12) term -> . term TIMES factor
+    (13) term -> . term DIVIDE factor
+    (14) term -> . term MODULO factor
+    (15) factor -> . list
+    (16) factor -> . tuple
+    (17) factor -> . object
+    (18) factor -> . LPAREN expression RPAREN
+    (19) factor -> . LPAREN term RPAREN
+    (20) factor -> . LPAREN factor RPAREN
+    (21) factor -> . LPAREN RPAREN
+    (22) factor -> . IDENTIFIER
+    (23) factor -> . STRING
+    (24) factor -> . INTEGER
+    (25) factor -> . DECIMAL
+    (26) factor -> . TRUE
+    (27) factor -> . FALSE
+    (28) factor -> . NONE
+    (29) list -> . LBRACKET list_items RBRACKET
+    (30) list -> . LBRACKET RBRACKET
+    (34) tuple -> . LPAREN tuple_items RPAREN
+    (35) tuple -> . LPAREN RPAREN
+    (38) object -> . LBRACE object_items RBRACE
+    (39) object -> . LBRACE RBRACE
+
+    VAR             shift and go to state 5
+    IDENTIFIER      shift and go to state 6
+    LPAREN          shift and go to state 12
+    STRING          shift and go to state 13
+    INTEGER         shift and go to state 14
+    DECIMAL         shift and go to state 15
+    TRUE            shift and go to state 16
+    FALSE           shift and go to state 17
+    NONE            shift and go to state 18
+    LBRACKET        shift and go to state 19
+    LBRACE          shift and go to state 20
+
+    statements                     shift and go to state 43
+    statement_new_var              shift and go to state 3
+    expression                     shift and go to state 4
+    term                           shift and go to state 7
+    factor                         shift and go to state 8
+    list                           shift and go to state 9
+    tuple                          shift and go to state 10
+    object                         shift and go to state 11
+
+state 22
+
+    (1) statement -> statements SEMICOLON .
+
+    SEMICOLON       reduce using rule 1 (statement -> statements SEMICOLON .)
+    $end            reduce using rule 1 (statement -> statements SEMICOLON .)
+
+
+state 23
+
+    (7) expression -> expression PLUS . term
+    (11) term -> . factor
+    (12) term -> . term TIMES factor
+    (13) term -> . term DIVIDE factor
+    (14) term -> . term MODULO factor
+    (15) factor -> . list
+    (16) factor -> . tuple
+    (17) factor -> . object
+    (18) factor -> . LPAREN expression RPAREN
+    (19) factor -> . LPAREN term RPAREN
+    (20) factor -> . LPAREN factor RPAREN
+    (21) factor -> . LPAREN RPAREN
+    (22) factor -> . IDENTIFIER
+    (23) factor -> . STRING
+    (24) factor -> . INTEGER
+    (25) factor -> . DECIMAL
+    (26) factor -> . TRUE
+    (27) factor -> . FALSE
+    (28) factor -> . NONE
+    (29) list -> . LBRACKET list_items RBRACKET
+    (30) list -> . LBRACKET RBRACKET
+    (34) tuple -> . LPAREN tuple_items RPAREN
+    (35) tuple -> . LPAREN RPAREN
+    (38) object -> . LBRACE object_items RBRACE
+    (39) object -> . LBRACE RBRACE
+
+    LPAREN          shift and go to state 12
+    IDENTIFIER      shift and go to state 39
+    STRING          shift and go to state 13
+    INTEGER         shift and go to state 14
+    DECIMAL         shift and go to state 15
+    TRUE            shift and go to state 16
+    FALSE           shift and go to state 17
+    NONE            shift and go to state 18
+    LBRACKET        shift and go to state 19
+    LBRACE          shift and go to state 20
+
+    term                           shift and go to state 44
+    factor                         shift and go to state 8
+    list                           shift and go to state 9
+    tuple                          shift and go to state 10
+    object                         shift and go to state 11
+
+state 24
+
+    (8) expression -> expression MINUS . term
+    (11) term -> . factor
+    (12) term -> . term TIMES factor
+    (13) term -> . term DIVIDE factor
+    (14) term -> . term MODULO factor
+    (15) factor -> . list
+    (16) factor -> . tuple
+    (17) factor -> . object
+    (18) factor -> . LPAREN expression RPAREN
+    (19) factor -> . LPAREN term RPAREN
+    (20) factor -> . LPAREN factor RPAREN
+    (21) factor -> . LPAREN RPAREN
+    (22) factor -> . IDENTIFIER
+    (23) factor -> . STRING
+    (24) factor -> . INTEGER
+    (25) factor -> . DECIMAL
+    (26) factor -> . TRUE
+    (27) factor -> . FALSE
+    (28) factor -> . NONE
+    (29) list -> . LBRACKET list_items RBRACKET
+    (30) list -> . LBRACKET RBRACKET
+    (34) tuple -> . LPAREN tuple_items RPAREN
+    (35) tuple -> . LPAREN RPAREN
+    (38) object -> . LBRACE object_items RBRACE
+    (39) object -> . LBRACE RBRACE
+
+    LPAREN          shift and go to state 12
+    IDENTIFIER      shift and go to state 39
+    STRING          shift and go to state 13
+    INTEGER         shift and go to state 14
+    DECIMAL         shift and go to state 15
+    TRUE            shift and go to state 16
+    FALSE           shift and go to state 17
+    NONE            shift and go to state 18
+    LBRACKET        shift and go to state 19
+    LBRACE          shift and go to state 20
+
+    term                           shift and go to state 45
+    factor                         shift and go to state 8
+    list                           shift and go to state 9
+    tuple                          shift and go to state 10
+    object                         shift and go to state 11
+
+state 25
+
+    (9) expression -> expression DOT . IDENTIFIER
+
+    IDENTIFIER      shift and go to state 46
+
+
+state 26
+
+    (5) statement_new_var -> VAR IDENTIFIER . EQUALS expression
+
+    EQUALS          shift and go to state 47
+
+
+state 27
+
+    (10) expression -> IDENTIFIER OF . expression
+    (6) expression -> . term
+    (7) expression -> . expression PLUS term
+    (8) expression -> . expression MINUS term
+    (9) expression -> . expression DOT IDENTIFIER
+    (10) expression -> . IDENTIFIER OF expression
+    (11) term -> . factor
+    (12) term -> . term TIMES factor
+    (13) term -> . term DIVIDE factor
+    (14) term -> . term MODULO factor
+    (15) factor -> . list
+    (16) factor -> . tuple
+    (17) factor -> . object
+    (18) factor -> . LPAREN expression RPAREN
+    (19) factor -> . LPAREN term RPAREN
+    (20) factor -> . LPAREN factor RPAREN
+    (21) factor -> . LPAREN RPAREN
+    (22) factor -> . IDENTIFIER
+    (23) factor -> . STRING
+    (24) factor -> . INTEGER
+    (25) factor -> . DECIMAL
+    (26) factor -> . TRUE
+    (27) factor -> . FALSE
+    (28) factor -> . NONE
+    (29) list -> . LBRACKET list_items RBRACKET
+    (30) list -> . LBRACKET RBRACKET
+    (34) tuple -> . LPAREN tuple_items RPAREN
+    (35) tuple -> . LPAREN RPAREN
+    (38) object -> . LBRACE object_items RBRACE
+    (39) object -> . LBRACE RBRACE
+
+    IDENTIFIER      shift and go to state 6
+    LPAREN          shift and go to state 12
+    STRING          shift and go to state 13
+    INTEGER         shift and go to state 14
+    DECIMAL         shift and go to state 15
+    TRUE            shift and go to state 16
+    FALSE           shift and go to state 17
+    NONE            shift and go to state 18
+    LBRACKET        shift and go to state 19
+    LBRACE          shift and go to state 20
+
+    expression                     shift and go to state 48
+    term                           shift and go to state 7
+    factor                         shift and go to state 8
+    list                           shift and go to state 9
+    tuple                          shift and go to state 10
+    object                         shift and go to state 11
+
+state 28
+
+    (12) term -> term TIMES . factor
+    (15) factor -> . list
+    (16) factor -> . tuple
+    (17) factor -> . object
+    (18) factor -> . LPAREN expression RPAREN
+    (19) factor -> . LPAREN term RPAREN
+    (20) factor -> . LPAREN factor RPAREN
+    (21) factor -> . LPAREN RPAREN
+    (22) factor -> . IDENTIFIER
+    (23) factor -> . STRING
+    (24) factor -> . INTEGER
+    (25) factor -> . DECIMAL
+    (26) factor -> . TRUE
+    (27) factor -> . FALSE
+    (28) factor -> . NONE
+    (29) list -> . LBRACKET list_items RBRACKET
+    (30) list -> . LBRACKET RBRACKET
+    (34) tuple -> . LPAREN tuple_items RPAREN
+    (35) tuple -> . LPAREN RPAREN
+    (38) object -> . LBRACE object_items RBRACE
+    (39) object -> . LBRACE RBRACE
+
+    LPAREN          shift and go to state 12
+    IDENTIFIER      shift and go to state 39
+    STRING          shift and go to state 13
+    INTEGER         shift and go to state 14
+    DECIMAL         shift and go to state 15
+    TRUE            shift and go to state 16
+    FALSE           shift and go to state 17
+    NONE            shift and go to state 18
+    LBRACKET        shift and go to state 19
+    LBRACE          shift and go to state 20
+
+    factor                         shift and go to state 49
+    list                           shift and go to state 9
+    tuple                          shift and go to state 10
+    object                         shift and go to state 11
+
+state 29
+
+    (13) term -> term DIVIDE . factor
+    (15) factor -> . list
+    (16) factor -> . tuple
+    (17) factor -> . object
+    (18) factor -> . LPAREN expression RPAREN
+    (19) factor -> . LPAREN term RPAREN
+    (20) factor -> . LPAREN factor RPAREN
+    (21) factor -> . LPAREN RPAREN
+    (22) factor -> . IDENTIFIER
+    (23) factor -> . STRING
+    (24) factor -> . INTEGER
+    (25) factor -> . DECIMAL
+    (26) factor -> . TRUE
+    (27) factor -> . FALSE
+    (28) factor -> . NONE
+    (29) list -> . LBRACKET list_items RBRACKET
+    (30) list -> . LBRACKET RBRACKET
+    (34) tuple -> . LPAREN tuple_items RPAREN
+    (35) tuple -> . LPAREN RPAREN
+    (38) object -> . LBRACE object_items RBRACE
+    (39) object -> . LBRACE RBRACE
+
+    LPAREN          shift and go to state 12
+    IDENTIFIER      shift and go to state 39
+    STRING          shift and go to state 13
+    INTEGER         shift and go to state 14
+    DECIMAL         shift and go to state 15
+    TRUE            shift and go to state 16
+    FALSE           shift and go to state 17
+    NONE            shift and go to state 18
+    LBRACKET        shift and go to state 19
+    LBRACE          shift and go to state 20
+
+    factor                         shift and go to state 50
+    list                           shift and go to state 9
+    tuple                          shift and go to state 10
+    object                         shift and go to state 11
+
+state 30
+
+    (14) term -> term MODULO . factor
+    (15) factor -> . list
+    (16) factor -> . tuple
+    (17) factor -> . object
+    (18) factor -> . LPAREN expression RPAREN
+    (19) factor -> . LPAREN term RPAREN
+    (20) factor -> . LPAREN factor RPAREN
+    (21) factor -> . LPAREN RPAREN
+    (22) factor -> . IDENTIFIER
+    (23) factor -> . STRING
+    (24) factor -> . INTEGER
+    (25) factor -> . DECIMAL
+    (26) factor -> . TRUE
+    (27) factor -> . FALSE
+    (28) factor -> . NONE
+    (29) list -> . LBRACKET list_items RBRACKET
+    (30) list -> . LBRACKET RBRACKET
+    (34) tuple -> . LPAREN tuple_items RPAREN
+    (35) tuple -> . LPAREN RPAREN
+    (38) object -> . LBRACE object_items RBRACE
+    (39) object -> . LBRACE RBRACE
+
+    LPAREN          shift and go to state 12
+    IDENTIFIER      shift and go to state 39
+    STRING          shift and go to state 13
+    INTEGER         shift and go to state 14
+    DECIMAL         shift and go to state 15
+    TRUE            shift and go to state 16
+    FALSE           shift and go to state 17
+    NONE            shift and go to state 18
+    LBRACKET        shift and go to state 19
+    LBRACE          shift and go to state 20
+
+    factor                         shift and go to state 51
+    list                           shift and go to state 9
+    tuple                          shift and go to state 10
+    object                         shift and go to state 11
+
+state 31
+
+    (18) factor -> LPAREN expression . RPAREN
+    (7) expression -> expression . PLUS term
+    (8) expression -> expression . MINUS term
+    (9) expression -> expression . DOT IDENTIFIER
+
+    RPAREN          shift and go to state 52
+    PLUS            shift and go to state 23
+    MINUS           shift and go to state 24
+    DOT             shift and go to state 25
+
+
+state 32
+
+    (21) factor -> LPAREN RPAREN .
+    (35) tuple -> LPAREN RPAREN .
+
+  ! reduce/reduce conflict for TIMES resolved using rule 21 (factor -> LPAREN RPAREN .)
+  ! reduce/reduce conflict for DIVIDE resolved using rule 21 (factor -> LPAREN RPAREN .)
+  ! reduce/reduce conflict for MODULO resolved using rule 21 (factor -> LPAREN RPAREN .)
+  ! reduce/reduce conflict for PLUS resolved using rule 21 (factor -> LPAREN RPAREN .)
+  ! reduce/reduce conflict for MINUS resolved using rule 21 (factor -> LPAREN RPAREN .)
+  ! reduce/reduce conflict for DOT resolved using rule 21 (factor -> LPAREN RPAREN .)
+  ! reduce/reduce conflict for SEMICOLON resolved using rule 21 (factor -> LPAREN RPAREN .)
+  ! reduce/reduce conflict for RPAREN resolved using rule 21 (factor -> LPAREN RPAREN .)
+  ! reduce/reduce conflict for COMMA resolved using rule 21 (factor -> LPAREN RPAREN .)
+  ! reduce/reduce conflict for RBRACKET resolved using rule 21 (factor -> LPAREN RPAREN .)
+  ! reduce/reduce conflict for COLON resolved using rule 21 (factor -> LPAREN RPAREN .)
+  ! reduce/reduce conflict for $end resolved using rule 21 (factor -> LPAREN RPAREN .)
+  ! reduce/reduce conflict for RBRACE resolved using rule 21 (factor -> LPAREN RPAREN .)
+    TIMES           reduce using rule 21 (factor -> LPAREN RPAREN .)
+    DIVIDE          reduce using rule 21 (factor -> LPAREN RPAREN .)
+    MODULO          reduce using rule 21 (factor -> LPAREN RPAREN .)
+    PLUS            reduce using rule 21 (factor -> LPAREN RPAREN .)
+    MINUS           reduce using rule 21 (factor -> LPAREN RPAREN .)
+    DOT             reduce using rule 21 (factor -> LPAREN RPAREN .)
+    SEMICOLON       reduce using rule 21 (factor -> LPAREN RPAREN .)
+    RPAREN          reduce using rule 21 (factor -> LPAREN RPAREN .)
+    COMMA           reduce using rule 21 (factor -> LPAREN RPAREN .)
+    RBRACKET        reduce using rule 21 (factor -> LPAREN RPAREN .)
+    COLON           reduce using rule 21 (factor -> LPAREN RPAREN .)
+    $end            reduce using rule 21 (factor -> LPAREN RPAREN .)
+    RBRACE          reduce using rule 21 (factor -> LPAREN RPAREN .)
+
+  ! TIMES           [ reduce using rule 35 (tuple -> LPAREN RPAREN .) ]
+  ! DIVIDE          [ reduce using rule 35 (tuple -> LPAREN RPAREN .) ]
+  ! MODULO          [ reduce using rule 35 (tuple -> LPAREN RPAREN .) ]
+  ! PLUS            [ reduce using rule 35 (tuple -> LPAREN RPAREN .) ]
+  ! MINUS           [ reduce using rule 35 (tuple -> LPAREN RPAREN .) ]
+  ! DOT             [ reduce using rule 35 (tuple -> LPAREN RPAREN .) ]
+  ! SEMICOLON       [ reduce using rule 35 (tuple -> LPAREN RPAREN .) ]
+  ! RPAREN          [ reduce using rule 35 (tuple -> LPAREN RPAREN .) ]
+  ! COMMA           [ reduce using rule 35 (tuple -> LPAREN RPAREN .) ]
+  ! RBRACKET        [ reduce using rule 35 (tuple -> LPAREN RPAREN .) ]
+  ! COLON           [ reduce using rule 35 (tuple -> LPAREN RPAREN .) ]
+  ! $end            [ reduce using rule 35 (tuple -> LPAREN RPAREN .) ]
+  ! RBRACE          [ reduce using rule 35 (tuple -> LPAREN RPAREN .) ]
+
+
+state 33
+
+    (19) factor -> LPAREN term . RPAREN
+    (6) expression -> term .
+    (12) term -> term . TIMES factor
+    (13) term -> term . DIVIDE factor
+    (14) term -> term . MODULO factor
+
+  ! shift/reduce conflict for RPAREN resolved as shift
+    RPAREN          shift and go to state 53
+    PLUS            reduce using rule 6 (expression -> term .)
+    MINUS           reduce using rule 6 (expression -> term .)
+    DOT             reduce using rule 6 (expression -> term .)
+    TIMES           shift and go to state 28
+    DIVIDE          shift and go to state 29
+    MODULO          shift and go to state 30
+
+  ! RPAREN          [ reduce using rule 6 (expression -> term .) ]
+
+
+state 34
+
+    (20) factor -> LPAREN factor . RPAREN
+    (11) term -> factor .
+    (36) tuple_items -> factor . COMMA tuple_items
+    (37) tuple_items -> factor . COMMA
+
+  ! shift/reduce conflict for RPAREN resolved as shift
+    RPAREN          shift and go to state 54
+    TIMES           reduce using rule 11 (term -> factor .)
+    DIVIDE          reduce using rule 11 (term -> factor .)
+    MODULO          reduce using rule 11 (term -> factor .)
+    PLUS            reduce using rule 11 (term -> factor .)
+    MINUS           reduce using rule 11 (term -> factor .)
+    DOT             reduce using rule 11 (term -> factor .)
+    COMMA           shift and go to state 55
+
+  ! RPAREN          [ reduce using rule 11 (term -> factor .) ]
+
+
+state 35
+
+    (34) tuple -> LPAREN tuple_items . RPAREN
+
+    RPAREN          shift and go to state 56
+
+
+state 36
+
+    (29) list -> LBRACKET list_items . RBRACKET
+
+    RBRACKET        shift and go to state 57
+
+
+state 37
+
+    (30) list -> LBRACKET RBRACKET .
+
+    TIMES           reduce using rule 30 (list -> LBRACKET RBRACKET .)
+    DIVIDE          reduce using rule 30 (list -> LBRACKET RBRACKET .)
+    MODULO          reduce using rule 30 (list -> LBRACKET RBRACKET .)
+    PLUS            reduce using rule 30 (list -> LBRACKET RBRACKET .)
+    MINUS           reduce using rule 30 (list -> LBRACKET RBRACKET .)
+    DOT             reduce using rule 30 (list -> LBRACKET RBRACKET .)
+    SEMICOLON       reduce using rule 30 (list -> LBRACKET RBRACKET .)
+    RPAREN          reduce using rule 30 (list -> LBRACKET RBRACKET .)
+    COMMA           reduce using rule 30 (list -> LBRACKET RBRACKET .)
+    RBRACKET        reduce using rule 30 (list -> LBRACKET RBRACKET .)
+    COLON           reduce using rule 30 (list -> LBRACKET RBRACKET .)
+    $end            reduce using rule 30 (list -> LBRACKET RBRACKET .)
+    RBRACE          reduce using rule 30 (list -> LBRACKET RBRACKET .)
+
+
+state 38
+
+    (31) list_items -> factor . COMMA list_items
+    (32) list_items -> factor . COMMA
+    (33) list_items -> factor .
+
+    COMMA           shift and go to state 58
+    RBRACKET        reduce using rule 33 (list_items -> factor .)
+
+
+state 39
+
+    (22) factor -> IDENTIFIER .
+
+    COMMA           reduce using rule 22 (factor -> IDENTIFIER .)
+    RBRACKET        reduce using rule 22 (factor -> IDENTIFIER .)
+    COLON           reduce using rule 22 (factor -> IDENTIFIER .)
+    TIMES           reduce using rule 22 (factor -> IDENTIFIER .)
+    DIVIDE          reduce using rule 22 (factor -> IDENTIFIER .)
+    MODULO          reduce using rule 22 (factor -> IDENTIFIER .)
+    PLUS            reduce using rule 22 (factor -> IDENTIFIER .)
+    MINUS           reduce using rule 22 (factor -> IDENTIFIER .)
+    DOT             reduce using rule 22 (factor -> IDENTIFIER .)
+    SEMICOLON       reduce using rule 22 (factor -> IDENTIFIER .)
+    RPAREN          reduce using rule 22 (factor -> IDENTIFIER .)
+    $end            reduce using rule 22 (factor -> IDENTIFIER .)
+    RBRACE          reduce using rule 22 (factor -> IDENTIFIER .)
+
+
+state 40
+
+    (38) object -> LBRACE object_items . RBRACE
+
+    RBRACE          shift and go to state 59
+
+
+state 41
+
+    (39) object -> LBRACE RBRACE .
+
+    TIMES           reduce using rule 39 (object -> LBRACE RBRACE .)
+    DIVIDE          reduce using rule 39 (object -> LBRACE RBRACE .)
+    MODULO          reduce using rule 39 (object -> LBRACE RBRACE .)
+    PLUS            reduce using rule 39 (object -> LBRACE RBRACE .)
+    MINUS           reduce using rule 39 (object -> LBRACE RBRACE .)
+    DOT             reduce using rule 39 (object -> LBRACE RBRACE .)
+    SEMICOLON       reduce using rule 39 (object -> LBRACE RBRACE .)
+    RPAREN          reduce using rule 39 (object -> LBRACE RBRACE .)
+    COMMA           reduce using rule 39 (object -> LBRACE RBRACE .)
+    RBRACKET        reduce using rule 39 (object -> LBRACE RBRACE .)
+    COLON           reduce using rule 39 (object -> LBRACE RBRACE .)
+    $end            reduce using rule 39 (object -> LBRACE RBRACE .)
+    RBRACE          reduce using rule 39 (object -> LBRACE RBRACE .)
+
+
+state 42
+
+    (40) object_items -> factor . COLON factor COMMA object_items
+    (41) object_items -> factor . COLON factor COMMA
+    (42) object_items -> factor . COLON factor
+
+    COLON           shift and go to state 60
+
+
+state 43
+
+    (2) statement -> statement SEMICOLON statements .
+
+    SEMICOLON       reduce using rule 2 (statement -> statement SEMICOLON statements .)
+    $end            reduce using rule 2 (statement -> statement SEMICOLON statements .)
+
+
+state 44
+
+    (7) expression -> expression PLUS term .
+    (12) term -> term . TIMES factor
+    (13) term -> term . DIVIDE factor
+    (14) term -> term . MODULO factor
+
+    PLUS            reduce using rule 7 (expression -> expression PLUS term .)
+    MINUS           reduce using rule 7 (expression -> expression PLUS term .)
+    DOT             reduce using rule 7 (expression -> expression PLUS term .)
+    SEMICOLON       reduce using rule 7 (expression -> expression PLUS term .)
+    RPAREN          reduce using rule 7 (expression -> expression PLUS term .)
+    $end            reduce using rule 7 (expression -> expression PLUS term .)
+    TIMES           shift and go to state 28
+    DIVIDE          shift and go to state 29
+    MODULO          shift and go to state 30
+
+
+state 45
+
+    (8) expression -> expression MINUS term .
+    (12) term -> term . TIMES factor
+    (13) term -> term . DIVIDE factor
+    (14) term -> term . MODULO factor
+
+    PLUS            reduce using rule 8 (expression -> expression MINUS term .)
+    MINUS           reduce using rule 8 (expression -> expression MINUS term .)
+    DOT             reduce using rule 8 (expression -> expression MINUS term .)
+    SEMICOLON       reduce using rule 8 (expression -> expression MINUS term .)
+    RPAREN          reduce using rule 8 (expression -> expression MINUS term .)
+    $end            reduce using rule 8 (expression -> expression MINUS term .)
+    TIMES           shift and go to state 28
+    DIVIDE          shift and go to state 29
+    MODULO          shift and go to state 30
+
+
+state 46
+
+    (9) expression -> expression DOT IDENTIFIER .
+
+    PLUS            reduce using rule 9 (expression -> expression DOT IDENTIFIER .)
+    MINUS           reduce using rule 9 (expression -> expression DOT IDENTIFIER .)
+    DOT             reduce using rule 9 (expression -> expression DOT IDENTIFIER .)
+    SEMICOLON       reduce using rule 9 (expression -> expression DOT IDENTIFIER .)
+    RPAREN          reduce using rule 9 (expression -> expression DOT IDENTIFIER .)
+    $end            reduce using rule 9 (expression -> expression DOT IDENTIFIER .)
+
+
+state 47
+
+    (5) statement_new_var -> VAR IDENTIFIER EQUALS . expression
+    (6) expression -> . term
+    (7) expression -> . expression PLUS term
+    (8) expression -> . expression MINUS term
+    (9) expression -> . expression DOT IDENTIFIER
+    (10) expression -> . IDENTIFIER OF expression
+    (11) term -> . factor
+    (12) term -> . term TIMES factor
+    (13) term -> . term DIVIDE factor
+    (14) term -> . term MODULO factor
+    (15) factor -> . list
+    (16) factor -> . tuple
+    (17) factor -> . object
+    (18) factor -> . LPAREN expression RPAREN
+    (19) factor -> . LPAREN term RPAREN
+    (20) factor -> . LPAREN factor RPAREN
+    (21) factor -> . LPAREN RPAREN
+    (22) factor -> . IDENTIFIER
+    (23) factor -> . STRING
+    (24) factor -> . INTEGER
+    (25) factor -> . DECIMAL
+    (26) factor -> . TRUE
+    (27) factor -> . FALSE
+    (28) factor -> . NONE
+    (29) list -> . LBRACKET list_items RBRACKET
+    (30) list -> . LBRACKET RBRACKET
+    (34) tuple -> . LPAREN tuple_items RPAREN
+    (35) tuple -> . LPAREN RPAREN
+    (38) object -> . LBRACE object_items RBRACE
+    (39) object -> . LBRACE RBRACE
+
+    IDENTIFIER      shift and go to state 6
+    LPAREN          shift and go to state 12
+    STRING          shift and go to state 13
+    INTEGER         shift and go to state 14
+    DECIMAL         shift and go to state 15
+    TRUE            shift and go to state 16
+    FALSE           shift and go to state 17
+    NONE            shift and go to state 18
+    LBRACKET        shift and go to state 19
+    LBRACE          shift and go to state 20
+
+    expression                     shift and go to state 61
+    term                           shift and go to state 7
+    factor                         shift and go to state 8
+    list                           shift and go to state 9
+    tuple                          shift and go to state 10
+    object                         shift and go to state 11
+
+state 48
+
+    (10) expression -> IDENTIFIER OF expression .
+    (7) expression -> expression . PLUS term
+    (8) expression -> expression . MINUS term
+    (9) expression -> expression . DOT IDENTIFIER
+
+  ! shift/reduce conflict for PLUS resolved as shift
+  ! shift/reduce conflict for MINUS resolved as shift
+  ! shift/reduce conflict for DOT resolved as shift
+    SEMICOLON       reduce using rule 10 (expression -> IDENTIFIER OF expression .)
+    RPAREN          reduce using rule 10 (expression -> IDENTIFIER OF expression .)
+    $end            reduce using rule 10 (expression -> IDENTIFIER OF expression .)
+    PLUS            shift and go to state 23
+    MINUS           shift and go to state 24
+    DOT             shift and go to state 25
+
+  ! PLUS            [ reduce using rule 10 (expression -> IDENTIFIER OF expression .) ]
+  ! MINUS           [ reduce using rule 10 (expression -> IDENTIFIER OF expression .) ]
+  ! DOT             [ reduce using rule 10 (expression -> IDENTIFIER OF expression .) ]
+
+
+state 49
+
+    (12) term -> term TIMES factor .
+
+    TIMES           reduce using rule 12 (term -> term TIMES factor .)
+    DIVIDE          reduce using rule 12 (term -> term TIMES factor .)
+    MODULO          reduce using rule 12 (term -> term TIMES factor .)
+    PLUS            reduce using rule 12 (term -> term TIMES factor .)
+    MINUS           reduce using rule 12 (term -> term TIMES factor .)
+    DOT             reduce using rule 12 (term -> term TIMES factor .)
+    SEMICOLON       reduce using rule 12 (term -> term TIMES factor .)
+    RPAREN          reduce using rule 12 (term -> term TIMES factor .)
+    $end            reduce using rule 12 (term -> term TIMES factor .)
+
+
+state 50
+
+    (13) term -> term DIVIDE factor .
+
+    TIMES           reduce using rule 13 (term -> term DIVIDE factor .)
+    DIVIDE          reduce using rule 13 (term -> term DIVIDE factor .)
+    MODULO          reduce using rule 13 (term -> term DIVIDE factor .)
+    PLUS            reduce using rule 13 (term -> term DIVIDE factor .)
+    MINUS           reduce using rule 13 (term -> term DIVIDE factor .)
+    DOT             reduce using rule 13 (term -> term DIVIDE factor .)
+    SEMICOLON       reduce using rule 13 (term -> term DIVIDE factor .)
+    RPAREN          reduce using rule 13 (term -> term DIVIDE factor .)
+    $end            reduce using rule 13 (term -> term DIVIDE factor .)
+
+
+state 51
+
+    (14) term -> term MODULO factor .
+
+    TIMES           reduce using rule 14 (term -> term MODULO factor .)
+    DIVIDE          reduce using rule 14 (term -> term MODULO factor .)
+    MODULO          reduce using rule 14 (term -> term MODULO factor .)
+    PLUS            reduce using rule 14 (term -> term MODULO factor .)
+    MINUS           reduce using rule 14 (term -> term MODULO factor .)
+    DOT             reduce using rule 14 (term -> term MODULO factor .)
+    SEMICOLON       reduce using rule 14 (term -> term MODULO factor .)
+    RPAREN          reduce using rule 14 (term -> term MODULO factor .)
+    $end            reduce using rule 14 (term -> term MODULO factor .)
+
+
+state 52
+
+    (18) factor -> LPAREN expression RPAREN .
+
+    TIMES           reduce using rule 18 (factor -> LPAREN expression RPAREN .)
+    DIVIDE          reduce using rule 18 (factor -> LPAREN expression RPAREN .)
+    MODULO          reduce using rule 18 (factor -> LPAREN expression RPAREN .)
+    PLUS            reduce using rule 18 (factor -> LPAREN expression RPAREN .)
+    MINUS           reduce using rule 18 (factor -> LPAREN expression RPAREN .)
+    DOT             reduce using rule 18 (factor -> LPAREN expression RPAREN .)
+    SEMICOLON       reduce using rule 18 (factor -> LPAREN expression RPAREN .)
+    RPAREN          reduce using rule 18 (factor -> LPAREN expression RPAREN .)
+    COMMA           reduce using rule 18 (factor -> LPAREN expression RPAREN .)
+    RBRACKET        reduce using rule 18 (factor -> LPAREN expression RPAREN .)
+    COLON           reduce using rule 18 (factor -> LPAREN expression RPAREN .)
+    $end            reduce using rule 18 (factor -> LPAREN expression RPAREN .)
+    RBRACE          reduce using rule 18 (factor -> LPAREN expression RPAREN .)
+
+
+state 53
+
+    (19) factor -> LPAREN term RPAREN .
+
+    TIMES           reduce using rule 19 (factor -> LPAREN term RPAREN .)
+    DIVIDE          reduce using rule 19 (factor -> LPAREN term RPAREN .)
+    MODULO          reduce using rule 19 (factor -> LPAREN term RPAREN .)
+    PLUS            reduce using rule 19 (factor -> LPAREN term RPAREN .)
+    MINUS           reduce using rule 19 (factor -> LPAREN term RPAREN .)
+    DOT             reduce using rule 19 (factor -> LPAREN term RPAREN .)
+    SEMICOLON       reduce using rule 19 (factor -> LPAREN term RPAREN .)
+    RPAREN          reduce using rule 19 (factor -> LPAREN term RPAREN .)
+    COMMA           reduce using rule 19 (factor -> LPAREN term RPAREN .)
+    RBRACKET        reduce using rule 19 (factor -> LPAREN term RPAREN .)
+    COLON           reduce using rule 19 (factor -> LPAREN term RPAREN .)
+    $end            reduce using rule 19 (factor -> LPAREN term RPAREN .)
+    RBRACE          reduce using rule 19 (factor -> LPAREN term RPAREN .)
+
+
+state 54
+
+    (20) factor -> LPAREN factor RPAREN .
+
+    TIMES           reduce using rule 20 (factor -> LPAREN factor RPAREN .)
+    DIVIDE          reduce using rule 20 (factor -> LPAREN factor RPAREN .)
+    MODULO          reduce using rule 20 (factor -> LPAREN factor RPAREN .)
+    PLUS            reduce using rule 20 (factor -> LPAREN factor RPAREN .)
+    MINUS           reduce using rule 20 (factor -> LPAREN factor RPAREN .)
+    DOT             reduce using rule 20 (factor -> LPAREN factor RPAREN .)
+    SEMICOLON       reduce using rule 20 (factor -> LPAREN factor RPAREN .)
+    RPAREN          reduce using rule 20 (factor -> LPAREN factor RPAREN .)
+    COMMA           reduce using rule 20 (factor -> LPAREN factor RPAREN .)
+    RBRACKET        reduce using rule 20 (factor -> LPAREN factor RPAREN .)
+    COLON           reduce using rule 20 (factor -> LPAREN factor RPAREN .)
+    $end            reduce using rule 20 (factor -> LPAREN factor RPAREN .)
+    RBRACE          reduce using rule 20 (factor -> LPAREN factor RPAREN .)
+
+
+state 55
+
+    (36) tuple_items -> factor COMMA . tuple_items
+    (37) tuple_items -> factor COMMA .
+    (36) tuple_items -> . factor COMMA tuple_items
+    (37) tuple_items -> . factor COMMA
+    (15) factor -> . list
+    (16) factor -> . tuple
+    (17) factor -> . object
+    (18) factor -> . LPAREN expression RPAREN
+    (19) factor -> . LPAREN term RPAREN
+    (20) factor -> . LPAREN factor RPAREN
+    (21) factor -> . LPAREN RPAREN
+    (22) factor -> . IDENTIFIER
+    (23) factor -> . STRING
+    (24) factor -> . INTEGER
+    (25) factor -> . DECIMAL
+    (26) factor -> . TRUE
+    (27) factor -> . FALSE
+    (28) factor -> . NONE
+    (29) list -> . LBRACKET list_items RBRACKET
+    (30) list -> . LBRACKET RBRACKET
+    (34) tuple -> . LPAREN tuple_items RPAREN
+    (35) tuple -> . LPAREN RPAREN
+    (38) object -> . LBRACE object_items RBRACE
+    (39) object -> . LBRACE RBRACE
+
+    RPAREN          reduce using rule 37 (tuple_items -> factor COMMA .)
+    LPAREN          shift and go to state 12
+    IDENTIFIER      shift and go to state 39
+    STRING          shift and go to state 13
+    INTEGER         shift and go to state 14
+    DECIMAL         shift and go to state 15
+    TRUE            shift and go to state 16
+    FALSE           shift and go to state 17
+    NONE            shift and go to state 18
+    LBRACKET        shift and go to state 19
+    LBRACE          shift and go to state 20
+
+    factor                         shift and go to state 62
+    tuple_items                    shift and go to state 63
+    list                           shift and go to state 9
+    tuple                          shift and go to state 10
+    object                         shift and go to state 11
+
+state 56
+
+    (34) tuple -> LPAREN tuple_items RPAREN .
+
+    TIMES           reduce using rule 34 (tuple -> LPAREN tuple_items RPAREN .)
+    DIVIDE          reduce using rule 34 (tuple -> LPAREN tuple_items RPAREN .)
+    MODULO          reduce using rule 34 (tuple -> LPAREN tuple_items RPAREN .)
+    PLUS            reduce using rule 34 (tuple -> LPAREN tuple_items RPAREN .)
+    MINUS           reduce using rule 34 (tuple -> LPAREN tuple_items RPAREN .)
+    DOT             reduce using rule 34 (tuple -> LPAREN tuple_items RPAREN .)
+    SEMICOLON       reduce using rule 34 (tuple -> LPAREN tuple_items RPAREN .)
+    RPAREN          reduce using rule 34 (tuple -> LPAREN tuple_items RPAREN .)
+    COMMA           reduce using rule 34 (tuple -> LPAREN tuple_items RPAREN .)
+    RBRACKET        reduce using rule 34 (tuple -> LPAREN tuple_items RPAREN .)
+    COLON           reduce using rule 34 (tuple -> LPAREN tuple_items RPAREN .)
+    $end            reduce using rule 34 (tuple -> LPAREN tuple_items RPAREN .)
+    RBRACE          reduce using rule 34 (tuple -> LPAREN tuple_items RPAREN .)
+
+
+state 57
+
+    (29) list -> LBRACKET list_items RBRACKET .
+
+    TIMES           reduce using rule 29 (list -> LBRACKET list_items RBRACKET .)
+    DIVIDE          reduce using rule 29 (list -> LBRACKET list_items RBRACKET .)
+    MODULO          reduce using rule 29 (list -> LBRACKET list_items RBRACKET .)
+    PLUS            reduce using rule 29 (list -> LBRACKET list_items RBRACKET .)
+    MINUS           reduce using rule 29 (list -> LBRACKET list_items RBRACKET .)
+    DOT             reduce using rule 29 (list -> LBRACKET list_items RBRACKET .)
+    SEMICOLON       reduce using rule 29 (list -> LBRACKET list_items RBRACKET .)
+    RPAREN          reduce using rule 29 (list -> LBRACKET list_items RBRACKET .)
+    COMMA           reduce using rule 29 (list -> LBRACKET list_items RBRACKET .)
+    RBRACKET        reduce using rule 29 (list -> LBRACKET list_items RBRACKET .)
+    COLON           reduce using rule 29 (list -> LBRACKET list_items RBRACKET .)
+    $end            reduce using rule 29 (list -> LBRACKET list_items RBRACKET .)
+    RBRACE          reduce using rule 29 (list -> LBRACKET list_items RBRACKET .)
+
+
+state 58
+
+    (31) list_items -> factor COMMA . list_items
+    (32) list_items -> factor COMMA .
+    (31) list_items -> . factor COMMA list_items
+    (32) list_items -> . factor COMMA
+    (33) list_items -> . factor
+    (15) factor -> . list
+    (16) factor -> . tuple
+    (17) factor -> . object
+    (18) factor -> . LPAREN expression RPAREN
+    (19) factor -> . LPAREN term RPAREN
+    (20) factor -> . LPAREN factor RPAREN
+    (21) factor -> . LPAREN RPAREN
+    (22) factor -> . IDENTIFIER
+    (23) factor -> . STRING
+    (24) factor -> . INTEGER
+    (25) factor -> . DECIMAL
+    (26) factor -> . TRUE
+    (27) factor -> . FALSE
+    (28) factor -> . NONE
+    (29) list -> . LBRACKET list_items RBRACKET
+    (30) list -> . LBRACKET RBRACKET
+    (34) tuple -> . LPAREN tuple_items RPAREN
+    (35) tuple -> . LPAREN RPAREN
+    (38) object -> . LBRACE object_items RBRACE
+    (39) object -> . LBRACE RBRACE
+
+    RBRACKET        reduce using rule 32 (list_items -> factor COMMA .)
+    LPAREN          shift and go to state 12
+    IDENTIFIER      shift and go to state 39
+    STRING          shift and go to state 13
+    INTEGER         shift and go to state 14
+    DECIMAL         shift and go to state 15
+    TRUE            shift and go to state 16
+    FALSE           shift and go to state 17
+    NONE            shift and go to state 18
+    LBRACKET        shift and go to state 19
+    LBRACE          shift and go to state 20
+
+    factor                         shift and go to state 38
+    list_items                     shift and go to state 64
+    list                           shift and go to state 9
+    tuple                          shift and go to state 10
+    object                         shift and go to state 11
+
+state 59
+
+    (38) object -> LBRACE object_items RBRACE .
+
+    TIMES           reduce using rule 38 (object -> LBRACE object_items RBRACE .)
+    DIVIDE          reduce using rule 38 (object -> LBRACE object_items RBRACE .)
+    MODULO          reduce using rule 38 (object -> LBRACE object_items RBRACE .)
+    PLUS            reduce using rule 38 (object -> LBRACE object_items RBRACE .)
+    MINUS           reduce using rule 38 (object -> LBRACE object_items RBRACE .)
+    DOT             reduce using rule 38 (object -> LBRACE object_items RBRACE .)
+    SEMICOLON       reduce using rule 38 (object -> LBRACE object_items RBRACE .)
+    RPAREN          reduce using rule 38 (object -> LBRACE object_items RBRACE .)
+    COMMA           reduce using rule 38 (object -> LBRACE object_items RBRACE .)
+    RBRACKET        reduce using rule 38 (object -> LBRACE object_items RBRACE .)
+    COLON           reduce using rule 38 (object -> LBRACE object_items RBRACE .)
+    $end            reduce using rule 38 (object -> LBRACE object_items RBRACE .)
+    RBRACE          reduce using rule 38 (object -> LBRACE object_items RBRACE .)
+
+
+state 60
+
+    (40) object_items -> factor COLON . factor COMMA object_items
+    (41) object_items -> factor COLON . factor COMMA
+    (42) object_items -> factor COLON . factor
+    (15) factor -> . list
+    (16) factor -> . tuple
+    (17) factor -> . object
+    (18) factor -> . LPAREN expression RPAREN
+    (19) factor -> . LPAREN term RPAREN
+    (20) factor -> . LPAREN factor RPAREN
+    (21) factor -> . LPAREN RPAREN
+    (22) factor -> . IDENTIFIER
+    (23) factor -> . STRING
+    (24) factor -> . INTEGER
+    (25) factor -> . DECIMAL
+    (26) factor -> . TRUE
+    (27) factor -> . FALSE
+    (28) factor -> . NONE
+    (29) list -> . LBRACKET list_items RBRACKET
+    (30) list -> . LBRACKET RBRACKET
+    (34) tuple -> . LPAREN tuple_items RPAREN
+    (35) tuple -> . LPAREN RPAREN
+    (38) object -> . LBRACE object_items RBRACE
+    (39) object -> . LBRACE RBRACE
+
+    LPAREN          shift and go to state 12
+    IDENTIFIER      shift and go to state 39
+    STRING          shift and go to state 13
+    INTEGER         shift and go to state 14
+    DECIMAL         shift and go to state 15
+    TRUE            shift and go to state 16
+    FALSE           shift and go to state 17
+    NONE            shift and go to state 18
+    LBRACKET        shift and go to state 19
+    LBRACE          shift and go to state 20
+
+    factor                         shift and go to state 65
+    list                           shift and go to state 9
+    tuple                          shift and go to state 10
+    object                         shift and go to state 11
+
+state 61
+
+    (5) statement_new_var -> VAR IDENTIFIER EQUALS expression .
+    (7) expression -> expression . PLUS term
+    (8) expression -> expression . MINUS term
+    (9) expression -> expression . DOT IDENTIFIER
+
+    SEMICOLON       reduce using rule 5 (statement_new_var -> VAR IDENTIFIER EQUALS expression .)
+    $end            reduce using rule 5 (statement_new_var -> VAR IDENTIFIER EQUALS expression .)
+    PLUS            shift and go to state 23
+    MINUS           shift and go to state 24
+    DOT             shift and go to state 25
+
+
+state 62
+
+    (36) tuple_items -> factor . COMMA tuple_items
+    (37) tuple_items -> factor . COMMA
+
+    COMMA           shift and go to state 55
+
+
+state 63
+
+    (36) tuple_items -> factor COMMA tuple_items .
+
+    RPAREN          reduce using rule 36 (tuple_items -> factor COMMA tuple_items .)
+
+
+state 64
+
+    (31) list_items -> factor COMMA list_items .
+
+    RBRACKET        reduce using rule 31 (list_items -> factor COMMA list_items .)
+
+
+state 65
+
+    (40) object_items -> factor COLON factor . COMMA object_items
+    (41) object_items -> factor COLON factor . COMMA
+    (42) object_items -> factor COLON factor .
+
+    COMMA           shift and go to state 66
+    RBRACE          reduce using rule 42 (object_items -> factor COLON factor .)
+
+
+state 66
+
+    (40) object_items -> factor COLON factor COMMA . object_items
+    (41) object_items -> factor COLON factor COMMA .
+    (40) object_items -> . factor COLON factor COMMA object_items
+    (41) object_items -> . factor COLON factor COMMA
+    (42) object_items -> . factor COLON factor
+    (15) factor -> . list
+    (16) factor -> . tuple
+    (17) factor -> . object
+    (18) factor -> . LPAREN expression RPAREN
+    (19) factor -> . LPAREN term RPAREN
+    (20) factor -> . LPAREN factor RPAREN
+    (21) factor -> . LPAREN RPAREN
+    (22) factor -> . IDENTIFIER
+    (23) factor -> . STRING
+    (24) factor -> . INTEGER
+    (25) factor -> . DECIMAL
+    (26) factor -> . TRUE
+    (27) factor -> . FALSE
+    (28) factor -> . NONE
+    (29) list -> . LBRACKET list_items RBRACKET
+    (30) list -> . LBRACKET RBRACKET
+    (34) tuple -> . LPAREN tuple_items RPAREN
+    (35) tuple -> . LPAREN RPAREN
+    (38) object -> . LBRACE object_items RBRACE
+    (39) object -> . LBRACE RBRACE
+
+    RBRACE          reduce using rule 41 (object_items -> factor COLON factor COMMA .)
+    LPAREN          shift and go to state 12
+    IDENTIFIER      shift and go to state 39
+    STRING          shift and go to state 13
+    INTEGER         shift and go to state 14
+    DECIMAL         shift and go to state 15
+    TRUE            shift and go to state 16
+    FALSE           shift and go to state 17
+    NONE            shift and go to state 18
+    LBRACKET        shift and go to state 19
+    LBRACE          shift and go to state 20
+
+    factor                         shift and go to state 42
+    object_items                   shift and go to state 67
+    list                           shift and go to state 9
+    tuple                          shift and go to state 10
+    object                         shift and go to state 11
+
+state 67
+
+    (40) object_items -> factor COLON factor COMMA object_items .
+
+    RBRACE          reduce using rule 40 (object_items -> factor COLON factor COMMA object_items .)
+
+WARNING: 
+WARNING: Conflicts:
+WARNING: 
+WARNING: shift/reduce conflict for RPAREN in state 33 resolved as shift
+WARNING: shift/reduce conflict for RPAREN in state 34 resolved as shift
+WARNING: shift/reduce conflict for PLUS in state 48 resolved as shift
+WARNING: shift/reduce conflict for MINUS in state 48 resolved as shift
+WARNING: shift/reduce conflict for DOT in state 48 resolved as shift
+WARNING: reduce/reduce conflict in state 32 resolved using rule (factor -> LPAREN RPAREN)
+WARNING: rejected rule (tuple -> LPAREN RPAREN) in state 32
+WARNING: Rule (tuple -> LPAREN RPAREN) is never reduced

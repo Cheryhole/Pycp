@@ -78,8 +78,8 @@ __tabversion__ = '3.10'
 yaccdebug   = True             # Debugging mode.  If set, yacc generates a
                                # a 'parser.out' file in the current directory
 
-debug_file  = 'parser.out'     # Default name of the debugging file
-tab_module  = 'parsetab'       # Default name of the table module
+debug_file  = 'PycpParseDebug' # Default name of the debugging file
+tab_module  = 'PycpParseTable' # Default name of the table module
 default_lr  = 'LALR'           # Default LR table generation method
 
 error_count = 3                # Number of symbols that must be shifted to leave recovery mode
