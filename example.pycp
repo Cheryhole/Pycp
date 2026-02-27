@@ -1,0 +1,57 @@
+from builtins import *
+
+a = 23 - 5 * 7
+print(a, file = stdout)
+print(2 ** 3)
+
+func get_input(tip: string = "") -> string{
+	print(tip)
+	return input()
+}
+
+fx = func(x){
+	if x % 2 == 0{
+		return x + 1
+	}
+	elif (x % 3) == 0{
+		return x - 1
+	}
+	else{
+		return 2 * x
+	}
+	
+}
+b = fx(3)
+
+class Data(Object){
+	func __initialize__(self, x: int, y: int){
+		self.x = x
+		self.y = y	  
+	}
+
+	func __string__(self) -> string{
+		return "x = " + str(self.x) + ", y = " + str(self.y)
+	}
+}
+
+d = Data(1, 2)
+print(d)
+
+func modify(p: Pointer) -> void{
+	p.value = "Changed"
+}
+
+v = "Hello, World!"
+c = Pointer.new(v)
+modify(c)
+print(v)
+c.free()
+
+m: map = {
+	"key": "value",
+}
+
+v1 = m["key"] 
+
+l: list = [1,2,3]
+print(l[1])
