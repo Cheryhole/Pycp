@@ -7,6 +7,7 @@ reserved_keywords: list[str] = [
 	"if", # 如果
 	"elif", # 否则如果
 	"else", # 否则
+	"None", # 空值
 ]
 
 states = (
@@ -23,9 +24,14 @@ tokens: list[str] = [
 	"OP_MINUS", # 减号
 	"OP_MULTIPLY", # 乘号
 	"OP_DIVIDE", # 除号
-	"OP_LPARENTHESES", # 左括号
-	"OP_RPARENTHESES", # 右括号
+	"OP_LPARENTHESES", # 左小括号
+	"OP_RPARENTHESES", # 右小括号
+	"OP_LBRACKET", # 左中括号
+	"OP_RBRACKET", # 右中括号
+	"OP_LBRACE", # 左大括号
+	"OP_RBRACE", # 右大括号
 	"OP_EQUALS", # 等号
+	"OP_COMMA", # 逗号
 
 	# Literals (LT)
 	"LT_INTEGER", # 整数
@@ -39,7 +45,12 @@ t_OP_MULTIPLY = r"\*"
 t_OP_DIVIDE = r"/"
 t_OP_LPARENTHESES = r"\("
 t_OP_RPARENTHESES = r"\)"
+t_OP_LBRACKET = r"\["
+t_OP_RBRACKET = r"\]"
+t_OP_LBRACE = r"\{"
+t_OP_RBRACE = r"\}"
 t_OP_EQUALS = r"="
+t_OP_COMMA = r","
 
 t_LT_INTEGER = r"\d+"
 

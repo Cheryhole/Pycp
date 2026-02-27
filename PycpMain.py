@@ -26,4 +26,4 @@ if __name__ == "__main__":
 	_ast = PycpParser.parsef(args.input_file)
 	i = PycpInterpreter.Interpreter()
 	i.run(_ast)
-	print(i.env)
+	#print(i.env)

@@ -50,6 +50,15 @@ class AssignmentStatement(Statement):
 	def __repr__(self):
 		return f"<Assignment: {self.target} = {self.value}>"
 
+# 返回语句
+class ReturnStatement(Statement):
+	def __init__(self, expression: "Expression", lineno=None):
+		super().__init__(lineno)
+		self.expression = expression
+
+	def __repr__(self):
+		return f"<Return: {self.expression}>"
+
 # 表达式语句，即单独的表达式作为语句
 class ExpressionStatement(Statement):
 	def __init__(self, expression, lineno=None):
@@ -95,6 +104,27 @@ class BinaryExpression(Expression):
 	def __repr__(self):
 		return f"<Binary: {self.left} {self.op} {self.right}>"
 
+# 匿名函数表达式
+class FunctionExpression(Expression):
+	def __init__(self, params, body: Program, name = "@anonymous", lineno=None):
+		super().__init__(lineno)
+		self.params = params
+		self.body = body
+		self.name = name
+
+	def __repr__(self):
+		return f"<Function: {self.name}({self.params}) {self.body}>"
+
+# 函数调用表达式
+class CallExpression(Expression):
+	def __init__(self, callee, arguments, lineno):
+		super().__init__(lineno)
+		self.callee = callee
+		self.arguments = arguments
+
+	def __repr__(self):
+		return f"<Call: {self.callee}({self.arguments})>"
+
 # 标识符表达式
 class IdentifierExpression(Expression):
 	def __init__(self, name, lineno=None):
@@ -124,4 +154,11 @@ class StringLiteral(Literal):
 
 	def __repr__(self):
 		return f"<String: \"{repr(self.value)}\">"
+
+class NoneLiteral(Literal):
+	def _init__(self, lineno = None):
+		super().__init__(lineno)
+
+	def __repr__(self):
+		return "<None>"
 

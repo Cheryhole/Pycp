@@ -1,2 +1,12 @@
-c = "He"
-a = c * 3
+a = 1
+b = 2
+
+func f(x){
+	d = 4
+	return x + d
+}
+
+c = f(b)
+
+print(a)
+print(c)

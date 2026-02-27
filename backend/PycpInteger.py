@@ -12,6 +12,9 @@ class PycpInteger(int, PycpObject):
 	def __integer__(self):
 		return self
 	
+	def __negation__(self):
+		return PycpInteger(-self._value)
+
 	def __addition__(self, other):
 		match type(other):
 			case _ if isinstance(other, PycpInteger):
