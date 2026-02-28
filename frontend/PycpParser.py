@@ -218,14 +218,14 @@ def p_error(p):
 	print(f"Syntax error in input! {p}")
 
 # 解析字符串
-def parse(source: str):
+def parse(source: str) -> _nd.Program:
 	lexer = PycpLexer.lexer
 	parser = ply.yacc.yacc(debug=_debug)
 	result = parser.parse(source)
 	return result
 
 # 解析文件
-def parsef(file: str):
+def parsef(file: str) -> _nd.Program:
 	with open(file, "r") as f:
 		result = parse(f.read())
 		

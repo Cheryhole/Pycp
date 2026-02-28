@@ -8,7 +8,7 @@ class PycpObject(object):
 	def __integer__(self):
 		raise TypeError(f"Unsupported to convert to integer.")
 	
-	def __call__(self, *args, **kwargs):
+	def __call__(self, *args):
 		raise TypeError(f"Unsupported to call.")
 	
 	def __addition__(self, other):
