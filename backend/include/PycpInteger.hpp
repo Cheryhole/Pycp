@@ -11,16 +11,17 @@ class PycpInteger : public PycpObject{
 
 	public:
 		PycpInteger();
-		PycpInteger(int);
+		PycpInteger(int64_t);
 		PycpInteger(const std::string&);
-		PycpInteger(PycpString*);
 		PycpInteger(PycpInteger*);
+		PycpInteger(PycpObject*);
 		virtual ~PycpInteger();
 
 		int64_t get_value() const;
 
 		PycpObject* __integer__() override;
 		PycpObject* __string__() override;
+		PycpObject* __negation__() override;
 		PycpObject* __addition__(PycpObject*) override;
 		PycpObject* __subtraction__(PycpObject*) override;
 		PycpObject* __multiplication__(PycpObject*) override;

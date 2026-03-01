@@ -1,9 +1,10 @@
 /*
-使用PyBind11将类构造函数重载转换为C风格的函数签名，便于Python调用
+使用PyBind11将Pycp运行时库导出为Python模块
 */
 
 // PycpExporter.cpp
 #include <memory>
+#include <string>
 #include "Pycp.hpp"	
 #include "pybind11/pybind11.h"
 #include "pybind11/embed.h"
@@ -23,25 +24,26 @@ T* from_shared(std::shared_ptr<T> ptr) {
 }
 
 PYBIND11_MODULE(PycpRuntime4Python, rt) {
-		py::gil_scoped_acquire acquire;
+		// py::gil_scoped_acquire acquire;
 
-		py::enum_<PycpType>(rt, "PycpType")
-        .value("PYCP_OBJECT", PycpType::PYCP_OBJECT)
-        .value("PYCP_NONE", PycpType::PYCP_NONE)
-        .value("PYCP_INTEGER", PycpType::PYCP_INTEGER)
-        .value("PYCP_STRING", PycpType::PYCP_STRING)
-        .value("PYCP_FUNCTION", PycpType::PYCP_FUNCTION)
-        .export_values();  // 可选：导出枚举值到模块作用域
+    py::enum_<PycpType>(rt, "PycpType")
+        .value("PYCP_TP_OBJECT", PycpType::PYCP_TP_OBJECT)
+        .value("PYCP_TP_NONE", PycpType::PYCP_TP_NONE)
+        .value("PYCP_TP_INTEGER", PycpType::PYCP_TP_INTEGER)
+        .value("PYCP_TP_STRING", PycpType::PYCP_TP_STRING)
+        .value("PYCP_TP_FUNCTION", PycpType::PYCP_TP_FUNCTION)
+        .export_values();
 
     py::class_<PycpObject, std::shared_ptr<PycpObject>>(rt, "PycpObject")
         .def(py::init<>())
-        .def("inc_ref_cnt", &PycpObject::inc_ref_cnt)
-        .def("dec_ref_cnt", &PycpObject::dec_ref_cnt)
         .def("__integer__", [](std::shared_ptr<PycpObject> self) {
             return py::cast(to_shared(self->__integer__()));
         }, py::return_value_policy::take_ownership)
         .def("__string__", [](std::shared_ptr<PycpObject> self) {
             return py::cast(to_shared(self->__string__()));
+        }, py::return_value_policy::take_ownership)
+        .def("__negation__", [](std::shared_ptr<PycpObject> self) {
+            return py::cast(to_shared(self->__negation__()));
         }, py::return_value_policy::take_ownership)
         .def("__call__", [](std::shared_ptr<PycpObject> self, std::shared_ptr<PycpObject> args) {
             return py::cast(to_shared(self->__call__(args.get())));
@@ -59,27 +61,28 @@ PYBIND11_MODULE(PycpRuntime4Python, rt) {
             return py::cast(to_shared(self->__division__(other.get())));
         }, py::return_value_policy::take_ownership)
         .def_property_readonly("type", [](std::shared_ptr<PycpObject> self) {
-            return self->type;  // 使用lambda返回枚举值
+            return self->type;
         });
 
     py::class_<PycpInteger, PycpObject, std::shared_ptr<PycpInteger>>(rt, "PycpInteger")
-        // 构造函数重载 - 使用原始指针版本
         .def(py::init<>())
-        .def(py::init<int>())
+        .def(py::init<int64_t>())
         .def(py::init<const std::string&>())
         .def(py::init([](std::shared_ptr<PycpInteger> ptr) { 
             return std::make_shared<PycpInteger>(ptr.get()); 
         }))
-        .def(py::init([](std::shared_ptr<PycpString> ptr) { 
+        .def(py::init([](std::shared_ptr<PycpObject> ptr) { 
             return std::make_shared<PycpInteger>(ptr.get()); 
         }))
-        // 成员方法
         .def("get_value", &PycpInteger::get_value)
         .def("__integer__", [](std::shared_ptr<PycpInteger> self) {
             return py::cast(to_shared(self->__integer__()));
         }, py::return_value_policy::take_ownership)
         .def("__string__", [](std::shared_ptr<PycpInteger> self) {
             return py::cast(to_shared(self->__string__()));
+        }, py::return_value_policy::take_ownership)
+        .def("__negation__", [](std::shared_ptr<PycpInteger> self) {
+            return py::cast(to_shared(self->__negation__()));
         }, py::return_value_policy::take_ownership)
         .def("__addition__", [](std::shared_ptr<PycpInteger> self, std::shared_ptr<PycpObject> other) {
             return py::cast(to_shared(self->__addition__(other.get())));
@@ -95,16 +98,14 @@ PYBIND11_MODULE(PycpRuntime4Python, rt) {
         }, py::return_value_policy::take_ownership);
 
     py::class_<PycpString, PycpObject, std::shared_ptr<PycpString>>(rt, "PycpString")
-        // 构造函数重载 - 使用原始指针版本
         .def(py::init<>())
         .def(py::init<const std::string&>())
         .def(py::init([](std::shared_ptr<PycpString> ptr) { 
             return std::make_shared<PycpString>(ptr.get()); 
         }))
-        .def(py::init([](std::shared_ptr<PycpInteger> ptr) { 
+        .def(py::init([](std::shared_ptr<PycpObject> ptr) { 
             return std::make_shared<PycpString>(ptr.get()); 
         }))
-        // 成员方法
         .def("get_value", &PycpString::get_value)
         .def("__integer__", [](std::shared_ptr<PycpString> self) {
             return py::cast(to_shared(self->__integer__()));
@@ -118,4 +119,32 @@ PYBIND11_MODULE(PycpRuntime4Python, rt) {
         .def("__multiplication__", [](std::shared_ptr<PycpString> self, std::shared_ptr<PycpObject> other) {
             return py::cast(to_shared(self->__multiplication__(other.get())));
         }, py::return_value_policy::take_ownership);
+
+    py::class_<PycpNone, PycpObject, std::shared_ptr<PycpNone>>(rt, "PycpNone")
+        .def(py::init<>())
+        .def_property_readonly_static("instance", [](py::object) {
+            return std::shared_ptr<PycpNone>(PycpNone::instance, [](PycpNone*){});
+        })
+        .def("__integer__", [](std::shared_ptr<PycpNone> self) {
+            return py::cast(to_shared(self->__integer__()));
+        }, py::return_value_policy::take_ownership)
+        .def("__string__", [](std::shared_ptr<PycpNone> self) {
+            return py::cast(to_shared(self->__string__()));
+        }, py::return_value_policy::take_ownership);
+
+    py::class_<PycpFunction, PycpObject, std::shared_ptr<PycpFunction>>(rt, "PycpFunction")
+        .def(py::init<const char*>())
+        .def(py::init<const char*, std::function<PycpObject*(PycpObject*)>>())
+        .def("__call__", [](std::shared_ptr<PycpFunction> self, std::shared_ptr<PycpObject> args) {
+            return py::cast(to_shared(self->__call__(args.get())));
+        }, py::return_value_policy::take_ownership)
+        .def("get_name", &PycpFunction::get_name);
+
+    py::class_<PycpBuiltinFunction>(rt, "PycpBuiltinFunction")
+        .def_property_readonly_static("print", [](py::object) {
+            return std::shared_ptr<PycpFunction>(PycpBuiltinFunction::print, [](PycpFunction*){});
+        });
+
+		rt.def("PycpInitialize", &PycpInitialize);
+    rt.def("PycpFinalize", &PycpFinalize);
 }

@@ -1,23 +1,11 @@
 #include "PycpObject.hpp"
 
 PycpObject::PycpObject(PycpType type){
-	this->ref_cnt = 0;
 	this->type = type;
 }
 
 PycpObject::~PycpObject(){
   
-}
-
-void PycpObject::inc_ref_cnt(){
-	this->ref_cnt++;
-}
-
-void PycpObject::dec_ref_cnt(){
-	this->ref_cnt--;
-	if(this->ref_cnt == 0){
-		delete this;
-	}
 }
 
 PycpObject* PycpObject::__integer__(){
@@ -26,6 +14,10 @@ PycpObject* PycpObject::__integer__(){
 
 PycpObject* PycpObject::__string__(){
   throw PycpException("Unsupported to convert to string.");
+}
+
+PycpObject* PycpObject::__negation__(){
+  throw PycpException("Unsupported to negate.");
 }
 
 PycpObject* PycpObject::__call__([[maybe_unused]] PycpObject* args){

@@ -2,13 +2,52 @@
 #define PYCP_FUNCTION_HPP
 
 #include "PycpObject.hpp"
+#include "PycpNone.hpp"
+#include "PycpString.hpp"
+#include <functional>
+#include <iostream>
+
+typedef std::function<PycpObject*(PycpObject*)> PycpCFunction_t;
 
 class PycpFunction : public PycpObject{
 	private:
-		bool builtin;
+		PycpCFunction_t func;
+
+	protected:
+		const char* name;	
 
 	public:
-		PycpFunction(const std::string& name, const std::string& code, const std::vector<std::string>& arg_names, const std::string& docstring = "") : PycpObject(name, code, arg_names, docstring) {}
+		PycpFunction(){}
+		PycpFunction(const char* name) : PycpObject(PYCP_TP_FUNCTION){
+			this->name = name;
+			this->func = nullptr;
+		}
+
+		PycpFunction(const char* name, PycpCFunction_t func) : PycpObject(PYCP_TP_FUNCTION){
+			this->name = name;
+			this->func = func;
+		}
+
+		PycpObject* __call__(PycpObject* args) override{
+			if (this->func != nullptr){
+				return this->func(args);
+			}
+		  return PycpNone::instance;
+		}
+
+		const char* get_name() const { return name; }
 };
+
+struct PycpBuiltinFunction{
+	static PycpFunction* print;
+};
+
+PycpFunction* PycpBuiltinFunction::print = nullptr;
+
+PycpObject* _cpp_builtin_print(PycpObject* obj){
+	PycpString* s = static_cast<PycpString*>(obj->__string__());
+  std::cout << s->get_value() << std::endl;
+  return PycpNone::instance;
+}
 
 #endif // PYCP_FUNCTION_HPP

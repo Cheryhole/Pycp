@@ -1,21 +1,16 @@
 #include "PycpInteger.hpp"
 #include "PycpString.hpp"
+#include "PycpException.hpp"
 
-PycpString::PycpString() : PycpObject(){
-	this->_value = "";
+PycpString::PycpString() : PycpString(""){}
+
+PycpString::PycpString(const std::string& value) : PycpObject(PYCP_TP_STRING){  
+	this->_value = value;
 }
 
-PycpString::PycpString(const std::string& value){
-  this->_value = value;
-}
+PycpString::PycpString(PycpString* value) : PycpString(value->get_value()){}
 
-PycpString::PycpString(PycpString* value){
-  this->_value = std::string(value->get_value());
-}
-
-PycpString::PycpString(PycpInteger* value){
-  this->_value = std::to_string(value->get_value());
-}
+PycpString::PycpString(PycpObject* obj) : PycpString(static_cast<PycpString*>(obj->__string__())){}
 
 PycpString::~PycpString(){
   
@@ -26,7 +21,12 @@ std::string PycpString::get_value() const{
 }
 
 PycpObject* PycpString::__integer__(){
-  return new PycpInteger(this);
+	try{
+		int64_t i = std::stoll(this->_value);
+		return new PycpInteger(i);
+	} catch (const std::invalid_argument& e){
+		throw PycpValueError("Invalid literal for integer: \"" + this->_value + "\"");
+	}
 }
 
 PycpObject* PycpString::__string__(){
@@ -34,7 +34,7 @@ PycpObject* PycpString::__string__(){
 }
 
 PycpObject* PycpString::__addition__(PycpObject* other){
-	if (other->type != PycpType::PYCP_STRING){
+	if (other->type != PycpType::PYCP_TP_STRING){
 	  throw PycpException("Unsupported to add.");
 	}
 	PycpString* s = static_cast<PycpString*>(other);
@@ -43,7 +43,7 @@ PycpObject* PycpString::__addition__(PycpObject* other){
 }
 
 PycpObject* PycpString::__multiplication__(PycpObject* other){
-  if (other->type != PycpType::PYCP_INTEGER){
+  if (other->type != PycpType::PYCP_TP_INTEGER){
 	  throw PycpException("Unsupported to multiply.");
   }
 		PycpInteger* i = static_cast<PycpInteger*>(other);

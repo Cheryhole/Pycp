@@ -12,7 +12,7 @@ class PycpString : public PycpObject{
 		PycpString();
 		PycpString(const std::string&);
 		PycpString(PycpString*);
-		PycpString(PycpInteger*);
+		PycpString(PycpObject*);
 		virtual ~PycpString();
 
 		std::string get_value() const;

@@ -2,32 +2,27 @@
 #define PYCP_OBJECT_HPP
 
 #include "PycpException.hpp"
-#include <cstdint>
-#include <memory>
 
 enum PycpType{
-	PYCP_OBJECT,
-	PYCP_NONE,
-	PYCP_INTEGER,
-	PYCP_STRING,
-	PYCP_FUNCTION,
+	PYCP_TP_OBJECT,
+	PYCP_TP_NONE,
+	PYCP_TP_INTEGER,
+	PYCP_TP_STRING,
+	PYCP_TP_FUNCTION,
 };
 
 class PycpObject{
 	private:
-		uint32_t ref_cnt;
 
 	public:
 		PycpType type;
 
-		PycpObject(PycpType type = PYCP_OBJECT);
+		PycpObject(PycpType type = PYCP_TP_OBJECT);
 		virtual ~PycpObject();
-
-		void inc_ref_cnt();
-		void dec_ref_cnt();
 
 		virtual PycpObject* __integer__();
 		virtual PycpObject* __string__();
+		virtual PycpObject* __negation__();
 		virtual PycpObject* __call__(PycpObject*);
 		virtual PycpObject* __addition__(PycpObject*);
 		virtual PycpObject* __subtraction__(PycpObject*);

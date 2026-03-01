@@ -26,4 +26,10 @@ class PycpTypeError : public PycpException {
 				: PycpException("TypeError: " + msg) {}
 };
 
+class PycpValueError : public PycpException {
+	public:
+		explicit PycpValueError(const std::string& msg)
+				: PycpException("ValueError: " + msg) {}
+};
+
 #endif // PYCP_EXCEPTION_HPP

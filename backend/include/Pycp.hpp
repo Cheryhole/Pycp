@@ -6,7 +6,8 @@
 #include "PycpInteger.hpp"
 #include "PycpString.hpp"
 #include "PycpException.hpp"
+#include "PycpFunction.hpp"
 
-#define PYCP_API extern "C" __declspec(dllexport)
+#include "PycpManager.hpp"
 
 #endif // PYCP_HPP
