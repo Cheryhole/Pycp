@@ -10,4 +10,14 @@
 
 #include "PycpManager.hpp"
 
+namespace Pycp{
+
+using ObjectPtr = Object*;
+using IntegerPtr = Integer*;
+using StringPtr = String*;
+using NonePtr = None*;
+using FunctionPtr = Function*;
+
+} // namespace Pycp
+
 #endif // PYCP_HPP

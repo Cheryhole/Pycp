@@ -5,22 +5,25 @@
 #include "PycpInteger.hpp"
 #include "PycpString.hpp"
 
-class PycpNone : public PycpObject{
+namespace Pycp{
+
+class None : public Object{
+	private:
+		String* none_str;
+
 	public:
-		static PycpNone* instance;
+		static None* instance;
 
-		PycpNone() : PycpObject(PYCP_TP_NONE){}
-		~PycpNone() = default;
+		static void Initialize();
+		static void Finalize();
 
-		PycpObject* __integer__() override{
-			return new PycpInteger(0ll);
-		}
+		None();
+		~None();
 
-		PycpObject* __string__() override{
-			return new PycpString("None");
-		}
+		Object* __integer__() override;
+		Object* __string__() override;
 };
 
-PycpNone* PycpNone::instance = nullptr;
+} // namespace Pycp
 
 #endif // PYCP_NONE_HPP

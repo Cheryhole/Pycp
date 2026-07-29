@@ -7,47 +7,40 @@
 #include <functional>
 #include <iostream>
 
-typedef std::function<PycpObject*(PycpObject*)> PycpCFunction_t;
+#define PYCP_FUNC(name, ...) \
+	new Function(name, \
+			[&](Object* args) -> Object* __VA_ARGS__)
 
-class PycpFunction : public PycpObject{
+namespace Pycp{
+
+typedef std::function<Object*(Object*)> CFunction_t;
+
+Object* _builtin_print(Object*);
+struct BuiltinFunction;
+
+class Function : public Object{
 	private:
-		PycpCFunction_t func;
+		CFunction_t func;
 
 	protected:
 		const char* name;	
 
 	public:
-		PycpFunction(){}
-		PycpFunction(const char* name) : PycpObject(PYCP_TP_FUNCTION){
-			this->name = name;
-			this->func = nullptr;
-		}
+		Function();
+		Function(const char*);
+		Function(const char*, CFunction_t);
 
-		PycpFunction(const char* name, PycpCFunction_t func) : PycpObject(PYCP_TP_FUNCTION){
-			this->name = name;
-			this->func = func;
-		}
+		Object* __call__(Object* args) override;
+		const char* get_name() const;
+		static void Initialize();
+		static void Finalize();
 
-		PycpObject* __call__(PycpObject* args) override{
-			if (this->func != nullptr){
-				return this->func(args);
-			}
-		  return PycpNone::instance;
-		}
-
-		const char* get_name() const { return name; }
 };
 
-struct PycpBuiltinFunction{
-	static PycpFunction* print;
+struct BuiltinFunction{
+	static Function* print;
 };
 
-PycpFunction* PycpBuiltinFunction::print = nullptr;
-
-PycpObject* _cpp_builtin_print(PycpObject* obj){
-	PycpString* s = static_cast<PycpString*>(obj->__string__());
-  std::cout << s->get_value() << std::endl;
-  return PycpNone::instance;
-}
+} // namespace Pycp
 
 #endif // PYCP_FUNCTION_HPP

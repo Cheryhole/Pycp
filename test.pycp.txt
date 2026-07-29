@@ -6,7 +6,16 @@ func f(x){
 	return x + d
 }
 
+func fa(x){
+	var = x + 1
+	func fb(){
+		return var
+	}
+	return fb
+}
+
 c = f(b)
 
 print(a)
 print(c)
+print(fa(b)())

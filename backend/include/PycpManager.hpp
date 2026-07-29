@@ -5,18 +5,22 @@
 
 #include "PycpNone.hpp"
 #include "PycpFunction.hpp"
+#include "PycpInteger.hpp"
 
-void PycpInitialize(){
-	PycpNone::instance = new PycpNone();
-	PycpBuiltinFunction::print = new PycpFunction(
-			"print",	
-			_cpp_builtin_print
-		);
+namespace Pycp{
+
+void Initialize(){
+	None::Initialize();
+	Function::Initialize();
+	Integer::Initialize();
 }
 
-void PycpFinalize(){
-	delete PycpNone::instance;
-	delete PycpBuiltinFunction::print;
+void Finalize(){
+	Function::Finalize();
+	None::Finalize();
+	Integer::Finalize();
 }
+
+} // namespace Pycp
 
 #endif // PYCP_MANAGER_HPP1

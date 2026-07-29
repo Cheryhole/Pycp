@@ -4,32 +4,28 @@
 #include <stdexcept>
 #include <string>
 
-class PycpObject;
+namespace Pycp{
 
-class PycpException : public std::runtime_error {
+class Object;
+
+class Exception : public std::runtime_error{
 	public:
-		explicit PycpException(const std::string& msg)
+		explicit Exception(const std::string& msg)
 				: std::runtime_error("Exception: " + msg) {}
 };
 
-class PycpReturnException : public PycpException {
+class TypeError : public Exception {
 	public:
-		PycpObject* value;
-
-		explicit PycpReturnException(PycpObject* v)
-				: PycpException("ReturnException"), value(v){}
+		explicit TypeError(const std::string& msg)
+				: Exception("TypeError: " + msg) {}
 };
 
-class PycpTypeError : public PycpException {
+class ValueError : public Exception {
 	public:
-		explicit PycpTypeError(const std::string& msg)
-				: PycpException("TypeError: " + msg) {}
+		explicit ValueError(const std::string& msg)
+				: Exception("ValueError: " + msg) {}
 };
 
-class PycpValueError : public PycpException {
-	public:
-		explicit PycpValueError(const std::string& msg)
-				: PycpException("ValueError: " + msg) {}
-};
+} // namespace Pycp
 
 #endif // PYCP_EXCEPTION_HPP

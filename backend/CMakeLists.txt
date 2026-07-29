@@ -1,184 +1,129 @@
 cmake_minimum_required(VERSION 3.15)
 project(PycpRuntime VERSION 1.0.0 LANGUAGES CXX)
 
-# 设置C++标准
+# ==============================
+# 基础编译配置
+# ==============================
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# 设置输出目录
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
+# 统一输出目录
+set(OUTPUT_DIR ${CMAKE_SOURCE_DIR}/bin)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_DIR})
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${OUTPUT_DIR})
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${OUTPUT_DIR})
 
-# 查找Python和pybind11
-find_package(Python REQUIRED COMPONENTS Interpreter Development)
-set(pybind11_DIR "C:/Program Files/Python314/Lib/site-packages/pybind11/share/cmake/pybind11")
-find_package(pybind11 CONFIG REQUIRED)
+# ==============================
+# 编译选项（可同时开启静态/动态库）
+# ==============================
+option(BUILD_RUNTIME_SHARED "Build shared PycpRuntime library" OFF)
+option(BUILD_RUNTIME_STATIC "Build static PycpRuntime library" ON)
+option(BUILD_PYTHON_BINDING "Build PycpRuntime4Python.pyd" ON)
+option(BUILD_TEST "Build test executable" ON)
 
-include_directories(${CMAKE_SOURCE_DIR}/include ${Python_INCLUDE_DIRS})
-
-# -------------------------
-# MinGW静态链接设置（使库不依赖MinGW运行时）
-# -------------------------
-if(MINGW)
-    # 静态链接MinGW运行时库
-    set(MINGW_STATIC_LINK_OPTIONS 
-        -static
-    )
-		# -static-libgcc -static-libstdc++ -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic
-endif()
-
-# -------------------------
-# PyBind11 模块 (.pyd) - 直接编译所有源文件
-# -------------------------
-# 收集所有需要编译的源文件（除了PycpExporter.cpp）
-set(PYCP_RUNTIME_SOURCES
-    ${CMAKE_SOURCE_DIR}/src/PycpInteger.cpp
+# ==============================
+# 源文件/头文件 严格分离
+# ==============================
+set(PYCP_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/include)
+set(PYCP_HEADERS
+    ${PYCP_INCLUDE_DIR}/Pycp.hpp
+    ${PYCP_INCLUDE_DIR}/PycpObject.hpp
+    ${PYCP_INCLUDE_DIR}/PycpNone.hpp
+    ${PYCP_INCLUDE_DIR}/PycpInteger.hpp
+    ${PYCP_INCLUDE_DIR}/PycpString.hpp
+    ${PYCP_INCLUDE_DIR}/PycpException.hpp
+    ${PYCP_INCLUDE_DIR}/PycpFunction.hpp
+    ${PYCP_INCLUDE_DIR}/PycpManager.hpp
+)
+set(PYCP_SOURCES
     ${CMAKE_SOURCE_DIR}/src/PycpObject.cpp
+    ${CMAKE_SOURCE_DIR}/src/PycpNone.cpp
+    ${CMAKE_SOURCE_DIR}/src/PycpInteger.cpp
     ${CMAKE_SOURCE_DIR}/src/PycpString.cpp
+    ${CMAKE_SOURCE_DIR}/src/PycpFunction.cpp
 )
 
-# 创建pybind11模块，包含所有源文件
-pybind11_add_module(PycpRuntime_pyd 
-    ${CMAKE_SOURCE_DIR}/src/PycpExporter.cpp
-    ${PYCP_RUNTIME_SOURCES}
-)
-
-set_target_properties(PycpRuntime_pyd PROPERTIES
-    PREFIX ""
-    SUFFIX ".pyd"
-    OUTPUT_NAME "PycpRuntime4Python"
-)
-
-if(WIN32)
-    target_compile_definitions(PycpRuntime_pyd PRIVATE _CRT_SECURE_NO_WARNINGS)
-endif()
-
+# ==============================
+# 核心：编译为 OBJECT 目标文件（不链接成库）
+# ==============================
+add_library(PycpRuntime_obj OBJECT ${PYCP_SOURCES} ${PYCP_HEADERS})
+target_include_directories(PycpRuntime_obj PUBLIC ${PYCP_INCLUDE_DIR})
 if(MSVC)
-    target_compile_options(PycpRuntime_pyd PRIVATE /W4 /EHsc)
+    target_compile_options(PycpRuntime_obj PRIVATE /W4 /EHsc /utf-8)
 else()
-    target_compile_options(PycpRuntime_pyd PRIVATE -Wall -Wextra -Wpedantic)
-    
-    # 为pyd模块添加MinGW静态链接选项
-    if(MINGW)
-        target_link_options(PycpRuntime_pyd PRIVATE ${MINGW_STATIC_LINK_OPTIONS})
-    endif()
+    target_compile_options(PycpRuntime_obj PRIVATE -Wall -Wextra -O2)
 endif()
 
-target_link_libraries(PycpRuntime_pyd PRIVATE 
-    pybind11::headers 
-    ${Python_LIBRARIES}
-)
-
-# -------------------------
-# 核心库 - 动态版本（PycpRuntime.dll）单独编译
-# -------------------------
-add_library(PycpRuntime_dynamic SHARED ${PYCP_RUNTIME_SOURCES})
-
-set_target_properties(PycpRuntime_dynamic PROPERTIES
-    PREFIX ""
-    OUTPUT_NAME "PycpRuntime"
-)
-
-if(WIN32)
-    target_compile_definitions(PycpRuntime_dynamic PRIVATE _CRT_SECURE_NO_WARNINGS PYCP_EXPORTS)
-endif()
-
-if(MSVC)
-    target_compile_options(PycpRuntime_dynamic PRIVATE /W4 /EHsc)
-else()
-    target_compile_options(PycpRuntime_dynamic PRIVATE -Wall -Wextra -Wpedantic)
-endif()
-
-target_link_libraries(PycpRuntime_dynamic PRIVATE ${Python_LIBRARIES})
-
-# 为动态库添加MinGW静态链接选项
-if(MINGW)
-    target_link_options(PycpRuntime_dynamic PRIVATE ${MINGW_STATIC_LINK_OPTIONS})
-endif()
-
-# -------------------------
-# 核心库 - 静态版本（libPycpRuntime.a）单独编译
-# -------------------------
-add_library(PycpRuntime_static STATIC ${PYCP_RUNTIME_SOURCES})
-
-set_target_properties(PycpRuntime_static PROPERTIES
-    OUTPUT_NAME "PycpRuntime"
-)
-
-if(WIN32)
-    target_compile_definitions(PycpRuntime_static PRIVATE _CRT_SECURE_NO_WARNINGS)
-endif()
-
-if(MSVC)
-    target_compile_options(PycpRuntime_static PRIVATE /W4 /EHsc)
-else()
-    target_compile_options(PycpRuntime_static PRIVATE -Wall -Wextra -Wpedantic)
-    
-    if(MINGW)
-        target_compile_options(PycpRuntime_static PRIVATE 
-            -static-libgcc 
-            -static-libstdc++
-        )
-    endif()
-endif()
-
-target_link_libraries(PycpRuntime_static PRIVATE ${Python_LIBRARIES})
-
-# -------------------------
-# 测试可执行文件
-# -------------------------
-add_executable(test_pycp ${CMAKE_SOURCE_DIR}/src/test.cpp)
-
-target_include_directories(test_pycp PRIVATE ${CMAKE_SOURCE_DIR}/include ${Python_INCLUDE_DIRS})
-
-# 测试程序可以链接动态库或静态库
-target_link_libraries(test_pycp PRIVATE PycpRuntime_dynamic ${Python_LIBRARIES})
-
-if(MSVC)
-    target_compile_options(test_pycp PRIVATE /W4 /EHsc)
-    set_target_properties(test_pycp PROPERTIES
-        VS_DEBUGGER_ENVIRONMENT "PATH=${CMAKE_SOURCE_DIR}/bin;%PATH%"
+# ==============================
+# 修复：静态库/动态库 目标名分离（避免冲突）
+# ==============================
+# 静态库：内部目标名 PycpRuntime_static，输出文件名 PycpRuntime
+if(BUILD_RUNTIME_STATIC)
+    add_library(PycpRuntime_static STATIC $<TARGET_OBJECTS:PycpRuntime_obj>)
+    target_include_directories(PycpRuntime_static PUBLIC ${PYCP_INCLUDE_DIR})
+    set_target_properties(PycpRuntime_static PROPERTIES
+        OUTPUT_NAME "PycpRuntime"
+        ARCHIVE_OUTPUT_DIRECTORY ${OUTPUT_DIR}
     )
-else()
-    target_compile_options(test_pycp PRIVATE -Wall -Wextra -Wpedantic)
-    
-    if(MINGW)
-        target_link_options(test_pycp PRIVATE ${MINGW_STATIC_LINK_OPTIONS})
+endif()
+
+# 动态库：内部目标名 PycpRuntime_shared，输出文件名 PycpRuntime
+if(BUILD_RUNTIME_SHARED)
+    add_library(PycpRuntime_shared SHARED $<TARGET_OBJECTS:PycpRuntime_obj>)
+    target_include_directories(PycpRuntime_shared PUBLIC ${PYCP_INCLUDE_DIR})
+    if(MSVC)
+        target_compile_definitions(PycpRuntime_shared PRIVATE PYCP_EXPORT)
     endif()
+    set_target_properties(PycpRuntime_shared PROPERTIES
+        OUTPUT_NAME "PycpRuntime"
+        LIBRARY_OUTPUT_DIRECTORY ${OUTPUT_DIR}
+        RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_DIR}
+    )
 endif()
 
-# -------------------------
-# 安装/打包规则
-# -------------------------
+# ==============================
+# Python绑定：直接嵌入目标文件（无外部依赖）
+# ==============================
+if(BUILD_PYTHON_BINDING)
+    find_package(Python REQUIRED COMPONENTS Interpreter Development)
+    find_package(pybind11 CONFIG REQUIRED)
 
-#add_custom_target(dist ALL
-#    COMMAND ${CMAKE_COMMAND} -E echo "Creating distribution package..."
-#    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/dist
-#    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/bin/PycpRuntime.dll ${CMAKE_SOURCE_DIR}/dist/
-#    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/bin/libPycpRuntime.a ${CMAKE_SOURCE_DIR}/dist/
-#    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/bin/PycpRuntime4Python.pyd ${CMAKE_SOURCE_DIR}/dist/
-#    COMMAND ${CMAKE_COMMAND} -E echo "Distribution files copied to ./dist/"
-#)
+    pybind11_add_module(PycpRuntime4Python
+        ${CMAKE_SOURCE_DIR}/src/PycpRuntime4Python.cpp
+        $<TARGET_OBJECTS:PycpRuntime_obj>
+    )
+    target_include_directories(PycpRuntime4Python PRIVATE ${PYCP_INCLUDE_DIR})
 
-# -------------------------
-# 打印信息
-# -------------------------
-message(STATUS "========================================")
-message(STATUS "Python version: ${Python_VERSION}")
-message(STATUS "Python executable: ${Python_EXECUTABLE}")
-message(STATUS "pybind11 version: ${pybind11_VERSION}")
-message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
-if(MINGW)
-    message(STATUS "MinGW static linking: Enabled")
+    set_target_properties(PycpRuntime4Python PROPERTIES
+        PREFIX ""
+        SUFFIX ".pyd"
+        OUTPUT_NAME "PycpRuntime4Python"
+        LIBRARY_OUTPUT_DIRECTORY ${OUTPUT_DIR}
+        RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_DIR}
+    )
 endif()
-message(STATUS "========================================")
-message(STATUS "Build targets:")
-message(STATUS "  - PycpRuntime_static  -> libPycpRuntime.a (static library)")
-message(STATUS "  - PycpRuntime_dynamic -> PycpRuntime.dll (dynamic library)")
-message(STATUS "  - PycpRuntime_pyd     -> PycpRuntime4Python.pyd (独立Python模块，包含所有实现)")
-message(STATUS "  - test_pycp           -> test_pycp.exe (测试程序，链接动态库)")
-message(STATUS "========================================")
-message(STATUS "Output directory: ${CMAKE_SOURCE_DIR}/bin")
-message(STATUS "========================================")
+
+# ==============================
+# 测试程序
+# ==============================
+if(BUILD_TEST)
+    add_executable(test_pycp ${CMAKE_SOURCE_DIR}/src/test.cpp)
+    target_link_libraries(test_pycp PRIVATE PycpRuntime_obj)
+    set_target_properties(test_pycp PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_DIR}
+    )
+endif()
+
+# ==============================
+# 构建信息
+# ==============================
+message(STATUS "================================================")
+message(STATUS "Project: PycpRuntime v${PROJECT_VERSION}")
+message(STATUS "Build shared runtime: ${BUILD_RUNTIME_SHARED}")
+message(STATUS "Build static runtime: ${BUILD_RUNTIME_STATIC}")
+message(STATUS "Build Python binding: ${BUILD_PYTHON_BINDING}")
+message(STATUS "Build test program: ${BUILD_TEST}")
+message(STATUS "Output directory: ${OUTPUT_DIR}")
+message(STATUS "Compiler: ${CMAKE_CXX_COMPILER_ID}")
+message(STATUS "================================================")

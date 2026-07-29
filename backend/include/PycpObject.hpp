@@ -3,35 +3,39 @@
 
 #include "PycpException.hpp"
 
-enum PycpType{
-	PYCP_TP_OBJECT,
-	PYCP_TP_NONE,
-	PYCP_TP_INTEGER,
-	PYCP_TP_STRING,
-	PYCP_TP_FUNCTION,
+namespace Pycp{
+
+enum class Type{
+	OBJECT,
+	NONE,
+	INTEGER,
+	STRING,
+	FUNCTION,
 };
 
-class PycpObject{
+class Object{
 	private:
 
 	public:
-		PycpType type;
+		Type type;
 
-		PycpObject(PycpType type = PYCP_TP_OBJECT);
-		virtual ~PycpObject();
+		Object(Type type = Type::OBJECT);
+		virtual ~Object();
 
-		virtual PycpObject* __integer__();
-		virtual PycpObject* __string__();
-		virtual PycpObject* __negation__();
-		virtual PycpObject* __call__(PycpObject*);
-		virtual PycpObject* __addition__(PycpObject*);
-		virtual PycpObject* __subtraction__(PycpObject*);
-		virtual PycpObject* __multiplication__(PycpObject*);
-		virtual PycpObject* __division__(PycpObject*);
+		virtual Object* __integer__();
+		virtual Object* __string__();
+		virtual Object* __negation__();
+		virtual Object* __call__(Object*);
+		virtual Object* __addition__(Object*);
+		virtual Object* __subtraction__(Object*);
+		virtual Object* __multiplication__(Object*);
+		virtual Object* __division__(Object*);
 
 };
 
-class PycpInteger;
-class PycpString;
+class Integer;
+class String;
+
+} // namespace Pycp
 
 #endif // PYCP_OBJECT_HPP

@@ -1,41 +1,45 @@
 #include "PycpObject.hpp"
 
-PycpObject::PycpObject(PycpType type){
+namespace Pycp{
+
+Object::Object(Type type){
 	this->type = type;
 }
 
-PycpObject::~PycpObject(){
+Object::~Object(){
   
 }
 
-PycpObject* PycpObject::__integer__(){
-  throw PycpException("Unsupported to convert to integer.");
+Object* Object::__integer__(){
+  throw Exception("Unsupported to convert to integer.");
 }
 
-PycpObject* PycpObject::__string__(){
-  throw PycpException("Unsupported to convert to string.");
+Object* Object::__string__(){
+  throw Exception("Unsupported to convert to string.");
 }
 
-PycpObject* PycpObject::__negation__(){
-  throw PycpException("Unsupported to negate.");
+Object* Object::__negation__(){
+  throw Exception("Unsupported to negate.");
 }
 
-PycpObject* PycpObject::__call__([[maybe_unused]] PycpObject* args){
-  throw PycpException("Unsupported to call.");
+Object* Object::__call__([[maybe_unused]] Object* args){
+  throw Exception("Unsupported to call.");
 }
 
-PycpObject* PycpObject::__addition__([[maybe_unused]] PycpObject* other){
-  throw PycpException("Unsupported to add.");
+Object* Object::__addition__([[maybe_unused]] Object* other){
+  throw Exception("Unsupported to add.");
 }
 
-PycpObject* PycpObject::__subtraction__([[maybe_unused]] PycpObject* other){
-  throw PycpException("Unsupported to subtract.");
+Object* Object::__subtraction__([[maybe_unused]] Object* other){
+  throw Exception("Unsupported to subtract.");
 }
 
-PycpObject* PycpObject::__multiplication__([[maybe_unused]] PycpObject* other){
-  throw PycpException("Unsupported to multiply.");
+Object* Object::__multiplication__([[maybe_unused]] Object* other){
+  throw Exception("Unsupported to multiply.");
 }
 
-PycpObject* PycpObject::__division__([[maybe_unused]] PycpObject* other){
-  throw PycpException("Unsupported to divide.");
+Object* Object::__division__([[maybe_unused]] Object* other){
+  throw Exception("Unsupported to divide.");
+}
+
 }

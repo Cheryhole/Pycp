@@ -1,56 +1,67 @@
 #include "PycpInteger.hpp"
 #include "PycpString.hpp"
 #include "PycpException.hpp"
+#include <iostream>
 
-PycpString::PycpString() : PycpString(""){}
+namespace Pycp{
 
-PycpString::PycpString(const std::string& value) : PycpObject(PYCP_TP_STRING){  
+String::String() : String(""){}
+
+String::String(const std::string& value) : Object(Type::STRING){  
 	this->_value = value;
 }
 
-PycpString::PycpString(PycpString* value) : PycpString(value->get_value()){}
+String::String(String* value) : String(value->get_value()){}
 
-PycpString::PycpString(PycpObject* obj) : PycpString(static_cast<PycpString*>(obj->__string__())){}
+String::String(Object* obj) : String(static_cast<String*>(obj->__string__())){}
 
-PycpString::~PycpString(){
+String::~String(){
   
 }
 
-std::string PycpString::get_value() const{
+std::string String::get_value() const{
   return this->_value;
 }
 
-PycpObject* PycpString::__integer__(){
+Object* String::__integer__(){
 	try{
 		int64_t i = std::stoll(this->_value);
-		return new PycpInteger(i);
-	} catch (const std::invalid_argument& e){
-		throw PycpValueError("Invalid literal for integer: \"" + this->_value + "\"");
+		return new Integer(i);
+	} catch (const std::invalid_argument&){
+		throw ValueError("Invalid literal for integer: \"" + this->_value + "\"");
 	}
 }
 
-PycpObject* PycpString::__string__(){
+Object* String::__string__(){
   return this;
 }
 
-PycpObject* PycpString::__addition__(PycpObject* other){
-	if (other->type != PycpType::PYCP_TP_STRING){
-	  throw PycpException("Unsupported to add.");
+Object* String::__addition__(Object* other){
+	if (other->type != Type::STRING){
+	  throw Exception("Unsupported to add.");
 	}
-	PycpString* s = static_cast<PycpString*>(other);
+	String* s = static_cast<String*>(other);
 
-  return new PycpString(this->_value + s->get_value());
+  return new String(this->_value + s->get_value());
 }
 
-PycpObject* PycpString::__multiplication__(PycpObject* other){
-  if (other->type != PycpType::PYCP_TP_INTEGER){
-	  throw PycpException("Unsupported to multiply.");
+Object* String::__multiplication__(Object* other){
+  if (other->type != Type::INTEGER){
+	  throw Exception("Unsupported to multiply.");
   }
-		PycpInteger* i = static_cast<PycpInteger*>(other);
+		Integer* i = static_cast<Integer*>(other);
 		std::string str = this->_value;
 		std::string res;
 		for (int64_t j = 0; j < i->get_value(); j++){
 			res += str;
 		}
-		return new PycpString(res);
+		return new String(res);
 }
+
+std::string AsString(Object* obj){
+	String* sobj = static_cast<String*>(obj->__string__());
+	std::string cppstr = sobj->get_value();
+	return cppstr;
+}
+
+} // namespace Pycp

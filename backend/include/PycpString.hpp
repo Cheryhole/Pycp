@@ -4,24 +4,30 @@
 #include "PycpObject.hpp"
 #include <string>
 
-class PycpString : public PycpObject{
+namespace Pycp{
+
+class String : public Object{
 	private:
 		std::string _value;
 
 	public:
-		PycpString();
-		PycpString(const std::string&);
-		PycpString(PycpString*);
-		PycpString(PycpObject*);
-		virtual ~PycpString();
+		String();
+		String(const std::string&);
+		String(String*);
+		String(Object*);
+		virtual ~String();
 
 		std::string get_value() const;
 
-		PycpObject* __integer__();
-		PycpObject* __string__();
-		PycpObject* __addition__(PycpObject*);
-		PycpObject* __multiplication__(PycpObject*);
+		Object* __integer__();
+		Object* __string__();
+		Object* __addition__(Object*);
+		Object* __multiplication__(Object*);
 
 };
+
+std::string AsString(Object*);
+
+} // namespace Pycp
 
 #endif // PYCP_STRING_HPP

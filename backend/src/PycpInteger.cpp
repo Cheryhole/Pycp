@@ -1,75 +1,96 @@
 #include "PycpInteger.hpp"
 #include "PycpString.hpp"
 
-PycpInteger::PycpInteger() : PycpInteger(INT64_C(0)){}
+namespace Pycp{
 
-PycpInteger::PycpInteger(int64_t value) : PycpObject(PYCP_TP_INTEGER){
+Integer* Integer::instances[PYCP_INTEGER_INSTANCES] = {0};
+
+Integer::Integer() : Integer(INT64_C(0)){}
+
+Integer::Integer(int64_t value) : Object(Type::INTEGER){
 	this->_value = value;
 }
 
-PycpInteger::PycpInteger(const std::string& value) : PycpInteger(std::stoi(value)){}
+Integer::Integer(const std::string& value) : Integer(std::stoi(value)){}
 
-PycpInteger::PycpInteger(PycpInteger* value) : PycpInteger(value->get_value()){}
+Integer::Integer(Integer* value) : Integer(value->get_value()){}
 
-PycpInteger::PycpInteger(PycpObject* obj) : PycpInteger(static_cast<PycpInteger*>(obj->__integer__())){}
+Integer::Integer(Object* obj) : Integer(static_cast<Integer*>(obj->__integer__())){}
 
-PycpInteger::~PycpInteger(){}
+Integer::~Integer(){}
 
-int64_t PycpInteger::get_value() const{
+int64_t Integer::get_value() const{
 	return this->_value;
 }
 
-PycpObject* PycpInteger::__integer__(){
+Object* Integer::__integer__(){
   return this;
 }
 
-PycpObject* PycpInteger::__string__(){
-  return new PycpString(std::to_string(this->_value));
+Object* Integer::__string__(){
+  return new String(std::to_string(this->_value));
 }
 
-PycpObject* PycpInteger::__negation__(){
-  return new PycpInteger(-(this->_value));
+Object* Integer::__negation__(){
+  return new Integer(-(this->_value));
 }
 
-PycpObject* PycpInteger::__addition__(PycpObject* other){
-	if (other->type != PYCP_TP_INTEGER){
-		throw PycpException("Unsupported to add.");
+Object* Integer::__addition__(Object* other){
+	if (other->type != Type::INTEGER){
+		throw Exception("Unsupported to add.");
 	}
-	PycpInteger* i = static_cast<PycpInteger*>(other);
-	return new PycpInteger(this->_value + i->_value);
+	Integer* i = static_cast<Integer*>(other);
+	return new Integer(this->_value + i->_value);
 }
 
-PycpObject* PycpInteger::__subtraction__(PycpObject* other){
-	if (other->type != PYCP_TP_INTEGER){
-		throw PycpException("Unsupported to subtract.");
+Object* Integer::__subtraction__(Object* other){
+	if (other->type != Type::INTEGER){
+		throw Exception("Unsupported to subtract.");
 	}
-	PycpInteger* i = static_cast<PycpInteger*>(other);
-	return new PycpInteger(this->_value - i->_value);
+	Integer* i = static_cast<Integer*>(other);
+	return new Integer(this->_value - i->_value);
 }
 
-PycpObject* PycpInteger::__multiplication__(PycpObject* other){
-	if (other->type == PYCP_TP_INTEGER){
-		PycpInteger* i = static_cast<PycpInteger*>(other);
-		return new PycpInteger(this->_value * i->_value);
+Object* Integer::__multiplication__(Object* other){
+	if (other->type == Type::INTEGER){
+		Integer* i = static_cast<Integer*>(other);
+		return new Integer(this->_value * i->_value);
 	} 
-	else if (other->type == PYCP_TP_STRING){
-		PycpString* s = static_cast<PycpString*>(other);
+	else if (other->type == Type::STRING){
+		String* s = static_cast<String*>(other);
 		std::string str = s->get_value();
 		std::string res;
 		for (int64_t i = 0; i < this->_value; i++){
 			res += str;
 		}
-		return new PycpString(res);
+		return new String(res);
 	}
 
-	throw PycpException("Unsupported to multiply.");
+	throw Exception("Unsupported to multiply.");
 	
 }
 
-PycpObject* PycpInteger::__division__(PycpObject* other){
-	if (other->type != PYCP_TP_INTEGER){
-		throw PycpException("Unsupported to divide.");
+Object* Integer::__division__(Object* other){
+	if (other->type != Type::INTEGER){
+		throw Exception("Unsupported to divide.");
 	}
-	PycpInteger* i = static_cast<PycpInteger*>(other);
-	return new PycpInteger(this->_value / i->_value);
+	Integer* i = static_cast<Integer*>(other);
+	if (i->_value == 0){
+		throw ValueError("Division by zero.");
+	}
+	return new Integer(this->_value / i->_value);
 }
+
+void Integer::Initialize(){
+	for (int i = 0; i < PYCP_INTEGER_INSTANCES; i++){
+		Integer::instances[i] = new Integer(i);
+	}
+}
+
+void Integer::Finalize(){
+	for (int i = 0; i < PYCP_INTEGER_INSTANCES; i++){
+		delete Integer::instances[i];
+	}  
+}
+
+} // namespace Pycp
