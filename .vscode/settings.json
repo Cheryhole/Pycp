@@ -1,8 +1,0 @@
-{
-	"C_Cpp.default.includePath": [
-		"backend\\include\\",
-		"${default}",
-		"C:\\Program Files\\Python314\\Include",
-		"C:\\Program Files\\Python314\\Lib\\site-packages\\pybind11\\include"
-	]
-}
