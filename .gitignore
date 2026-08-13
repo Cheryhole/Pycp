@@ -1,18 +1,14 @@
-__pycache__/
 .vscode/
-.bak/
-.old/
-parser.out
-parsetab.py
-_build.bat
-cmake_install.cmake
-bin/
-CMakeFiles/
-.vscode/settings.json
+
+.codebuddy/
+build/
+
 CMakeCache.txt
 simplebuilder.bat
 Makefile
 
+test.*
+test*/
 *.pyi
 *.dll
 *.pyd

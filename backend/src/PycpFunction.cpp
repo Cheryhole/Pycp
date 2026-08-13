@@ -1,42 +1,53 @@
 #include "PycpFunction.hpp"
+#include "PycpGC.hpp"
 
-namespace Pycp{
+namespace Pycp {
 
 Function* BuiltinFunction::print = nullptr;
 
-Object* _builtin_print(Object* obj){
-  std::cout << AsString(obj) << std::endl;
-  return None::instance;
+Object* _builtin_print([[maybe_unused]] Object* self, Object** argv, std::size_t argc){
+	// 支持多参数：以空格分隔打印全部实参，末尾换行
+	if (argv != nullptr){
+		for (std::size_t i = 0; i < argc; ++i){
+			if (i > 0) std::cout << " ";
+			std::cout << AsString(argv[i]);
+		}
+	}
+	std::cout << std::endl;
+	return None::instance;
 }
 
-Function::Function() : Function(""){}
+Function::Function() : Function("", nullptr){}
 
-Function::Function(const char* name) : Object(Type::FUNCTION){
-	this->name = name;
-	this->func = nullptr;
-}
+Function::Function(const char* name)
+		: Object(Type::FUNCTION), kind(FunctionKind::Native), name(name), native(nullptr){}
 
-Function::Function(const char* name, CFunction_t func) : Object(Type::FUNCTION){
-	this->name = name;
-	this->func = func;
-}
+Function::Function(const char* name, PycpNativeFunction func)
+		: Object(Type::FUNCTION), kind(FunctionKind::Native), name(name), native(func){}
 
-Object* Function::__call__(Object* args){
-	if (this->func != nullptr){
-		return this->func(args);
+Object* Function::invoke(Object** argv, std::size_t argc){
+	if (this->native != nullptr){
+		return this->native(this, argv, argc);
 	}
 	return None::instance;
 }
 
-const char* Function::get_name() const { return name; }
+// 兼容旧 tree-walking 解释器：单参数形态转调统一入口
+Object* Function::__call__([[maybe_unused]] Object* args){
+	return this->invoke(nullptr, 0);
+}
 
 void Function::Initialize(){
-	BuiltinFunction::print = new Function("print", _builtin_print);
+	BuiltinFunction::print = New<Function>("print", _builtin_print);
+	GC_AddRoot(BuiltinFunction::print);
 }
 
 void Function::Finalize(){
-	delete BuiltinFunction::print;
+	if (BuiltinFunction::print != nullptr){
+		GC_RemoveRoot(BuiltinFunction::print);
+		Decref(BuiltinFunction::print);
+		BuiltinFunction::print = nullptr;
+	}
 }
-
 
 } // namespace Pycp

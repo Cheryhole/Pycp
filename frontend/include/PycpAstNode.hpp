@@ -26,7 +26,9 @@ enum class NodeType : uint16_t {
 	LITERAL = 11,
 	INTEGER_LITERAL = 12,
 	STRING_LITERAL = 13,
-	NONE_LITERAL = 14
+	NONE_LITERAL = 14,
+	IF_STATEMENT = 15,
+	IF_BRANCH = 16
 };
 
 enum class UnaryOp : uint16_t {
@@ -37,7 +39,14 @@ enum class BinaryOp : uint16_t {
 	PLUS = 0,
 	MINUS = 1,
 	MULTIPLY = 2,
-	DIVIDE = 3
+	DIVIDE = 3,
+	// 比较运算符（用于条件表达式）
+	LESS_THAN = 4,
+	GREATER_THAN = 5,
+	LESS_EQUAL = 6,
+	GREATER_EQUAL = 7,
+	EQUAL = 8,
+	NOT_EQUAL = 9
 };
 
 // ============================================================
@@ -160,10 +169,10 @@ struct BinaryExpression : Expression {
 // ============================================================
 struct FunctionExpression : Expression {
 	std::string name;
-	std::vector<std::string> params;
+	std::vector<std::string*> params;
 	Program* body;
 
-	FunctionExpression(std::vector<std::string> p, Program* b,
+	FunctionExpression(std::vector<std::string*> p, Program* b,
 	                   std::string n = "@anonymous", int line = -1);
 	~FunctionExpression() override;
 
@@ -190,10 +199,10 @@ struct CallExpression : Expression {
 // IdentifierExpression 节点
 // ============================================================
 struct IdentifierExpression : Expression {
-	std::string name;
+	std::string* name;
 
-	explicit IdentifierExpression(std::string n, int line = -1);
-	~IdentifierExpression() override = default;
+	explicit IdentifierExpression(std::string* n, int line = -1);
+	~IdentifierExpression() override;
 
 	NodeType get_type() const override { return NodeType::IDENTIFIER_EXPRESSION; }
 	std::string to_string() const override;
@@ -213,10 +222,10 @@ struct Literal : Expression {
 // IntegerLiteral 节点
 // ============================================================
 struct IntegerLiteral : Literal {
-	std::string value;
+	std::string* value;
 
-	explicit IntegerLiteral(std::string v, int line = -1);
-	~IntegerLiteral() override = default;
+	explicit IntegerLiteral(std::string* v, int line = -1);
+	~IntegerLiteral() override;
 
 	NodeType get_type() const override { return NodeType::INTEGER_LITERAL; }
 	std::string to_string() const override;
@@ -226,10 +235,10 @@ struct IntegerLiteral : Literal {
 // StringLiteral 节点
 // ============================================================
 struct StringLiteral : Literal {
-	std::string value;
+	std::string* value;
 
-	explicit StringLiteral(std::string v, int line = -1);
-	~StringLiteral() override = default;
+	explicit StringLiteral(std::string* v, int line = -1);
+	~StringLiteral() override;
 
 	NodeType get_type() const override { return NodeType::STRING_LITERAL; }
 	std::string to_string() const override;
@@ -243,6 +252,48 @@ struct NoneLiteral : Literal {
 	~NoneLiteral() override = default;
 
 	NodeType get_type() const override { return NodeType::NONE_LITERAL; }
+	std::string to_string() const override;
+};
+
+// ============================================================
+// IfBranch 节点（单个条件分支：if / elif / else）
+//   condition 为 nullptr 时表示 else 分支（无条件）
+//   body     为大括号代码块对应的语句列表
+//   is_elif  标记该分支是否为 elif（区别 if / elif 输出标签）
+// ============================================================
+struct IfBranch : Node {
+	Expression* condition;
+	Program* body;
+	bool is_elif;
+
+	IfBranch(Expression* cond, Program* b, int line = -1, bool elif = false);
+	~IfBranch() override;
+
+	NodeType get_type() const override { return NodeType::IF_BRANCH; }
+	std::string to_string() const override;
+	// 生成带关键字标签（if / elif / else）的分支字符串，indent 为前缀缩进
+	std::string to_string(const std::string& indent) const;
+};
+
+// ============================================================
+// IfStatement 节点（完整条件判断）
+//   if_branch      必有的 if 分支
+//   elif_branches  0..n 个 elif 分支（按书写顺序）
+//   else_body      可选的 else 分支语句块（nullptr 表示无 else）
+// 嵌套条件通过 body / else_body 内再包含 IfStatement 自然支持。
+// ============================================================
+struct IfStatement : Statement {
+	IfBranch* if_branch;
+	std::vector<IfBranch*>* elif_branches;
+	Program* else_body;
+
+	IfStatement(IfBranch* if_br,
+	            std::vector<IfBranch*>* elif_brs,
+	            Program* else_b,
+	            int line = -1);
+	~IfStatement() override;
+
+	NodeType get_type() const override { return NodeType::IF_STATEMENT; }
 	std::string to_string() const override;
 };
 

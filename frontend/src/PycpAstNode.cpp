@@ -14,10 +14,16 @@ static std::string unary_op_to_string(UnaryOp op) {
 
 static std::string binary_op_to_string(BinaryOp op) {
 	switch (op) {
-		case BinaryOp::PLUS:     return "PLUS";
-		case BinaryOp::MINUS:    return "MINUS";
-		case BinaryOp::MULTIPLY: return "MULTIPLY";
-		case BinaryOp::DIVIDE:   return "DIVIDE";
+		case BinaryOp::PLUS:     			return "PLUS";
+		case BinaryOp::MINUS:    			return "MINUS";
+		case BinaryOp::MULTIPLY: 			return "MULTIPLY";
+		case BinaryOp::DIVIDE:   			return "DIVIDE";
+		case BinaryOp::LESS_THAN:     return "LESS_THAN";
+		case BinaryOp::GREATER_THAN:  return "GREATER_THAN";
+		case BinaryOp::LESS_EQUAL:    return "LESS_EQUAL";
+		case BinaryOp::GREATER_EQUAL: return "GREATER_EQUAL";
+		case BinaryOp::EQUAL:         return "EQUAL";
+		case BinaryOp::NOT_EQUAL:     return "NOT_EQUAL";
 		default: return "UNKNOWN";
 	}
 }
@@ -64,6 +70,7 @@ AssignmentStatement::AssignmentStatement(Expression* t, Expression* v, int line)
 
 AssignmentStatement::~AssignmentStatement() {
 	delete value;
+	delete target;
 }
 
 std::string AssignmentStatement::to_string() const {
@@ -138,7 +145,7 @@ std::string BinaryExpression::to_string() const {
 // ============================================================
 // FunctionExpression 实现
 // ============================================================
-FunctionExpression::FunctionExpression(std::vector<std::string> p,
+FunctionExpression::FunctionExpression(std::vector<std::string*> p,
                                        Program* b,
                                        std::string n, int line)
 	: name(std::move(n)), params(std::move(p)), body(b) {
@@ -147,13 +154,16 @@ FunctionExpression::FunctionExpression(std::vector<std::string> p,
 
 FunctionExpression::~FunctionExpression() {
 	delete body;
+	for (std::string* param : params) {
+		delete param;
+	}
 }
 
 std::string FunctionExpression::to_string() const {
 	std::string params_str;
 	for (size_t i = 0; i < params.size(); ++i) {
 		if (i > 0) params_str += ", ";
-		params_str += params[i];
+		params_str += *(params[i]);
 	}
 
 	std::string body_str = body->to_string();
@@ -200,37 +210,49 @@ std::string CallExpression::to_string() const {
 // ============================================================
 // IdentifierExpression 实现
 // ============================================================
-IdentifierExpression::IdentifierExpression(std::string n, int line)
-	: name(std::move(n)) {
+IdentifierExpression::IdentifierExpression(std::string* n, int line)
+	: name(n) {
 	lineno = line;
 }
 
+IdentifierExpression::~IdentifierExpression() {
+	delete name;
+}
+
 std::string IdentifierExpression::to_string() const {
-	return "<Identifier: " + name + ">";
+	return "<Identifier: " + *name + ">";
 }
 
 // ============================================================
 // IntegerLiteral 实现
 // ============================================================
-IntegerLiteral::IntegerLiteral(std::string v, int line)
-	: value(std::move(v)) {
+IntegerLiteral::IntegerLiteral(std::string* v, int line)
+	: value(v) {
 	lineno = line;
 }
 
+IntegerLiteral::~IntegerLiteral() {
+  delete value;
+}
+
 std::string IntegerLiteral::to_string() const {
-	return "<Integer: " + value + ">";
+	return "<Integer: " + *value + ">";
 }
 
 // ============================================================
 // StringLiteral 实现
 // ============================================================
-StringLiteral::StringLiteral(std::string v, int line)
-	: value(std::move(v)) {
+StringLiteral::StringLiteral(std::string* v, int line)
+	: value(v) {
 	lineno = line;
 }
 
+StringLiteral::~StringLiteral() {
+  delete value;
+}
+
 std::string StringLiteral::to_string() const {
-	return "<String: \"" + value + "\">";
+	return "<String: \"" + *value + "\">";
 }
 
 // ============================================================
@@ -242,6 +264,92 @@ NoneLiteral::NoneLiteral(int line) {
 
 std::string NoneLiteral::to_string() const {
 	return "<None>";
+}
+
+// ============================================================
+// IfBranch 实现
+// ============================================================
+IfBranch::IfBranch(Expression* cond, Program* b, int line, bool elif)
+	: condition(cond), body(b), is_elif(elif) {
+	lineno = line;
+}
+
+IfBranch::~IfBranch() {
+	delete condition;
+	delete body;
+}
+
+// 对代码块内部做缩进处理，与 FunctionExpression 保持一致
+static std::string indent_block(const std::string& raw, const std::string& base_indent) {
+	std::string body_str = raw;
+	size_t pos = 0;
+	while (pos < body_str.length()) {
+		pos = body_str.find('\n', pos);
+		if (pos == std::string::npos) break;
+		body_str.insert(pos + 1, base_indent + "  ");
+		pos += base_indent.length() + 3;
+	}
+	if (!body_str.empty()) {
+		body_str = "\n" + base_indent + "  " + body_str + "\n" + base_indent;
+	}
+	return body_str;
+}
+
+std::string IfBranch::to_string() const {
+	return to_string("");
+}
+
+std::string IfBranch::to_string(const std::string& indent) const {
+	std::string body_str = indent_block(body->to_string(), indent);
+
+	if (condition == nullptr) {
+		// else 分支：无条件
+		return indent + "<Else:" + body_str + ">";
+	}
+	const std::string keyword = is_elif ? "<Elif: " : "<If: ";
+	return indent + keyword + condition->to_string() + body_str + ">";
+}
+
+// ============================================================
+// IfStatement 实现
+// ============================================================
+IfStatement::IfStatement(IfBranch* if_br,
+                         std::vector<IfBranch*>* elif_brs,
+                         Program* else_b,
+                         int line)
+	: if_branch(if_br), elif_branches(elif_brs), else_body(else_b) {
+	lineno = line;
+}
+
+IfStatement::~IfStatement() {
+	delete if_branch;
+	if (elif_branches != nullptr) {
+		for (IfBranch* br : *elif_branches) {
+			delete br;
+		}
+		delete elif_branches;
+	}
+	delete else_body;
+}
+
+std::string IfStatement::to_string() const {
+	// 不显式包裹组合节点标签，仅以 If/Elif/Else 区分各分支并体现层级关联。
+	const std::string indent = "  ";
+	std::string result = if_branch->to_string(indent);
+
+	if (elif_branches != nullptr) {
+		for (IfBranch* br : *elif_branches) {
+			result += "\n" + br->to_string(indent);
+		}
+	}
+
+	if (else_body != nullptr) {
+		// else 分支以独立 IfBranch（condition==nullptr）形式复用打印逻辑
+		IfBranch else_branch(nullptr, else_body);
+		result += "\n" + else_branch.to_string(indent);
+	}
+
+	return result;
 }
 
 } // namespace Pycp::AstNode

@@ -9,7 +9,7 @@ namespace Pycp{
 
 class None : public Object{
 	private:
-		String* none_str;
+		String* none_str_;
 
 	public:
 		static None* instance;
@@ -19,6 +19,8 @@ class None : public Object{
 
 		None();
 		~None();
+
+		String* none_str() const { return none_str_; }
 
 		Object* __integer__() override;
 		Object* __string__() override;

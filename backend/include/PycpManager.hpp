@@ -1,26 +1,16 @@
 #ifndef PYCP_MANAGER_HPP
 #define PYCP_MANAGER_HPP
 
-// 管理部分常驻对象的创建和释放
+// 运行时初始化 / 销毁管理
+//   实现下沉至 PycpManager.cpp（见路线图第 4 步）
+//   初始化顺序：Core -> GC -> None -> Integer -> String -> Function -> Builtin
+//   具备幂等保护：重复 Initialize 不会重复初始化
 
-#include "PycpNone.hpp"
-#include "PycpFunction.hpp"
-#include "PycpInteger.hpp"
+namespace Pycp {
 
-namespace Pycp{
-
-void Initialize(){
-	None::Initialize();
-	Function::Initialize();
-	Integer::Initialize();
-}
-
-void Finalize(){
-	Function::Finalize();
-	None::Finalize();
-	Integer::Finalize();
-}
+void Initialize();
+void Finalize();
 
 } // namespace Pycp
 
-#endif // PYCP_MANAGER_HPP1
+#endif // PYCP_MANAGER_HPP

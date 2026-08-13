@@ -4,6 +4,8 @@ namespace Pycp{
 
 Object::Object(Type type){
 	this->type = type;
+	this->refcount = 0;
+	this->gc_flags = GCFlag::NONE;
 }
 
 Object::~Object(){

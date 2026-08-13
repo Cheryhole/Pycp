@@ -7,31 +7,41 @@
 #include <functional>
 #include <iostream>
 
-#define PYCP_FUNC(name, ...) \
-	new Function(name, \
-			[&](Object* args) -> Object* __VA_ARGS__)
+namespace Pycp {
 
-namespace Pycp{
+// 函数种类（见路线图第 6 步：Native / Bytecode 区分）
+enum class FunctionKind{
+	Native,    // C++ 实现的内建/用户函数
+	Bytecode,  // 未来由 VM 执行的字节码函数
+};
 
-typedef std::function<Object*(Object*)> CFunction_t;
+// 统一调用签名：self + argv/argc（见路线图第 5 步）
+//   不再使用单一的 Object* args，避免信息不足
+using PycpNativeFunction = Object* (*)(Object* self, Object** argv, std::size_t argc);
 
-Object* _builtin_print(Object*);
+Object* _builtin_print(Object* self, Object** argv, std::size_t argc);
 struct BuiltinFunction;
 
 class Function : public Object{
-	private:
-		CFunction_t func;
-
 	protected:
-		const char* name;	
+		FunctionKind kind;
+		const char* name;
+
+		// Native 函数入口（无状态 C 函数指针，避免 C++ lambda [＆] 悬空捕获）
+		PycpNativeFunction native;
 
 	public:
 		Function();
-		Function(const char*);
-		Function(const char*, CFunction_t);
+		Function(const char* name);
+		Function(const char* name, PycpNativeFunction func);
 
+		FunctionKind get_kind() const { return kind; }
+		const char* get_name() const { return name; }
+
+		// 内部调用：经统一 argv/argc 形态
 		Object* __call__(Object* args) override;
-		const char* get_name() const;
+		virtual Object* invoke(Object** argv, std::size_t argc);
+
 		static void Initialize();
 		static void Finalize();
 

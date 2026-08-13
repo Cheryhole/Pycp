@@ -8,6 +8,10 @@
 #include "PycpException.hpp"
 #include "PycpFunction.hpp"
 
+#include "PycpConfig.hpp"
+#include "PycpGC.hpp"
+#include "PycpABI.hpp"
+
 #include "PycpManager.hpp"
 
 namespace Pycp{

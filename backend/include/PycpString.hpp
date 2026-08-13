@@ -24,6 +24,9 @@ class String : public Object{
 		Object* __addition__(Object*);
 		Object* __multiplication__(Object*);
 
+		static void Initialize();
+		static void Finalize();
+
 };
 
 std::string AsString(Object*);

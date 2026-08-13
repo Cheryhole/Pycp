@@ -1,12 +1,9 @@
 # =====================================================================
-# Pycp 前端模块构建脚本（独立入口）
+# Pycp 项目总构建脚本
 # ---------------------------------------------------------------------
-# 本脚本仅用于单独构建前端模块：生成 Flex/Bison 解析器并编译一个
-# 独立的解析器测试程序（parser_test），读取 .pycp 源码并打印 AST，
-# 用于验证解析器与 AST 构造逻辑。
-#
-# 注意：完整的 pycp 可执行文件由项目顶层 CMakeLists.txt 构建，
-#       本脚本不再承担主程序构建职责。
+# 统一构建入口：编排 backend 运行时（静态库）、frontend 前端源码
+# （AST / Codegen / AOT / Flex/Bison 生成）与顶层 PycpMain.cpp，
+# 最终产出 pycp 可执行文件。
 #
 # 用法：
 #   cmake -S . -B build
@@ -15,13 +12,13 @@
 
 cmake_minimum_required(VERSION 3.15)
 
-project(PycpParser
+project(Pycp
     VERSION 1.0.0
     LANGUAGES CXX
 )
 
 # =====================================================================
-# C++ 标准
+# 基础编译配置
 # =====================================================================
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -42,28 +39,54 @@ message(STATUS "Bison : ${BISON_EXECUTABLE}")
 message(STATUS "Flex  : ${FLEX_EXECUTABLE}")
 
 # =====================================================================
+# Backend 运行时（仅需静态库）
+# ---------------------------------------------------------------------
+# 作为子目录引入 backend，仅构建 PycpRuntime_static 静态库，
+# 关闭非必需的动态库 / Python 绑定 / 测试目标以加速全量编译。
+# =====================================================================
+set(BUILD_RUNTIME_SHARED OFF CACHE BOOL "" FORCE)
+set(BUILD_PYTHON_BINDING OFF CACHE BOOL "" FORCE)
+set(BUILD_TEST OFF CACHE BOOL "" FORCE)
+add_subdirectory(backend)
+
+# =====================================================================
+# 目录路径
+# =====================================================================
+set(PYCP_FRONTEND_DIR ${CMAKE_CURRENT_SOURCE_DIR}/frontend)
+set(PYCP_BACKEND_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/backend)
+set(PYCP_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+
+file(MAKE_DIRECTORY ${PYCP_GENERATED_DIR})
+
+# =====================================================================
 # 源文件
 # =====================================================================
 set(AST_SOURCES
-    src/PycpAstNode.cpp
+    ${PYCP_FRONTEND_DIR}/src/PycpAstNode.cpp
 )
 
-# 解析器测试程序：读取 .pycp 源码并打印 AST（自带 main）
-set(PARSER_TEST_SOURCE
-    src/PycpParser.cpp
+set(CODGEN_SOURCES
+    ${PYCP_FRONTEND_DIR}/src/PycpCodegen.cpp
 )
 
-include_directories(include)
+set(AOT_SOURCES
+    ${PYCP_FRONTEND_DIR}/src/PycpAot.cpp
+)
+
+# 主程序入口：位于项目顶层目录
+set(MAIN_SOURCE
+    ${CMAKE_CURRENT_SOURCE_DIR}/PycpMain.cpp
+)
 
 # =====================================================================
 # Flex / Bison 输入文件
 # =====================================================================
 set(BISON_INPUT
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpParser.y
+    ${PYCP_FRONTEND_DIR}/src/PycpParser.y
 )
 
 set(FLEX_INPUT
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpLexer.l
+    ${PYCP_FRONTEND_DIR}/src/PycpLexer.l
 )
 
 # =====================================================================
@@ -74,10 +97,10 @@ bison_target(
 
     ${BISON_INPUT}
 
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpParser.cpp
+    ${PYCP_GENERATED_DIR}/PycpParser.cpp
 
     DEFINES_FILE
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpParser.hpp
+    ${PYCP_GENERATED_DIR}/PycpParser.hpp
 
     COMPILE_FLAGS
     "-v -Wcounterexamples"
@@ -91,10 +114,10 @@ flex_target(
 
     ${FLEX_INPUT}
 
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpLexer.cpp
+    ${PYCP_GENERATED_DIR}/PycpLexer.cpp
 
     DEFINES_FILE
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpLexer.hpp
+    ${PYCP_GENERATED_DIR}/PycpLexer.hpp
 )
 
 # =====================================================================
@@ -106,11 +129,13 @@ add_flex_bison_dependency(
 )
 
 # =====================================================================
-# 解析器测试程序
+# 可执行文件
 # =====================================================================
-add_executable(parser_test
-    ${PARSER_TEST_SOURCE}
+add_executable(pycp
+    ${MAIN_SOURCE}
     ${AST_SOURCES}
+    ${CODGEN_SOURCES}
+    ${AOT_SOURCES}
     ${BISON_PycpParser_OUTPUTS}
     ${FLEX_PycpLexer_OUTPUTS}
 )
@@ -118,24 +143,26 @@ add_executable(parser_test
 # =====================================================================
 # 头文件搜索路径
 # =====================================================================
-target_include_directories(parser_test
+target_include_directories(pycp
     PRIVATE
 
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PYCP_FRONTEND_DIR}/include
+    ${PYCP_BACKEND_DIR}/include
+    ${PYCP_GENERATED_DIR}
 )
 
 # =====================================================================
 # 编译选项
 # =====================================================================
 if(MSVC)
-    target_compile_options(parser_test
+    target_compile_options(pycp
         PRIVATE
         /W4
         /MP
     )
 else()
-    target_compile_options(parser_test
+    target_compile_options(pycp
         PRIVATE
 
         -Wall
@@ -146,31 +173,35 @@ else()
 endif()
 
 # =====================================================================
-# 链接 Flex 库（仅 Linux）
+# 链接 Flex 库（仅 Linux）与 backend 运行时
 # =====================================================================
 if(UNIX AND NOT APPLE)
-    target_link_libraries(parser_test PRIVATE ${FLEX_LIBRARIES})
+    target_link_libraries(pycp PRIVATE ${FLEX_LIBRARIES})
+endif()
+
+target_link_libraries(pycp PRIVATE PycpRuntime_static)
+
+# =====================================================================
+# 调试宏
+# =====================================================================
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(pycp PRIVATE DEBUG=1)
+else()
+    target_compile_definitions(pycp PRIVATE NDEBUG=1)
 endif()
 
 # =====================================================================
-# 实用目标
+# 安装
 # =====================================================================
-add_custom_target(show-generated
-    COMMAND ${CMAKE_COMMAND} -E echo ""
-    COMMAND ${CMAKE_COMMAND} -E echo "========== Generated Files =========="
-    COMMAND ${CMAKE_COMMAND} -E echo "Parser : ${BISON_PycpParser_OUTPUT_SOURCE}"
-    COMMAND ${CMAKE_COMMAND} -E echo "Header : ${BISON_PycpParser_OUTPUT_HEADER}"
-    COMMAND ${CMAKE_COMMAND} -E echo "Lexer  : ${FLEX_PycpLexer_OUTPUTS}"
-    COMMAND ${CMAKE_COMMAND} -E echo "===================================="
+install(TARGETS pycp
+    RUNTIME DESTINATION bin
 )
 
-add_custom_target(clean-generated
-    COMMAND ${CMAKE_COMMAND} -E remove
-
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpParser.cpp
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpParser.hpp
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpParser.output
-
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpLexer.cpp
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpLexer.hpp
-)
+# =====================================================================
+# 构建信息
+# =====================================================================
+message(STATUS "================================================")
+message(STATUS "Project: Pycp v${PROJECT_VERSION}")
+message(STATUS "Output executable: ${CMAKE_BINARY_DIR}/pycp")
+message(STATUS "Compiler: ${CMAKE_CXX_COMPILER_ID}")
+message(STATUS "================================================")
