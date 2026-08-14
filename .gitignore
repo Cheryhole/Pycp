@@ -2,6 +2,7 @@
 
 .codebuddy/
 build/
+bin/
 
 CMakeCache.txt
 simplebuilder.bat
