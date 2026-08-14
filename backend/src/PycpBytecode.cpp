@@ -14,7 +14,7 @@ namespace Pycp::BC {
 // =============================================================
 
 const uint8_t MAGIC[4] = { 0x43, 0x59, 0x43, 0x50 }; // "CYCP"
-const uint16_t FORMAT_VERSION_MAJOR = 1;
+const uint16_t FORMAT_VERSION_MAJOR = 2;
 const uint16_t FORMAT_VERSION_MINOR = 0;
 
 // =============================================================
@@ -38,19 +38,19 @@ inline void put_u32(std::vector<uint8_t>& out, uint32_t v) {
 }
 
 inline uint8_t get_u8(const uint8_t* data, std::size_t size, std::size_t& off) {
-	if (off + 1 > size) throw Exception("Bytecode: unexpected end of data.");
+	if (off + 1 > size) throw BytecodeError("unexpected end of data.");
 	return data[off++];
 }
 
 inline uint16_t get_u16(const uint8_t* data, std::size_t size, std::size_t& off) {
-	if (off + 2 > size) throw Exception("Bytecode: unexpected end of data.");
+	if (off + 2 > size) throw BytecodeError("unexpected end of data.");
 	uint16_t v = static_cast<uint16_t>(data[off] | (data[off + 1] << 8));
 	off += 2;
 	return v;
 }
 
 inline uint32_t get_u32(const uint8_t* data, std::size_t size, std::size_t& off) {
-	if (off + 4 > size) throw Exception("Bytecode: unexpected end of data.");
+	if (off + 4 > size) throw BytecodeError("unexpected end of data.");
 	uint32_t v = static_cast<uint32_t>(data[off]) |
 	             (static_cast<uint32_t>(data[off + 1]) << 8) |
 	             (static_cast<uint32_t>(data[off + 2]) << 16) |
@@ -82,9 +82,9 @@ uint64_t ReadULEB128(const uint8_t* data, std::size_t size, std::size_t& offset)
 	uint64_t result = 0;
 	unsigned shift = 0;
 	for (;;) {
-		if (offset >= size) throw Exception("Bytecode: truncated LEB128.");
+		if (offset >= size) throw BytecodeError("truncated LEB128.");
 		uint8_t byte = data[offset++];
-		if (shift >= 64) throw Exception("Bytecode: LEB128 overflow.");
+		if (shift >= 64) throw BytecodeError("LEB128 overflow.");
 		result |= static_cast<uint64_t>(byte & 0x7F) << shift;
 		if ((byte & 0x80) == 0) break;
 		shift += 7;
@@ -109,9 +109,9 @@ int64_t ReadSLEB128(const uint8_t* data, std::size_t size, std::size_t& offset) 
 	unsigned shift = 0;
 	uint8_t byte;
 	do {
-		if (offset >= size) throw Exception("Bytecode: truncated SLEB128.");
+		if (offset >= size) throw BytecodeError("truncated SLEB128.");
 		byte = data[offset++];
-		if (shift >= 64) throw Exception("Bytecode: SLEB128 overflow.");
+		if (shift >= 64) throw BytecodeError("SLEB128 overflow.");
 		result |= static_cast<int64_t>(byte & 0x7F) << shift;
 		shift += 7;
 	} while ((byte & 0x80) != 0);
@@ -134,6 +134,16 @@ std::vector<uint8_t> Serialize(const Module& module) {
 	put_u16(out, FORMAT_VERSION_MAJOR);
 	put_u16(out, FORMAT_VERSION_MINOR);
 	put_u32(out, 0); // flags 预留
+
+	// ---- 源文件路径段 ----
+	{
+		std::vector<uint8_t> seg;
+		WriteULEB128(seg, module.source_path.size());
+		put_bytes(seg, reinterpret_cast<const uint8_t*>(module.source_path.data()),
+		          module.source_path.size());
+		put_u32(out, static_cast<uint32_t>(seg.size()));
+		put_bytes(out, seg.data(), seg.size());
+	}
 
 	// ---- 常量池段 ----
 	{
@@ -196,6 +206,12 @@ std::vector<uint8_t> Serialize(const Module& module) {
 				seg.push_back(static_cast<uint8_t>(ins.op));
 				WriteSLEB128(seg, ins.operand);
 			}
+
+			// 行号表（与指令流逐条对齐，缺失时以 -1 补齐）
+			WriteULEB128(seg, co.linenos.size());
+			for (int ln : co.linenos) {
+				WriteSLEB128(seg, ln);
+			}
 		}
 		put_u32(out, static_cast<uint32_t>(seg.size()));
 		put_bytes(out, seg.data(), seg.size());
@@ -210,7 +226,7 @@ std::vector<uint8_t> Serialize(const Module& module) {
 
 Module Deserialize(const uint8_t* data, std::size_t size) {
 	if (data == nullptr || size < 12) {
-		throw Exception("Bytecode: file too small.");
+		throw BytecodeError("file too small.");
 	}
 
 	std::size_t off = 0;
@@ -218,14 +234,14 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 	// ---- 文件头校验 ----
 	for (int i = 0; i < 4; ++i) {
 		if (get_u8(data, size, off) != MAGIC[i]) {
-			throw Exception("Bytecode: bad magic (not a .cpycp file).");
+			throw BytecodeError("bad magic (not a .cpycp file).");
 		}
 	}
 	uint16_t major = get_u16(data, size, off);
 	uint16_t minor = get_u16(data, size, off);
 	(void)minor;
 	if (major != FORMAT_VERSION_MAJOR) {
-		throw Exception("Bytecode: unsupported version " +
+		throw BytecodeError("unsupported version " +
 		                std::to_string(major) + "." + std::to_string(minor) +
 		                " (expected " + std::to_string(FORMAT_VERSION_MAJOR) + ").");
 	}
@@ -233,11 +249,22 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 
 	Module module;
 
+	// ---- 源文件路径段 ----
+	{
+		uint32_t seg_len = get_u32(data, size, off);
+		std::size_t seg_end = off + seg_len;
+		if (seg_end > size) throw BytecodeError("source path truncated.");
+		uint64_t len = ReadULEB128(data, size, off);
+		if (off + len > size) throw BytecodeError("source path truncated.");
+		module.source_path.assign(reinterpret_cast<const char*>(data + off), len);
+		off = seg_end;
+	}
+
 	// ---- 常量池段 ----
 	{
 		uint32_t seg_len = get_u32(data, size, off);
 		std::size_t seg_end = off + seg_len;
-		if (seg_end > size) throw Exception("Bytecode: constant pool truncated.");
+		if (seg_end > size) throw BytecodeError("constant pool truncated.");
 		uint64_t count = ReadULEB128(data, size, off);
 		module.const_pool.reserve(count);
 		for (uint64_t i = 0; i < count; ++i) {
@@ -247,7 +274,7 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 				c.int_value = ReadSLEB128(data, size, off);
 			} else if (c.kind == ConstKind::STRING) {
 				uint64_t len = ReadULEB128(data, size, off);
-				if (off + len > size) throw Exception("Bytecode: string constant truncated.");
+				if (off + len > size) throw BytecodeError("string constant truncated.");
 				c.str_value.assign(reinterpret_cast<const char*>(data + off), len);
 				off += len;
 			}
@@ -261,12 +288,12 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 	{
 		uint32_t seg_len = get_u32(data, size, off);
 		std::size_t seg_end = off + seg_len;
-		if (seg_end > size) throw Exception("Bytecode: symbol table truncated.");
+		if (seg_end > size) throw BytecodeError("symbol table truncated.");
 		uint64_t count = ReadULEB128(data, size, off);
 		module.symtab.reserve(count);
 		for (uint64_t i = 0; i < count; ++i) {
 			uint64_t len = ReadULEB128(data, size, off);
-			if (off + len > size) throw Exception("Bytecode: symbol truncated.");
+			if (off + len > size) throw BytecodeError("symbol truncated.");
 			module.symtab.emplace_back(reinterpret_cast<const char*>(data + off), len);
 			off += len;
 		}
@@ -277,14 +304,14 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 	{
 		uint32_t seg_len = get_u32(data, size, off);
 		std::size_t seg_end = off + seg_len;
-		if (seg_end > size) throw Exception("Bytecode: code objects truncated.");
+		if (seg_end > size) throw BytecodeError("code objects truncated.");
 		uint64_t count = ReadULEB128(data, size, off);
 		module.code_objects.reserve(count);
 		for (uint64_t i = 0; i < count; ++i) {
 			CodeObject co;
 			uint64_t name_idx = ReadULEB128(data, size, off);
 			if (name_idx >= module.symtab.size())
-				throw Exception("Bytecode: invalid symbol index.");
+				throw BytecodeError("invalid symbol index.");
 			co.name = module.symtab[name_idx];
 			co.nparams = static_cast<uint16_t>(ReadULEB128(data, size, off));
 			co.nlocals = static_cast<uint16_t>(ReadULEB128(data, size, off));
@@ -295,7 +322,7 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 			for (uint64_t k = 0; k < ncount; ++k) {
 				uint64_t nidx = ReadULEB128(data, size, off);
 				if (nidx >= module.symtab.size())
-					throw Exception("Bytecode: invalid local name index.");
+					throw BytecodeError("invalid local name index.");
 				co.names.push_back(module.symtab[nidx]);
 			}
 
@@ -306,6 +333,13 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 				ins.op = static_cast<Op>(get_u8(data, size, off));
 				ins.operand = static_cast<int32_t>(ReadSLEB128(data, size, off));
 				co.code.push_back(ins);
+			}
+
+			// 行号表
+			uint64_t lcount = ReadULEB128(data, size, off);
+			co.linenos.reserve(lcount);
+			for (uint64_t k = 0; k < lcount; ++k) {
+				co.linenos.push_back(static_cast<int>(ReadSLEB128(data, size, off)));
 			}
 			module.code_objects.push_back(std::move(co));
 		}
@@ -327,7 +361,7 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 				Incref(None::instance);
 				break;
 			default:
-				throw Exception("Bytecode: unknown constant kind.");
+				throw BytecodeError("unknown constant kind.");
 		}
 		GC_AddRoot(module.runtime_consts.back());
 	}

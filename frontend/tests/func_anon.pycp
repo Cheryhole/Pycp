@@ -1,0 +1,5 @@
+square = func(x) {
+	return x * x
+}
+
+y = square(5)

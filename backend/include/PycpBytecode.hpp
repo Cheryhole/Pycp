@@ -53,7 +53,8 @@ enum class Op : uint8_t {
 	BINARY_SUB  = 0x11,
 	BINARY_MUL  = 0x12,
 	BINARY_DIV  = 0x13,
-	UNARY_NEG   = 0x14,  // a -> -a
+	BINARY_POW  = 0x14,  // a b -> c = Pow(a,b)（乘方 **）
+	UNARY_NEG   = 0x15,  // a -> -a
 
 	// ---- 比较（操作数: 子操作码 CompareOp）----
 	COMPARE_OP  = 0x20,  // a b -> Integer(0/1)
@@ -115,6 +116,7 @@ struct CodeObject {
 	uint16_t nparams = 0;             // 参数个数
 	uint16_t nlocals = 0;             // 局部变量数（slots 大小）
 	std::vector<Instruction> code;    // 指令流
+	std::vector<int> linenos;         // 行号表，与 code 逐条对齐（-1 表示无行号信息）
 	std::vector<Constant> consts;     // 本函数引用的常量（复用全局常量池索引）
 	std::vector<std::string> names;   // 本函数引用的符号（复用全局符号表索引）
 	std::vector<size_t> const_refs;   // code 中 LOAD_CONST 引用的全局常量索引（运行时重建用）
@@ -126,6 +128,7 @@ struct CodeObject {
 // =============================================================
 
 struct Module {
+	std::string source_path;             // 源文件路径（用于报错时显示文件名）
 	std::vector<Constant> const_pool;  // 全局常量池（反序列化后为 Object* 的宿主）
 	std::vector<std::string> symtab;   // 全局符号表（去重）
 	std::vector<CodeObject> code_objects; // code_objects[0] 为 <module> 顶层代码

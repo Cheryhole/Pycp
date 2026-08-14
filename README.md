@@ -1,6 +1,6 @@
 # Pycp
 
-Pycp 是一个 **Python-like 语言** 的编译器与解释器，使用 C++17 实现。它采用与 Python 相近的语法，但**并非 CPython**：拥有自另外的的词法/语法分析器、AST、代码生成器、栈式字节码虚拟机（VM）以及序列化字节码格式。
+Pycp 是一个 **Python-like 语言** 的编译器与解释器，使用 C++17 实现。它采用与 Python 相近的语法，拥有自有的词法/语法分析器、AST、代码生成器、栈式字节码虚拟机（VM）以及序列化字节码格式。
 
 Pycp 将源码 `.pycp` 编译为自定义字节码 `.cpycp`（类似 Python 的 `.pyc`），随后由内嵌的 Pycp VM 解释执行。
 
@@ -8,12 +8,12 @@ Pycp 将源码 `.pycp` 编译为自定义字节码 `.cpycp`（类似 Python 的 
 
 | 类别 | 说明 |
 |------|------|
-| 语言定位 | Python-like，沿用 Python 部分语法，独立于 CPython |
+| 语言定位 | Python-like，沿用 Python 部分语法 |
 | 前端 | Flex 词法分析 + Bison 语法分析，生成 AST |
 | 编译器 | AST → 栈式字节码（Codegen），支持常量池 / 符号表 / 代码对象 |
-| 运行时 | 自研 GC、对象模型（Integer / String / None / Function）、ABI 接口 |
+| 运行时 | GC、对象模型（Integer / String / None / Function）、ABI 接口 |
 | 虚拟机 | 栈式字节码 VM，支持函数调用、闭包、控制流 |
-| 字节码 | 自研 `.cpycp` 二进制格式（小端 + LEB128 编码），可序列化 / 反序列化 |
+| 字节码 | `.cpycp` 二进制格式（小端 + LEB128 编码），可序列化 / 反序列化 |
 | AOT（预留） | 将字节码翻译为独立 C++ 源文件的接口骨架 |
 
 ### 已支持的语言子集
@@ -79,6 +79,7 @@ pycp [options] <input_file>
 | `-i, --interpret` | 解释执行（默认行为；接受 `.pycp` 或 `.cpycp`） |
 | `-o, --output <f>` | 指定输出文件路径（配合 `-c/-b/--emit-cpp`） |
 | `--emit-cpp` | 将 `.pycp` 翻译为独立 C++ 源文件（AOT 预留接口） |
+| `-d, --dump` | 查看字节码内容（常量池 / 符号表 / 代码对象 / 指令与行号），接受 `.pycp` 或 `.cpycp` |
 
 ### 使用示例
 
@@ -98,7 +99,63 @@ pycp [options] <input_file>
 ./build/pycp hello.cpycp
 ```
 
-**3. 一个最小示例**
+**3. 查看字节码内容（调试 / 开发用）**
+
+```bash
+# 查看源文件编译后的字节码
+./build/pycp -d hello.pycp
+
+# 查看已编译字节码文件的内容
+./build/pycp --dump hello.cpycp
+```
+
+输出包含文件头（格式版本、源文件路径）、全局常量池、符号表，以及每个代码对象的方法签名（`nparams` / `nlocals`）、局部变量字段（`locals`）和逐条指令（含行号与操作数注释）。示例：
+
+```
+[Header]
+  format version : 2.0
+  source path    : hello.pycp
+
+[Constant Pool] (2 entries)
+  0: 1
+  1: 2
+
+[Symbol Table] (5 entries)
+  0: <module>
+  1: a
+  2: b
+  3: add
+  4: result
+
+[Code Objects] (2)
+
+--- CodeObject[0] ---
+  name    : <module>
+  nparams : 0
+  nlocals : 0
+  code (8 instrs):
+  2  MAKE_FUNCTION 1  # add
+  2  STORE_VAR 3  # add
+  5  LOAD_VAR 3  # add
+  5  LOAD_CONST 0  # 1
+  5  LOAD_CONST 1  # 2
+  5  CALL 2
+  5  STORE_VAR 4  # result
+  5  HALT
+
+--- CodeObject[1] ---
+  name    : add
+  nparams : 2
+  nlocals : 2
+  locals  : a, b
+  code (4 instrs):
+  2  LOAD_VAR 1  # a
+  2  LOAD_VAR 2  # b
+  2  BINARY_ADD
+  2  RETURN
+```
+
+**4. 一个最小示例**
 
 创建 `hello.pycp`：
 
@@ -165,7 +222,7 @@ cmake -S . -B build -DBUILD_PYTHON_BINDING=ON
 
 ### 字节码格式
 
-`.cpycp` 采用自研稳定二进制格式（小端）：
+`.cpycp` 采用稳定的二进制格式（小端）：
 
 ```
 [Magic 4B]["CYCP"] [Major 2B] [Minor 2B] [flags 4B]

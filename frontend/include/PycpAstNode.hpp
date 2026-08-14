@@ -40,13 +40,14 @@ enum class BinaryOp : uint16_t {
 	MINUS = 1,
 	MULTIPLY = 2,
 	DIVIDE = 3,
+	POWER = 4,  // 乘方（**）
 	// 比较运算符（用于条件表达式）
-	LESS_THAN = 4,
-	GREATER_THAN = 5,
-	LESS_EQUAL = 6,
-	GREATER_EQUAL = 7,
-	EQUAL = 8,
-	NOT_EQUAL = 9
+	LESS_THAN = 5,
+	GREATER_THAN = 6,
+	LESS_EQUAL = 7,
+	GREATER_EQUAL = 8,
+	EQUAL = 9,
+	NOT_EQUAL = 10
 };
 
 // ============================================================

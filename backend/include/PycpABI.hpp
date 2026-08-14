@@ -35,6 +35,7 @@ PYCP_API Object* Add(Object* lhs, Object* rhs);
 PYCP_API Object* Sub(Object* lhs, Object* rhs);
 PYCP_API Object* Mul(Object* lhs, Object* rhs);
 PYCP_API Object* Div(Object* lhs, Object* rhs);
+PYCP_API Object* Pow(Object* lhs, Object* rhs);
 
 // 统一调用入口（见路线图第 5/6 步）
 //   callable : 可调用对象（Function 等）
@@ -66,6 +67,7 @@ PYCP_C_API void* PYCP_Add(void* lhs, void* rhs);
 PYCP_C_API void* PYCP_Sub(void* lhs, void* rhs);
 PYCP_C_API void* PYCP_Mul(void* lhs, void* rhs);
 PYCP_C_API void* PYCP_Div(void* lhs, void* rhs);
+PYCP_C_API void* PYCP_Pow(void* lhs, void* rhs);
 
 // 统一调用
 PYCP_C_API void* PYCP_Call(void* callable, void** argv, std::size_t argc);

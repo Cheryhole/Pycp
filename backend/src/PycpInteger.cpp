@@ -3,6 +3,7 @@
 #include "PycpException.hpp"
 #include "PycpGC.hpp"
 
+#include <cmath>
 #include <stdexcept>
 
 namespace Pycp {
@@ -29,7 +30,7 @@ Integer::Integer(Integer* value) : Integer(value->get_value()){}
 
 Integer::Integer(Object* obj) : Object(Type::INTEGER){
 	if (obj == nullptr){
-		throw Exception("Cannot construct Integer from null object.");
+		throw TypeError("Cannot construct Integer from null object.");
 	}
 	Integer* i = static_cast<Integer*>(obj->__integer__());
 	this->_value = i->get_value();
@@ -55,7 +56,7 @@ Object* Integer::__negation__(){
 
 Object* Integer::__addition__(Object* other){
 	if (other == nullptr || other->type != Type::INTEGER){
-		throw Exception("Unsupported to add.");
+		throw TypeError("Unsupported to add.");
 	}
 	Integer* i = static_cast<Integer*>(other);
 	return New<Integer>(this->_value + i->_value);
@@ -63,14 +64,14 @@ Object* Integer::__addition__(Object* other){
 
 Object* Integer::__subtraction__(Object* other){
 	if (other == nullptr || other->type != Type::INTEGER){
-		throw Exception("Unsupported to subtract.");
+		throw TypeError("Unsupported to subtract.");
 	}
 	Integer* i = static_cast<Integer*>(other);
 	return New<Integer>(this->_value - i->_value);
 }
 
 Object* Integer::__multiplication__(Object* other){
-	if (other == nullptr) throw Exception("Unsupported to multiply.");
+	if (other == nullptr) throw TypeError("Unsupported to multiply.");
 
 	if (other->type == Type::INTEGER){
 		Integer* i = static_cast<Integer*>(other);
@@ -86,18 +87,30 @@ Object* Integer::__multiplication__(Object* other){
 		return New<String>(res);
 	}
 
-	throw Exception("Unsupported to multiply.");
+	throw TypeError("Unsupported to multiply.");
 }
 
 Object* Integer::__division__(Object* other){
 	if (other == nullptr || other->type != Type::INTEGER){
-		throw Exception("Unsupported to divide.");
+		throw TypeError("Unsupported to divide.");
 	}
 	Integer* i = static_cast<Integer*>(other);
 	if (i->_value == 0){
 		throw ValueError("Division by zero.");
 	}
 	return New<Integer>(this->_value / i->_value);
+}
+
+Object* Integer::__power__(Object* other){
+	if (other == nullptr || other->type != Type::INTEGER){
+		throw TypeError("Unsupported to power.");
+	}
+	Integer* i = static_cast<Integer*>(other);
+	if (i->_value < 0){
+		throw ValueError("Negative exponent is not supported.");
+	}
+	return New<Integer>(static_cast<int64_t>(
+		std::pow(static_cast<double>(this->_value), static_cast<double>(i->_value))));
 }
 
 void Integer::Initialize(){

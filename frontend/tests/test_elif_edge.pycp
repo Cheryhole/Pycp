@@ -1,0 +1,14 @@
+a = 1
+
+elifCount = 10
+else_branch = 20
+
+if a == 1{
+	x = 5
+}
+elifCount = elifCount + 1
+
+if a == 2{
+	y = 6
+}
+else_branch = else_branch + 2

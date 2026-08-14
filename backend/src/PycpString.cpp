@@ -17,7 +17,7 @@ String::String(String* value) : String(value->get_value()){}
 
 String::String(Object* obj) : Object(Type::STRING){
 	if (obj == nullptr){
-		throw Exception("Cannot construct String from null object.");
+		throw TypeError("Cannot construct String from null object.");
 	}
 	String* s = static_cast<String*>(obj->__string__());
 	this->_value = s->get_value();
@@ -46,16 +46,16 @@ Object* String::__string__(){
 
 Object* String::__addition__(Object* other){
 	if (other == nullptr || other->type != Type::STRING){
-		throw Exception("Unsupported to add.");
+		throw TypeError("Unsupported to add.");
 	}
 	String* s = static_cast<String*>(other);
 	return New<String>(this->_value + s->get_value());
 }
 
 Object* String::__multiplication__(Object* other){
-	if (other == nullptr) throw Exception("Unsupported to multiply.");
+	if (other == nullptr) throw TypeError("Unsupported to multiply.");
 	if (other->type != Type::INTEGER){
-		throw Exception("Unsupported to multiply.");
+		throw TypeError("Unsupported to multiply.");
 	}
 	Integer* i = static_cast<Integer*>(other);
 	std::string str = this->_value;
@@ -68,11 +68,11 @@ Object* String::__multiplication__(Object* other){
 
 std::string AsString(Object* obj){
 	if (obj == nullptr){
-		throw Exception("Cannot convert null object to string.");
+		throw TypeError("Cannot convert null object to string.");
 	}
 	Object* sobj = obj->__string__();
 	if (sobj == nullptr || sobj->type != Type::STRING){
-		throw Exception("__string__ did not return a String object.");
+		throw TypeError("__string__ did not return a String object.");
 	}
 	String* s = static_cast<String*>(sobj);
 	std::string cppstr = s->get_value();

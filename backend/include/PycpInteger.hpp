@@ -30,6 +30,7 @@ class Integer : public Object{
 		Object* __subtraction__(Object*) override;
 		Object* __multiplication__(Object*) override;
 		Object* __division__(Object*) override;
+		Object* __power__(Object*) override;
 
 		static void Initialize();
 		static void Finalize();

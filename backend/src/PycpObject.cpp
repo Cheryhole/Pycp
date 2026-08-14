@@ -13,35 +13,39 @@ Object::~Object(){
 }
 
 Object* Object::__integer__(){
-  throw Exception("Unsupported to convert to integer.");
+  throw TypeError("Unsupported to convert to integer.");
 }
 
 Object* Object::__string__(){
-  throw Exception("Unsupported to convert to string.");
+  throw TypeError("Unsupported to convert to string.");
 }
 
 Object* Object::__negation__(){
-  throw Exception("Unsupported to negate.");
+  throw TypeError("Unsupported to negate.");
 }
 
 Object* Object::__call__([[maybe_unused]] Object* args){
-  throw Exception("Unsupported to call.");
+  throw TypeError("Unsupported to call.");
 }
 
 Object* Object::__addition__([[maybe_unused]] Object* other){
-  throw Exception("Unsupported to add.");
+  throw TypeError("Unsupported to add.");
 }
 
 Object* Object::__subtraction__([[maybe_unused]] Object* other){
-  throw Exception("Unsupported to subtract.");
+  throw TypeError("Unsupported to subtract.");
 }
 
 Object* Object::__multiplication__([[maybe_unused]] Object* other){
-  throw Exception("Unsupported to multiply.");
+  throw TypeError("Unsupported to multiply.");
 }
 
 Object* Object::__division__([[maybe_unused]] Object* other){
-  throw Exception("Unsupported to divide.");
+  throw TypeError("Unsupported to divide.");
+}
+
+Object* Object::__power__([[maybe_unused]] Object* other){
+  throw TypeError("Unsupported to power.");
 }
 
 }

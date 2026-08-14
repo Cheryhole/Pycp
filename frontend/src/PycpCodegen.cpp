@@ -1,4 +1,5 @@
 #include "PycpCodegen.hpp"
+#include "PycpException.hpp"
 
 #include <cstdint>
 #include <stdexcept>
@@ -56,8 +57,12 @@ public:
 	std::size_t emit(Op op, int32_t operand = 0) {
 		CodeObject* co = &module.code_objects[co_stack.back()];
 		co->code.push_back({op, operand});
+		co->linenos.push_back(current_lineno);
 		return co->code.size() - 1;
 	}
+
+	// 设置当前编译节点行号（进入节点编译前调用）
+	void set_lineno(int line) { current_lineno = line; }
 	CodeObject* current() { return &module.code_objects[co_stack.back()]; }
 	std::size_t here() { return current()->code.size(); }
 
@@ -83,6 +88,7 @@ public:
 
 private:
 	std::vector<std::size_t> co_stack;
+	int current_lineno = -1; // 当前正在编译的 AST 节点行号
 };
 
 // =============================================================
@@ -140,6 +146,7 @@ static void compile_program(Emitter& em, Program* p, Scope& scope);
 // =============================================================
 
 static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
+	if (e->lineno >= 0) em.set_lineno(e->lineno);
 	switch (e->get_type()) {
 		case NodeType::INTEGER_LITERAL: {
 			IntegerLiteral* lit = static_cast<IntegerLiteral*>(e);
@@ -176,13 +183,14 @@ static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 				case BinaryOp::MINUS:       em.emit(Op::BINARY_SUB); break;
 				case BinaryOp::MULTIPLY:    em.emit(Op::BINARY_MUL); break;
 				case BinaryOp::DIVIDE:      em.emit(Op::BINARY_DIV); break;
+				case BinaryOp::POWER:       em.emit(Op::BINARY_POW); break;
 				case BinaryOp::LESS_THAN:    em.emit(Op::COMPARE_OP, static_cast<int32_t>(CompareOp::LT)); break;
 				case BinaryOp::GREATER_THAN: em.emit(Op::COMPARE_OP, static_cast<int32_t>(CompareOp::GT)); break;
 				case BinaryOp::LESS_EQUAL:   em.emit(Op::COMPARE_OP, static_cast<int32_t>(CompareOp::LE)); break;
 				case BinaryOp::GREATER_EQUAL:em.emit(Op::COMPARE_OP, static_cast<int32_t>(CompareOp::GE)); break;
 				case BinaryOp::EQUAL:        em.emit(Op::COMPARE_OP, static_cast<int32_t>(CompareOp::EQ)); break;
 				case BinaryOp::NOT_EQUAL:    em.emit(Op::COMPARE_OP, static_cast<int32_t>(CompareOp::NE)); break;
-				default: throw std::runtime_error("Codegen: unknown binary op.");
+				default: throw Pycp::Exception("Codegen: unknown binary op.");
 			}
 			break;
 		}
@@ -225,7 +233,7 @@ static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 			break;
 		}
 		default:
-			throw std::runtime_error("Codegen: unsupported expression type.");
+			throw Pycp::Exception("Codegen: unsupported expression type.");
 	}
 }
 
@@ -234,11 +242,12 @@ static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 // =============================================================
 
 static void compile_stmt(Emitter& em, Statement* s, Scope& scope) {
+	if (s->lineno >= 0) em.set_lineno(s->lineno);
 	switch (s->get_type()) {
 		case NodeType::ASSIGNMENT_STATEMENT: {
 			AssignmentStatement* as = static_cast<AssignmentStatement*>(s);
 			if (as->target->get_type() != NodeType::IDENTIFIER_EXPRESSION)
-				throw std::runtime_error("Codegen: assignment target must be identifier.");
+				throw Pycp::Exception("Codegen: assignment target must be identifier.");
 			compile_expr(em, as->value, scope);
 			IdentifierExpression* id = static_cast<IdentifierExpression*>(as->target);
 			em.emit(Op::STORE_VAR, static_cast<int32_t>(em.intern_name(*id->name)));
@@ -304,7 +313,7 @@ static void compile_stmt(Emitter& em, Statement* s, Scope& scope) {
 			break;
 		}
 		default:
-			throw std::runtime_error("Codegen: unsupported statement type.");
+			throw Pycp::Exception("Codegen: unsupported statement type.");
 	}
 }
 
@@ -324,6 +333,8 @@ Module Compile(Program* program) {
 	Emitter em;
 
 	// 顶层代码对象 "<module>"：无局部变量（全部走 globals）
+	// 将 "<module>" 名称 intern 进符号表，保证序列化时能正确解析其名称。
+	em.intern_name("<module>");
 	em.push_code_object("<module>");
 	Scope top_scope;
 	top_scope.has_locals = false;

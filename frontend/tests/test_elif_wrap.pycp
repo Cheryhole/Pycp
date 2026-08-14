@@ -1,0 +1,49 @@
+func special_add(x, y){
+	if x == 0{
+		if y > 2{
+			return x + 2
+		}
+		return y + 1
+	}
+
+	return x + y
+}
+
+sub = func(x, y){ return x - y }
+
+a = 1
+
+case_a = 0
+if a == 1{
+	b = sub(add(a, 4))
+}
+elif a < 0{
+	b = add(sub(4, a))
+}
+
+case_b = 0
+if a == 2{
+	b = 10
+}
+else{
+	b = 20
+}
+
+flag = 0
+if flag == 1{
+	x = 100
+}
+y = 200
+
+case_c = 0
+if a == 1{
+	if a < 0{
+		z = 1
+	}
+	elif a > 0{
+		z = 2
+	}
+}
+elif a == 0{
+	w = 0
+}

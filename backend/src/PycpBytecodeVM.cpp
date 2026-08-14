@@ -42,7 +42,7 @@ VM::VM(Module* module) : module_(module) {
 					Incref(None::instance);
 					break;
 				default:
-					throw Exception("BytecodeVM: unknown constant kind.");
+					throw VMError("unknown constant kind.");
 			}
 			GC_AddRoot(module_->runtime_consts.back());
 		}
@@ -71,7 +71,7 @@ VM::~VM() {
 
 Object* VM::run() {
 	if (module_ == nullptr || module_->code_objects.empty())
-		throw Exception("BytecodeVM: empty module.");
+		throw VMError("empty module.");
 	// 顶层代码对象即 code_objects[0]
 	CodeObject* top = &module_->code_objects[0];
 	std::shared_ptr<Environment> env = std::make_shared<Environment>();
@@ -83,7 +83,7 @@ Object* VM::run() {
 Object* VM::call(size_t co_idx, Object** argv, std::size_t argc,
                  std::shared_ptr<Environment> captured) {
 	if (module_ == nullptr || co_idx >= module_->code_objects.size())
-		throw Exception("BytecodeVM: invalid code object index.");
+		throw VMError("invalid code object index.");
 	CodeObject* co = &module_->code_objects[co_idx];
 
 	std::shared_ptr<Environment> env = std::make_shared<Environment>();
@@ -121,14 +121,24 @@ Object* VM::execute(CodeObject* co,
 	};
 
 	std::size_t dbg_pc = 0;
+
+	// 当前源码位置：文件路径与行号（不含函数名）。
+	auto cur_file = [&]() -> std::string { return module_->source_path; };
+	auto cur_line = [&]() -> int {
+		if (dbg_pc < co->linenos.size() && co->linenos[dbg_pc] > 0) {
+			return co->linenos[dbg_pc];
+		}
+		return -1;
+	};
+
 	auto push = [&](Object* v) {
 		stack.push_back(v);
 		if (v != nullptr) Incref(v);
 	};
 	auto pop = [&]() -> Object* {
 		if (stack.empty())
-			throw Exception("BytecodeVM: stack underflow at pc=" + std::to_string(dbg_pc)
-			                + " in '" + co->name + "'.");
+			throw VMError(cur_file(), cur_line(),
+			              "stack underflow at pc=" + std::to_string(dbg_pc));
 		Object* v = stack.back();
 		stack.pop_back();
 		return v;
@@ -139,6 +149,7 @@ Object* VM::execute(CodeObject* co,
 	const std::vector<Object*>& consts = module_->runtime_consts;
 
 	const std::size_t pc_end = co->code.size();
+	try {
 	for (std::size_t pc = 0; pc < pc_end; ++pc) {
 		dbg_pc = pc;
 		const Instruction& ins = co->code[pc];
@@ -148,7 +159,7 @@ Object* VM::execute(CodeObject* co,
 			case Op::LOAD_CONST: {
 				std::size_t idx = static_cast<std::size_t>(ins.operand);
 				if (idx >= consts.size())
-					throw Exception("BytecodeVM: constant index out of range.");
+					throw VMError(cur_file(), cur_line(), "constant index out of range.");
 				push(consts[idx]);
 				break;
 			}
@@ -159,7 +170,7 @@ Object* VM::execute(CodeObject* co,
 			case Op::LOAD_VAR: {
 				std::size_t idx = static_cast<std::size_t>(ins.operand);
 				if (idx >= module_->symtab.size())
-					throw Exception("BytecodeVM: symbol index out of range.");
+					throw VMError(cur_file(), cur_line(), "symbol index out of range.");
 				const std::string& name = module_->symtab[idx];
 
 				long local_idx = env->find_local(name);
@@ -179,7 +190,7 @@ Object* VM::execute(CodeObject* co,
 					auto it = env->globals->find(name);
 					if (it != env->globals->end()) { push(it->second); break; }
 				}
-				throw Exception("NameError: name '" + name + "' is not defined.");
+				throw NameError(cur_file(), cur_line(), "name '" + name + "' is not defined");
 			loaded:
 				break;
 			}
@@ -187,7 +198,7 @@ Object* VM::execute(CodeObject* co,
 			case Op::STORE_VAR: {
 				std::size_t idx = static_cast<std::size_t>(ins.operand);
 				if (idx >= module_->symtab.size())
-					throw Exception("BytecodeVM: symbol index out of range.");
+					throw VMError(cur_file(), cur_line(), "symbol index out of range.");
 				const std::string& name = module_->symtab[idx];
 				Object* value = pop(); // 所有权
 
@@ -218,7 +229,7 @@ Object* VM::execute(CodeObject* co,
 					break;
 				}
 				Decref(value);
-				throw Exception("NameError: name '" + name + "' is not defined.");
+				throw NameError(cur_file(), cur_line(), "name '" + name + "' is not defined");
 			stored:
 				break;
 			}
@@ -229,7 +240,8 @@ Object* VM::execute(CodeObject* co,
 				break;
 			}
 			case Op::DUP_TOP: {
-				if (stack.empty()) throw Exception("BytecodeVM: stack underflow.");
+				if (stack.empty())
+					throw VMError(cur_file(), cur_line(), "stack underflow.");
 				push(stack.back());
 				break;
 			}
@@ -259,6 +271,13 @@ Object* VM::execute(CodeObject* co,
 			case Op::BINARY_DIV: {
 				Object* rhs = pop(); Object* lhs = pop();
 				Object* res = Div(lhs, rhs);
+				Decref(lhs); Decref(rhs);
+				push(res); Decref(res);
+				break;
+			}
+			case Op::BINARY_POW: {
+				Object* rhs = pop(); Object* lhs = pop();
+				Object* res = Pow(lhs, rhs);
 				Decref(lhs); Decref(rhs);
 				push(res); Decref(res);
 				break;
@@ -305,7 +324,7 @@ Object* VM::execute(CodeObject* co,
 						case CompareOp::NE: result = true; break;
 						default:
 							Decref(lhs); Decref(rhs);
-							throw Exception("TypeError: cannot compare different types.");
+							throw TypeError(cur_file(), cur_line(), "cannot compare different types.");
 					}
 				}
 
@@ -318,7 +337,8 @@ Object* VM::execute(CodeObject* co,
 			// ---- 控制流 ----
 			case Op::JUMP: {
 				pc = pc + static_cast<std::size_t>(ins.operand) - 1;
-				if (pc >= pc_end) throw Exception("BytecodeVM: jump out of range.");
+				if (pc >= pc_end)
+					throw VMError(cur_file(), cur_line(), "jump out of range.");
 				break;
 			}
 			case Op::JUMP_IF_FALSE: {
@@ -327,7 +347,8 @@ Object* VM::execute(CodeObject* co,
 				Decref(cond);
 				if (f) {
 					pc = pc + static_cast<std::size_t>(ins.operand) - 1;
-					if (pc >= pc_end) throw Exception("BytecodeVM: jump out of range.");
+					if (pc >= pc_end)
+						throw VMError(cur_file(), cur_line(), "jump out of range.");
 				}
 				break;
 			}
@@ -337,7 +358,8 @@ Object* VM::execute(CodeObject* co,
 				Decref(cond);
 				if (!f) {
 					pc = pc + static_cast<std::size_t>(ins.operand) - 1;
-					if (pc >= pc_end) throw Exception("BytecodeVM: jump out of range.");
+					if (pc >= pc_end)
+						throw VMError(cur_file(), cur_line(), "jump out of range.");
 				}
 				break;
 			}
@@ -346,7 +368,7 @@ Object* VM::execute(CodeObject* co,
 			case Op::MAKE_FUNCTION: {
 				std::size_t fidx = static_cast<std::size_t>(ins.operand);
 				if (fidx >= module_->code_objects.size())
-					throw Exception("BytecodeVM: function index out of range.");
+					throw VMError(cur_file(), cur_line(), "function index out of range.");
 				BytecodeFunction* fn = new BytecodeFunction(this, fidx, env);
 				GC_Track(fn);
 				push(fn);
@@ -358,7 +380,7 @@ Object* VM::execute(CodeObject* co,
 			case Op::CALL: {
 				std::size_t nargs = static_cast<std::size_t>(ins.operand);
 				if (stack.size() < nargs + 1)
-					throw Exception("BytecodeVM: call stack underflow.");
+					throw VMError(cur_file(), cur_line(), "call stack underflow.");
 
 				std::vector<Object*> args(nargs);
 				for (std::size_t i = 0; i < nargs; ++i)
@@ -368,7 +390,7 @@ Object* VM::execute(CodeObject* co,
 				if (callee->type != Type::FUNCTION) {
 					for (Object* a : args) Decref(a);
 					Decref(callee);
-					throw Exception("TypeError: object is not callable.");
+					throw TypeError(cur_file(), cur_line(), "object is not callable.");
 				}
 				Function* fn = static_cast<Function*>(callee);
 				Object* ret = fn->invoke(args.data(), nargs);
@@ -400,7 +422,7 @@ Object* VM::execute(CodeObject* co,
 			}
 
 			default:
-				throw Exception("BytecodeVM: unknown opcode.");
+				throw VMError(cur_file(), cur_line(), "unknown opcode.");
 		}
 	}
 
@@ -408,6 +430,17 @@ Object* VM::execute(CodeObject* co,
 	env->locals.clear();
 	for (Object* v : stack) Decref(v);
 	return None::instance;
+	}
+	catch (const Exception& e) {
+		// 若异常已带位置信息（VM 内用 VMError/NameError/TypeError 等带
+		// file/lineno 构造），直接重抛；否则为 ABI/运行时底层抛出的错误
+		// （如除零、类型错误），补充当前位置后重抛。底层异常的类别标签
+		// （如 "ValueError: "）已内嵌在 what() 中，故原样保留。
+		if (e.file.empty()) {
+			throw Exception(cur_file(), cur_line(), e.what());
+		}
+		throw;
+	}
 }
 
 } // namespace Pycp::BC

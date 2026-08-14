@@ -18,6 +18,7 @@ static std::string binary_op_to_string(BinaryOp op) {
 		case BinaryOp::MINUS:    			return "MINUS";
 		case BinaryOp::MULTIPLY: 			return "MULTIPLY";
 		case BinaryOp::DIVIDE:   			return "DIVIDE";
+		case BinaryOp::POWER:    			return "POWER";
 		case BinaryOp::LESS_THAN:     return "LESS_THAN";
 		case BinaryOp::GREATER_THAN:  return "GREATER_THAN";
 		case BinaryOp::LESS_EQUAL:    return "LESS_EQUAL";

@@ -6,6 +6,13 @@
 
 using namespace Pycp::Ast;
 
+// 当前源文件路径（定义于 PycpParser.y，由 parsef 设置）。
+// 词法错误诊断据此输出 File "<file>", line <lineno> 两行格式。
+extern std::string g_current_source_path;
+
+// 词法错误标志（定义于 PycpParser.y）。lexer 出错后置位并停止扫描。
+extern bool g_lexer_error;
+
 std::string _string_buffer; // 用于存储字符串内容
 int _comment_return_state = 0; // 记录进入块注释前的状态（0=INITIAL），注释结束后恢复
 %}
@@ -44,13 +51,14 @@ None  { return KW_NONE; }
 <COMMENT>"*"+[^*/]	{ /* 吞掉块注释内的星号序列 */ }
 <COMMENT>"*"+	{ /* 吞掉注释结尾前的星号 */ }
 <COMMENT><<EOF>>	{
-	std::cerr << "Unterminated comment.\n";
-	BEGIN(INITIAL);
+	std::cerr << "File \"" << g_current_source_path << "\", line " << Pycplineno << "\nUnterminated comment." << std::endl;
+	g_lexer_error = true;
 	return 0;
 }
 
 "+"    { return OP_PLUS; }
 "-"    { return OP_MINUS; }
+"**"   { return OP_POWER; }
 "*"    { return OP_MULTIPLY; }
 "/"    { return OP_DIVIDE; }
 "("    { return OP_LPARENTHESES; }
@@ -99,8 +107,10 @@ None  { return KW_NONE; }
 }
 
 <STRING>\n {
-	std::cerr << "Unterminated string.\n";
-	BEGIN(INITIAL);
+	std::cerr << "File \"" << g_current_source_path 
+		<< "\", line " << Pycplineno << "\nUnterminated string." << std::endl;
+	g_lexer_error = true;
+	return 0;
 }
 
 \n        { return NEWLINE; }
@@ -109,9 +119,10 @@ None  { return KW_NONE; }
 
 [ \t]     { /* 忽略水平空白字符 */ }
 .        { 
-	std::cerr << "Unexpected character: " << Pycptext << std::endl;
-	// 可以选择返回一个错误标记，或者直接忽略
-	// return ERROR;
+	std::cerr << "File \"" << g_current_source_path 
+		<< "\", line " << Pycplineno << "\nUnexpected character: " << Pycptext << std::endl;
+	g_lexer_error = true;
+	return 0;
 }
 
 %%

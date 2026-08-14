@@ -73,6 +73,7 @@ class Object{
 		virtual Object* __subtraction__(Object*);
 		virtual Object* __multiplication__(Object*);
 		virtual Object* __division__(Object*);
+		virtual Object* __power__(Object*);
 
 };
 

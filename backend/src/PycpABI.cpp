@@ -16,29 +16,34 @@ Object* String_FromString(const char* value){
 }
 
 Object* Add(Object* lhs, Object* rhs){
-	if (lhs == nullptr || rhs == nullptr) throw Exception("Cannot add null object.");
+	if (lhs == nullptr || rhs == nullptr) throw TypeError("Cannot add null object.");
 	return lhs->__addition__(rhs);
 }
 
 Object* Sub(Object* lhs, Object* rhs){
-	if (lhs == nullptr || rhs == nullptr) throw Exception("Cannot subtract null object.");
+	if (lhs == nullptr || rhs == nullptr) throw TypeError("Cannot subtract null object.");
 	return lhs->__subtraction__(rhs);
 }
 
 Object* Mul(Object* lhs, Object* rhs){
-	if (lhs == nullptr || rhs == nullptr) throw Exception("Cannot multiply null object.");
+	if (lhs == nullptr || rhs == nullptr) throw TypeError("Cannot multiply null object.");
 	return lhs->__multiplication__(rhs);
 }
 
 Object* Div(Object* lhs, Object* rhs){
-	if (lhs == nullptr || rhs == nullptr) throw Exception("Cannot divide null object.");
+	if (lhs == nullptr || rhs == nullptr) throw TypeError("Cannot divide null object.");
 	return lhs->__division__(rhs);
 }
 
+Object* Pow(Object* lhs, Object* rhs){
+	if (lhs == nullptr || rhs == nullptr) throw TypeError("Cannot power null object.");
+	return lhs->__power__(rhs);
+}
+
 Object* Call(Object* callable, Object** argv, std::size_t argc){
-	if (callable == nullptr) throw Exception("Cannot call null object.");
+	if (callable == nullptr) throw TypeError("Cannot call null object.");
 	if (callable->type != Type::FUNCTION){
-		throw Exception("Object is not callable.");
+		throw TypeError("Object is not callable.");
 	}
 	Function* fn = static_cast<Function*>(callable);
 	return fn->invoke(argv, argc);
@@ -72,6 +77,9 @@ PYCP_C_API void* PYCP_Mul(void* lhs, void* rhs){
 }
 PYCP_C_API void* PYCP_Div(void* lhs, void* rhs){
 	return static_cast<void*>(Pycp::Div(static_cast<Pycp::Object*>(lhs), static_cast<Pycp::Object*>(rhs)));
+}
+PYCP_C_API void* PYCP_Pow(void* lhs, void* rhs){
+	return static_cast<void*>(Pycp::Pow(static_cast<Pycp::Object*>(lhs), static_cast<Pycp::Object*>(rhs)));
 }
 PYCP_C_API void* PYCP_Call(void* callable, void** argv, std::size_t argc){
 	return static_cast<void*>(Pycp::Call(static_cast<Pycp::Object*>(callable), reinterpret_cast<Pycp::Object**>(argv), argc));

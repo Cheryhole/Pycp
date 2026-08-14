@@ -4,12 +4,11 @@
 build/
 bin/
 
-CMakeCache.txt
-simplebuilder.bat
 Makefile
 
 test.*
 test*/
+!tests/
 *.pyi
 *.dll
 *.pyd

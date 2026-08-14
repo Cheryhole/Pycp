@@ -2,6 +2,7 @@
 #include <iostream>
 #include <fstream>
 #include <cstring>
+#include <string>
 #include "PycpAstNode.hpp"
 #include "PycpLexer.hpp"
 
@@ -9,6 +10,14 @@ using namespace Pycp::Ast;
 
 
 //Pycp::Ast::Node* _final_asttree;
+
+// 当前正在解析的源文件路径（供词法/语法错误输出 File "<file>", line <lineno> 两行格式）。
+// 由 parsef(path) 在解析前设置，Pycperror 与 lexer 的诊断据此输出文件路径。
+std::string g_current_source_path;
+
+// 词法错误标志：lexer 遇到错误时置为 true 并立即停止扫描；
+// parse() 据此返回 nullptr 以中止解析。每次 parse 前由 parse() 重置。
+bool g_lexer_error = false;
 
 void Pycperror(Pycp::Ast::Node*&, const char *);
 extern int Pycplex();
@@ -50,7 +59,7 @@ extern void Pycp_delete_buffer(YY_BUFFER_STATE);
 %token NEWLINE
 %token <text> LT_INTEGER LT_STRING IDENTIFIER
 %token KW_FUNC KW_RETURN KW_IF KW_ELIF KW_ELSE KW_NONE
-%token OP_PLUS OP_MINUS OP_MULTIPLY OP_DIVIDE
+%token OP_PLUS OP_MINUS OP_MULTIPLY OP_DIVIDE OP_POWER
 %token OP_LPARENTHESES OP_RPARENTHESES
 %token OP_LBRACKET OP_RBRACKET
 %token OP_LBRACE OP_RBRACE
@@ -59,6 +68,7 @@ extern void Pycp_delete_buffer(YY_BUFFER_STATE);
 
 %left OP_PLUS OP_MINUS
 %left OP_MULTIPLY OP_DIVIDE
+%right OP_POWER
 %right UMINUS
 %left OP_LPARENTHESES OP_RPARENTHESES
 %nonassoc OP_LT OP_GT OP_LE OP_GE OP_EQ OP_NE
@@ -85,6 +95,7 @@ extern void Pycp_delete_buffer(YY_BUFFER_STATE);
 %type <node> additive_expression
 %type <node> multiplicative_expression
 %type <node> unary_expression
+%type <node> power_expression
 %type <node> primary_expression
 
 %start program
@@ -343,8 +354,8 @@ assignment_statement: assignment_object OP_EQUALS expression {
 ;
 
 assignment_object : IDENTIFIER {
-		$$ = new IdentifierExpression($1);
-	}
+	$$ = new IdentifierExpression($1, Pycplineno);
+}
 ;
 
 expression: comparison_expression
@@ -357,42 +368,48 @@ comparison_expression: additive_expression
 		$$ = new BinaryExpression(
 			BinaryOp::LESS_THAN,
 			static_cast<Expression*>($1),
-			static_cast<Expression*>($3)
+			static_cast<Expression*>($3),
+			Pycplineno
 		);
 	}
 	| comparison_expression OP_GT additive_expression {
 		$$ = new BinaryExpression(
 			BinaryOp::GREATER_THAN,
 			static_cast<Expression*>($1),
-			static_cast<Expression*>($3)
+			static_cast<Expression*>($3),
+			Pycplineno
 		);
 	}
 	| comparison_expression OP_LE additive_expression {
 		$$ = new BinaryExpression(
 			BinaryOp::LESS_EQUAL,
 			static_cast<Expression*>($1),
-			static_cast<Expression*>($3)
+			static_cast<Expression*>($3),
+			Pycplineno
 		);
 	}
 	| comparison_expression OP_GE additive_expression {
 		$$ = new BinaryExpression(
 			BinaryOp::GREATER_EQUAL,
 			static_cast<Expression*>($1),
-			static_cast<Expression*>($3)
+			static_cast<Expression*>($3),
+			Pycplineno
 		);
 	}
 	| comparison_expression OP_EQ additive_expression {
 		$$ = new BinaryExpression(
 			BinaryOp::EQUAL,
 			static_cast<Expression*>($1),
-			static_cast<Expression*>($3)
+			static_cast<Expression*>($3),
+			Pycplineno
 		);
 	}
 	| comparison_expression OP_NE additive_expression {
 		$$ = new BinaryExpression(
 			BinaryOp::NOT_EQUAL,
 			static_cast<Expression*>($1),
-			static_cast<Expression*>($3)
+			static_cast<Expression*>($3),
+			Pycplineno
 		);
 	}
 ;
@@ -402,14 +419,16 @@ additive_expression: multiplicative_expression
 			$$ = new BinaryExpression(
 				BinaryOp::PLUS,
 				static_cast<Expression*>($1),
-				static_cast<Expression*>($3)
+				static_cast<Expression*>($3),
+				Pycplineno
 			);
 		}
     | additive_expression OP_MINUS multiplicative_expression {
 			$$ = new BinaryExpression(
 				BinaryOp::MINUS,
 				static_cast<Expression*>($1),
-				static_cast<Expression*>($3)
+				static_cast<Expression*>($3),
+				Pycplineno
 			);
 		}
     ;
@@ -419,37 +438,51 @@ multiplicative_expression: unary_expression
 			$$ = new BinaryExpression(
 				BinaryOp::MULTIPLY,
 				static_cast<Expression*>($1),
-				static_cast<Expression*>($3)
+				static_cast<Expression*>($3),
+				Pycplineno
 			);
 		}
     | multiplicative_expression OP_DIVIDE unary_expression {
 			$$ = new BinaryExpression(
 				BinaryOp::DIVIDE,
 				static_cast<Expression*>($1),
-				static_cast<Expression*>($3)
+				static_cast<Expression*>($3),
+				Pycplineno
 			);
 		}
     ;
 
-unary_expression: primary_expression
-		| OP_MINUS primary_expression %prec UMINUS {
+// 乘方：右结合，优先级高于一元取负（-2**2 == -(2**2)）
+unary_expression: power_expression
+		| OP_MINUS power_expression %prec UMINUS {
 			$$ = new UnaryExpression(
 				UnaryOp::UMINUS,
-				static_cast<Expression*>($2)
+				static_cast<Expression*>($2),
+				Pycplineno
+			);
+		};
+
+power_expression: primary_expression
+		| primary_expression OP_POWER unary_expression {
+			$$ = new BinaryExpression(
+				BinaryOp::POWER,
+				static_cast<Expression*>($1),
+				static_cast<Expression*>($3),
+				Pycplineno
 			);
 		};
 
 primary_expression: LT_INTEGER {
-			$$ = new IntegerLiteral($1);
+			$$ = new IntegerLiteral($1, Pycplineno);
 		}
 		| LT_STRING {
-			$$ = new StringLiteral($1);
+			$$ = new StringLiteral($1, Pycplineno);
 		}
 		| OP_LPARENTHESES expression OP_RPARENTHESES {
 			$$ = $2;
 		}
 		| IDENTIFIER {
-			$$ = new IdentifierExpression($1);
+			$$ = new IdentifierExpression($1, Pycplineno);
 		}
 		| function_expr {
 			$$ = $1;
@@ -469,17 +502,24 @@ primary_expression: LT_INTEGER {
 int Pycp_parse_error_count = 0;
 
 void Pycperror(Node*& _, const char *s) {
+	// 词法错误已由 lexer 输出并停止扫描，此时 parser 因提前 EOF 触发的
+	// 语法错误是次生的，直接忽略，避免重复输出。
+	if (g_lexer_error) {
+		return;
+	}
 	++Pycp_parse_error_count;
 	// Bison reports an internal "syntax error" first; replace it with a
 	// meaningful, newline-focused English diagnostic.
 	if (std::strcmp(s, "syntax error") == 0) {
 		s = "newline is the only valid separator between statements";
 	}
-	std::cerr << "Error (line " << Pycplineno << "): " << s << std::endl;
+	// 两行格式：File "<file>", line <lineno>\n<error>
+	std::cerr << "File \"" << g_current_source_path << "\", line " << Pycplineno << "\n" << s << std::endl;
 }
 
 Node* parse(const std::string& text){
 	Node* _final_asttree = nullptr;
+	g_lexer_error = false;
 
 	YY_BUFFER_STATE buffer = Pycp_scan_string(text.c_str());
 
@@ -487,10 +527,17 @@ Node* parse(const std::string& text){
 
 	Pycp_delete_buffer(buffer);
 
+	// 词法错误已由 lexer 输出并停止扫描，此处返回 nullptr 中止解析。
+	if (g_lexer_error) {
+		return nullptr;
+	}
+
 	return _final_asttree;
 }
 
 Node* parsef(const std::string& path){
+	g_current_source_path = path;
+
 	std::ifstream file(path);
 	std::string text((std::istreambuf_iterator<char>(file)),
 					 std::istreambuf_iterator<char>());
