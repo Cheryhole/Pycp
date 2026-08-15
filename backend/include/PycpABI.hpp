@@ -23,6 +23,9 @@
 #include "PycpConfig.hpp"
 #include "PycpObject.hpp"
 #include "PycpGC.hpp"
+#include "PycpEnvironment.hpp"
+
+#include <string>
 
 namespace Pycp {
 
@@ -37,12 +40,41 @@ PYCP_API Object* Mul(Object* lhs, Object* rhs);
 PYCP_API Object* Div(Object* lhs, Object* rhs);
 PYCP_API Object* Pow(Object* lhs, Object* rhs);
 
+// 比较：op 取值 0~5（LT/LE/EQ/NE/GT/GE），内部按 op 分发到对应比较虚函数。
+// 返回小整数池对象 Integer 0/1（PERMANENT，无需 Decref）。
+// 异类型时 EQ→0、NE→1、其余抛 TypeError（与 VM COMPARE_OP 语义一致）。
+PYCP_API Object* Compare(Object* lhs, Object* rhs, int op);
+
+// 真值判定：nullptr / None / Integer 0 视为假，其余为真。
+PYCP_API bool IsFalse(Object* v);
+
 // 统一调用入口（见路线图第 5/6 步）
 //   callable : 可调用对象（Function 等）
 //   argv     : 参数数组（Borrowed）
 //   argc     : 参数数量
 // 返回 Owned 结果；参数数量或类型不符时抛异常
 PYCP_API Object* Call(Object* callable, Object** argv, std::size_t argc);
+
+// =============================================================
+// 执行环境（Environment）接口 —— VM 与 AOT 统一使用
+// =============================================================
+
+// 新建一个空环境（globals 为 nullptr，需调用方另行设置）。
+// 返回的 Environment 由调用方负责 Environment_Free 释放。
+PYCP_API BC::Environment* Environment_New();
+
+// 释放由 Environment_New 创建的环境。
+PYCP_API void Environment_Free(BC::Environment* env);
+
+// 按「局部 -> captured 链 -> 全局」查找变量，返回 Borrowed 引用。
+// 未找到时返回 nullptr（调用方负责抛出 NameError 并附带位置信息）。
+PYCP_API Object* Environment_Lookup(BC::Environment* env, const std::string& name);
+
+// 按「局部 -> captured 链 -> 全局」存储变量（接管 value 所有权，写前
+// Decref 旧值）。若局部与捕获链均无此名，则写入 globals（新建或覆盖）。
+// globals 为 nullptr 时直接 Decref value（防御，避免泄漏）。
+PYCP_API void Environment_Store(BC::Environment* env, const std::string& name,
+                                 Object* value);
 
 } // namespace Pycp
 
@@ -68,6 +100,10 @@ PYCP_C_API void* PYCP_Sub(void* lhs, void* rhs);
 PYCP_C_API void* PYCP_Mul(void* lhs, void* rhs);
 PYCP_C_API void* PYCP_Div(void* lhs, void* rhs);
 PYCP_C_API void* PYCP_Pow(void* lhs, void* rhs);
+
+// 比较 / 真值
+PYCP_C_API void* PYCP_Compare(void* lhs, void* rhs, int op);
+PYCP_C_API int PYCP_IsFalse(void* v);
 
 // 统一调用
 PYCP_C_API void* PYCP_Call(void* callable, void** argv, std::size_t argc);

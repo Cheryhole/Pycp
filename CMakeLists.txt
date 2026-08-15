@@ -39,14 +39,23 @@ message(STATUS "Bison : ${BISON_EXECUTABLE}")
 message(STATUS "Flex  : ${FLEX_EXECUTABLE}")
 
 # =====================================================================
-# Backend 运行时（仅需静态库）
+# Backend 运行时（静态库 / 动态库，可在构建时选择）
 # ---------------------------------------------------------------------
-# 作为子目录引入 backend，仅构建 PycpRuntime_static 静态库，
-# 关闭非必需的动态库 / Python 绑定 / 测试目标以加速全量编译。
+# 通过 BUILD_RUNTIME_STATIC / BUILD_RUNTIME_SHARED 两个布尔选项选择
+# 构建静态库还是动态库（默认静态：static ON、shared OFF）。
+# pycp 可执行文件跟随选择进行链接（shared ON 时动态链接，否则静态）。
+# 产物统一输出到 backend/bin/；关闭非必需的 Python 绑定 / 测试目标。
 # =====================================================================
-set(BUILD_RUNTIME_SHARED OFF CACHE BOOL "" FORCE)
+set(BUILD_RUNTIME_STATIC ON CACHE BOOL "Build static PycpRuntime library")
+set(BUILD_RUNTIME_SHARED OFF CACHE BOOL "Build shared PycpRuntime library")
 set(BUILD_PYTHON_BINDING OFF CACHE BOOL "" FORCE)
 set(BUILD_TEST OFF CACHE BOOL "" FORCE)
+
+# 合法性校验：至少构建一种库，否则无链接目标
+if(NOT BUILD_RUNTIME_STATIC AND NOT BUILD_RUNTIME_SHARED)
+    message(FATAL_ERROR "At least one of BUILD_RUNTIME_STATIC / BUILD_RUNTIME_SHARED must be ON.")
+endif()
+
 add_subdirectory(backend)
 
 # =====================================================================
@@ -179,7 +188,22 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(pycp PRIVATE ${FLEX_LIBRARIES})
 endif()
 
-target_link_libraries(pycp PRIVATE PycpRuntime_static)
+# 根据选项选择 runtime 库：shared ON 时动态链接，否则静态链接（默认）
+if(BUILD_RUNTIME_SHARED)
+    set(PYCP_RUNTIME_TARGET PycpRuntime_shared)
+else()
+    set(PYCP_RUNTIME_TARGET PycpRuntime_static)
+endif()
+
+target_link_libraries(pycp PRIVATE ${PYCP_RUNTIME_TARGET})
+
+# 动态链接时设置 rpath：构建树内指向 backend/bin，安装后用 $ORIGIN
+if(BUILD_RUNTIME_SHARED)
+    set_target_properties(pycp PROPERTIES
+        BUILD_RPATH "${PYCP_BACKEND_DIR}/bin"
+        INSTALL_RPATH "$ORIGIN"
+    )
+endif()
 
 # =====================================================================
 # 调试宏
@@ -196,6 +220,65 @@ endif()
 install(TARGETS pycp
     RUNTIME DESTINATION bin
 )
+
+# 动态链接时需同时安装动态库（与 pycp 同目录，配合 $ORIGIN rpath）
+if(BUILD_RUNTIME_SHARED)
+    install(TARGETS PycpRuntime_shared
+        LIBRARY DESTINATION bin
+    )
+endif()
+
+# =====================================================================
+# SDK 打包：将 runtime 库与 AOT 所需头文件复制到 build/bin/
+# ---------------------------------------------------------------------
+# 形成自包含 SDK 目录，便于编译 AOT 生成的 .cpp：
+#   g++ -std=c++17 -I build/bin <gen>.cpp -L build/bin -lPycpRuntime -o out
+# =====================================================================
+set(PYCP_SDK_DIR ${CMAKE_BINARY_DIR}/bin)
+
+# AOT 生成代码编译所需的头文件（不含 VM/字节码解释专用头）
+set(PYCP_AOT_HEADERS
+    PycpConfig.hpp
+    PycpObject.hpp
+    PycpException.hpp
+    PycpGC.hpp
+    PycpEnvironment.hpp
+    PycpFunction.hpp
+    PycpNone.hpp
+    PycpInteger.hpp
+    PycpString.hpp
+    PycpManager.hpp
+    PycpABI.hpp
+)
+
+# 仅复制实际构建的库到 SDK 目录
+add_custom_command(TARGET pycp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${PYCP_SDK_DIR}"
+    COMMENT "Packaging runtime libraries and AOT headers into ${PYCP_SDK_DIR}"
+)
+
+if(BUILD_RUNTIME_STATIC)
+    add_custom_command(TARGET pycp POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:PycpRuntime_static>" "${PYCP_SDK_DIR}/"
+    )
+endif()
+
+if(BUILD_RUNTIME_SHARED)
+    # 确保动态库也被构建（pycp 静态链接时不依赖 shared 目标）
+    add_dependencies(pycp PycpRuntime_shared)
+    add_custom_command(TARGET pycp POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:PycpRuntime_shared>" "${PYCP_SDK_DIR}/"
+    )
+endif()
+
+foreach(hdr IN LISTS PYCP_AOT_HEADERS)
+    add_custom_command(TARGET pycp POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${PYCP_BACKEND_DIR}/include/${hdr}" "${PYCP_SDK_DIR}/"
+    )
+endforeach()
 
 # =====================================================================
 # 构建信息

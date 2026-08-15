@@ -113,6 +113,56 @@ Object* Integer::__power__(Object* other){
 		std::pow(static_cast<double>(this->_value), static_cast<double>(i->_value))));
 }
 
+// 比较运算：假定 other 为同类型 Integer（由 ABI::Compare 保证），
+// 返回小整数池对象 Integer::instances[0/1]（PERMANENT）。
+Object* Integer::__less_than__(Object* other){
+	if (other == nullptr || other->type != Type::INTEGER){
+		throw TypeError("Unsupported to compare.");
+	}
+	Integer* i = static_cast<Integer*>(other);
+	return this->_value < i->_value ? instances[1] : instances[0];
+}
+
+Object* Integer::__less_equal__(Object* other){
+	if (other == nullptr || other->type != Type::INTEGER){
+		throw TypeError("Unsupported to compare.");
+	}
+	Integer* i = static_cast<Integer*>(other);
+	return this->_value <= i->_value ? instances[1] : instances[0];
+}
+
+Object* Integer::__equal__(Object* other){
+	if (other == nullptr || other->type != Type::INTEGER){
+		throw TypeError("Unsupported to compare.");
+	}
+	Integer* i = static_cast<Integer*>(other);
+	return this->_value == i->_value ? instances[1] : instances[0];
+}
+
+Object* Integer::__not_equal__(Object* other){
+	if (other == nullptr || other->type != Type::INTEGER){
+		throw TypeError("Unsupported to compare.");
+	}
+	Integer* i = static_cast<Integer*>(other);
+	return this->_value != i->_value ? instances[1] : instances[0];
+}
+
+Object* Integer::__greater_than__(Object* other){
+	if (other == nullptr || other->type != Type::INTEGER){
+		throw TypeError("Unsupported to compare.");
+	}
+	Integer* i = static_cast<Integer*>(other);
+	return this->_value > i->_value ? instances[1] : instances[0];
+}
+
+Object* Integer::__greater_equal__(Object* other){
+	if (other == nullptr || other->type != Type::INTEGER){
+		throw TypeError("Unsupported to compare.");
+	}
+	Integer* i = static_cast<Integer*>(other);
+	return this->_value >= i->_value ? instances[1] : instances[0];
+}
+
 void Integer::Initialize(){
 	for (int i = 0; i < PYCP_INTEGER_INSTANCES; i++){
 		Integer::instances[i] = New<Integer>(i);

@@ -75,7 +75,16 @@ class Object{
 		virtual Object* __division__(Object*);
 		virtual Object* __power__(Object*);
 
-};
+		// 比较运算：返回 Integer 0/1（小整数池对象）。
+		// 与 __addition__ 等一致，由 ABI 的 Compare 按操作符分发。
+		virtual Object* __less_than__(Object*);
+		virtual Object* __less_equal__(Object*);
+		virtual Object* __equal__(Object*);
+		virtual Object* __not_equal__(Object*);
+		virtual Object* __greater_than__(Object*);
+		virtual Object* __greater_equal__(Object*);
+
+		};
 
 class Integer;
 class String;

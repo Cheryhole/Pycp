@@ -48,4 +48,28 @@ Object* Object::__power__([[maybe_unused]] Object* other){
   throw TypeError("Unsupported to power.");
 }
 
+Object* Object::__less_than__([[maybe_unused]] Object* other){
+  throw TypeError("Unsupported to compare.");
+}
+
+Object* Object::__less_equal__([[maybe_unused]] Object* other){
+  throw TypeError("Unsupported to compare.");
+}
+
+Object* Object::__equal__([[maybe_unused]] Object* other){
+  throw TypeError("Unsupported to compare.");
+}
+
+Object* Object::__not_equal__([[maybe_unused]] Object* other){
+  throw TypeError("Unsupported to compare.");
+}
+
+Object* Object::__greater_than__([[maybe_unused]] Object* other){
+  throw TypeError("Unsupported to compare.");
+}
+
+Object* Object::__greater_equal__([[maybe_unused]] Object* other){
+  throw TypeError("Unsupported to compare.");
+}
+
 }

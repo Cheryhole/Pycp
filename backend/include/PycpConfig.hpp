@@ -46,8 +46,14 @@ constexpr const char* PYCP_VERSION = "1.0.0";
 // =============================================================
 
 // C++ 风格导出（命名空间内部，无 PYCP 前缀）
+//   Windows 下三分支：
+//     PYCP_STATIC     : 静态库（无导入/导出属性，符号自包含）
+//     PYCP_BUILD_DLL  : 构建动态库（dllexport）
+//     其他            : 消费动态库（dllimport）
 #ifdef _WIN32
-	#ifdef PYCP_BUILD_DLL
+	#ifdef PYCP_STATIC
+		#define PYCP_API
+	#elif defined(PYCP_BUILD_DLL)
 		#define PYCP_API __declspec(dllexport)
 	#else
 		#define PYCP_API __declspec(dllimport)
@@ -58,7 +64,9 @@ constexpr const char* PYCP_VERSION = "1.0.0";
 
 // C 语言风格导出（extern "C" 全局，保留 PYCP 前缀）
 #ifdef _WIN32
-	#ifdef PYCP_BUILD_DLL
+	#ifdef PYCP_STATIC
+		#define PYCP_C_API extern "C"
+	#elif defined(PYCP_BUILD_DLL)
 		#define PYCP_C_API extern "C" __declspec(dllexport)
 	#else
 		#define PYCP_C_API extern "C" __declspec(dllimport)

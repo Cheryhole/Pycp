@@ -40,6 +40,46 @@ Object* Pow(Object* lhs, Object* rhs){
 	return lhs->__power__(rhs);
 }
 
+Object* Compare(Object* lhs, Object* rhs, int op){
+	if (lhs == nullptr || rhs == nullptr)
+		throw TypeError("Cannot compare null object.");
+
+	// 仅同类型的 INTEGER / STRING 可参与真正的值比较；
+	// 其余组合（含 None、跨类型）与 VM COMPARE_OP 语义一致：
+	//   EQ → 0（false）、NE → 1（true）、其余抛 TypeError。
+	bool comparable =
+		(lhs->type == rhs->type) &&
+		(lhs->type == Type::INTEGER || lhs->type == Type::STRING);
+
+	if (comparable) {
+		switch (op) {
+			case 0: return lhs->__less_than__(rhs);
+			case 1: return lhs->__less_equal__(rhs);
+			case 2: return lhs->__equal__(rhs);
+			case 3: return lhs->__not_equal__(rhs);
+			case 4: return lhs->__greater_than__(rhs);
+			case 5: return lhs->__greater_equal__(rhs);
+			default: break;
+		}
+	} else {
+		switch (op) {
+			case 2: return Integer::instances[0]; // EQ -> false
+			case 3: return Integer::instances[1]; // NE -> true
+			default: break;
+		}
+	}
+
+	throw TypeError("cannot compare different types.");
+}
+
+bool IsFalse(Object* v){
+	if (v == nullptr) return true;
+	if (v->type == Type::NONE) return true;
+	if (v->type == Type::INTEGER)
+		return static_cast<Integer*>(v)->get_value() == 0;
+	return false;
+}
+
 Object* Call(Object* callable, Object** argv, std::size_t argc){
 	if (callable == nullptr) throw TypeError("Cannot call null object.");
 	if (callable->type != Type::FUNCTION){
@@ -47,6 +87,75 @@ Object* Call(Object* callable, Object** argv, std::size_t argc){
 	}
 	Function* fn = static_cast<Function*>(callable);
 	return fn->invoke(argv, argc);
+}
+
+BC::Environment* Environment_New(){
+	return new BC::Environment();
+}
+
+void Environment_Free(BC::Environment* env){
+	delete env;
+}
+
+Object* Environment_Lookup(BC::Environment* env, const std::string& name){
+	if (env == nullptr) return nullptr;
+
+	long local_idx = env->find_local(name);
+	if (local_idx >= 0) return env->locals[static_cast<std::size_t>(local_idx)];
+
+	std::shared_ptr<BC::Environment> cap = env->captured;
+	while (cap) {
+		long c = cap->find_local(name);
+		if (c >= 0) return cap->locals[static_cast<std::size_t>(c)];
+		cap = cap->captured;
+	}
+
+	if (env->globals) {
+		auto it = env->globals->find(name);
+		if (it != env->globals->end()) return it->second;
+	}
+	return nullptr;
+}
+
+void Environment_Store(BC::Environment* env, const std::string& name,
+                       Object* value){
+	if (env == nullptr) {
+		Decref(value);
+		return;
+	}
+
+	long local_idx = env->find_local(name);
+	if (local_idx >= 0) {
+		if (env->locals[static_cast<std::size_t>(local_idx)])
+			Decref(env->locals[static_cast<std::size_t>(local_idx)]);
+		env->locals[static_cast<std::size_t>(local_idx)] = value;
+		return;
+	}
+
+	std::shared_ptr<BC::Environment> cap = env->captured;
+	while (cap) {
+		long c = cap->find_local(name);
+		if (c >= 0) {
+			if (cap->locals[static_cast<std::size_t>(c)])
+				Decref(cap->locals[static_cast<std::size_t>(c)]);
+			cap->locals[static_cast<std::size_t>(c)] = value;
+			return;
+		}
+		cap = cap->captured;
+	}
+
+	if (env->globals) {
+		auto it = env->globals->find(name);
+		if (it != env->globals->end()) {
+			if (it->second) Decref(it->second);
+			it->second = value;
+		} else {
+			(*env->globals)[name] = value;
+		}
+		return;
+	}
+
+	Decref(value);
 }
 
 } // namespace Pycp
@@ -80,6 +189,12 @@ PYCP_C_API void* PYCP_Div(void* lhs, void* rhs){
 }
 PYCP_C_API void* PYCP_Pow(void* lhs, void* rhs){
 	return static_cast<void*>(Pycp::Pow(static_cast<Pycp::Object*>(lhs), static_cast<Pycp::Object*>(rhs)));
+}
+PYCP_C_API void* PYCP_Compare(void* lhs, void* rhs, int op){
+	return static_cast<void*>(Pycp::Compare(static_cast<Pycp::Object*>(lhs), static_cast<Pycp::Object*>(rhs), op));
+}
+PYCP_C_API int PYCP_IsFalse(void* v){
+	return Pycp::IsFalse(static_cast<Pycp::Object*>(v)) ? 1 : 0;
 }
 PYCP_C_API void* PYCP_Call(void* callable, void** argv, std::size_t argc){
 	return static_cast<void*>(Pycp::Call(static_cast<Pycp::Object*>(callable), reinterpret_cast<Pycp::Object**>(argv), argc));

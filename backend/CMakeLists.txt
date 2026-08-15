@@ -76,75 +76,100 @@ set(PYCP_SOURCES
 )
 
 # =====================================================================
-# 核心：编译为 OBJECT 目标文件（不链接成库）
+# 核心：按选项编译 OBJECT 目标文件并生成对应库
+# ---------------------------------------------------------------------
+# 静态库与动态库各自独立编译目标文件，因为 Windows 上二者的符号
+# 导出属性不同（静态库无属性、动态库需 dllexport），无法共用同一组
+# .o；Linux/macOS 上 visibility("default") 二者一致，但统一拆分以
+# 保证跨平台行为一致。静态 OBJECT 库以 PUBLIC 传播 PYCP_STATIC，
+# 使静态链接消费方（如 pycp）自动获得该宏。
+# OBJECT 库按需编译：未启用的库不编译其 OBJECT 目标，避免浪费。
 # =====================================================================
-add_library(PycpRuntime_obj OBJECT ${PYCP_SOURCES} ${PYCP_HEADERS})
-target_include_directories(PycpRuntime_obj PUBLIC ${PYCP_INCLUDE_DIR})
 
-if(MSVC)
-    target_compile_options(PycpRuntime_obj PRIVATE /W4 /EHsc /utf-8)
-else()
-    target_compile_options(PycpRuntime_obj PRIVATE -Wall -Wextra -O2)
-endif()
-
-# =====================================================================
-# 静态库 / 动态库（目标名分离，避免冲突）
-# =====================================================================
 # 静态库：内部目标名 PycpRuntime_static，输出文件名 PycpRuntime
 if(BUILD_RUNTIME_STATIC)
-    add_library(PycpRuntime_static STATIC $<TARGET_OBJECTS:PycpRuntime_obj>)
+    add_library(PycpRuntime_obj_static OBJECT ${PYCP_SOURCES} ${PYCP_HEADERS})
+    target_include_directories(PycpRuntime_obj_static PUBLIC ${PYCP_INCLUDE_DIR})
+    target_compile_definitions(PycpRuntime_obj_static PUBLIC PYCP_STATIC)
+
+    add_library(PycpRuntime_static STATIC $<TARGET_OBJECTS:PycpRuntime_obj_static>)
     target_include_directories(PycpRuntime_static PUBLIC ${PYCP_INCLUDE_DIR})
     set_target_properties(PycpRuntime_static PROPERTIES
         OUTPUT_NAME "PycpRuntime"
         ARCHIVE_OUTPUT_DIRECTORY ${OUTPUT_DIR}
     )
+
+    if(MSVC)
+        target_compile_options(PycpRuntime_obj_static PRIVATE /W4 /EHsc /utf-8)
+    else()
+        target_compile_options(PycpRuntime_obj_static PRIVATE -Wall -Wextra -O2)
+    endif()
 endif()
 
 # 动态库：内部目标名 PycpRuntime_shared，输出文件名 PycpRuntime
 if(BUILD_RUNTIME_SHARED)
-    add_library(PycpRuntime_shared SHARED $<TARGET_OBJECTS:PycpRuntime_obj>)
+    add_library(PycpRuntime_obj_shared OBJECT ${PYCP_SOURCES} ${PYCP_HEADERS})
+    target_include_directories(PycpRuntime_obj_shared PUBLIC ${PYCP_INCLUDE_DIR})
+    target_compile_definitions(PycpRuntime_obj_shared PRIVATE PYCP_BUILD_DLL)
+
+    add_library(PycpRuntime_shared SHARED $<TARGET_OBJECTS:PycpRuntime_obj_shared>)
     target_include_directories(PycpRuntime_shared PUBLIC ${PYCP_INCLUDE_DIR})
-    if(MSVC)
-        target_compile_definitions(PycpRuntime_shared PRIVATE PYCP_BUILD_DLL)
-    endif()
     set_target_properties(PycpRuntime_shared PROPERTIES
         OUTPUT_NAME "PycpRuntime"
         LIBRARY_OUTPUT_DIRECTORY ${OUTPUT_DIR}
         RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_DIR}
     )
+
+    if(MSVC)
+        target_compile_options(PycpRuntime_obj_shared PRIVATE /W4 /EHsc /utf-8)
+    else()
+        target_compile_options(PycpRuntime_obj_shared PRIVATE -Wall -Wextra -O2)
+    endif()
 endif()
 
 # =====================================================================
 # Python 绑定：直接嵌入目标文件（无外部依赖）
+# ---------------------------------------------------------------------
+# 绑定是动态模块，依赖 shared OBJECT；仅当动态库启用时才可构建。
 # =====================================================================
 if(BUILD_PYTHON_BINDING)
-    find_package(Python REQUIRED COMPONENTS Interpreter Development)
-    find_package(pybind11 CONFIG REQUIRED)
+    if(NOT BUILD_RUNTIME_SHARED)
+        message(WARNING "BUILD_PYTHON_BINDING requires BUILD_RUNTIME_SHARED=ON; skipping.")
+    else()
+        find_package(Python REQUIRED COMPONENTS Interpreter Development)
+        find_package(pybind11 CONFIG REQUIRED)
 
-    pybind11_add_module(PycpRuntime4Python
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpRuntime4Python.cpp
-        $<TARGET_OBJECTS:PycpRuntime_obj>
-    )
-    target_include_directories(PycpRuntime4Python PRIVATE ${PYCP_INCLUDE_DIR})
+        pybind11_add_module(PycpRuntime4Python
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpRuntime4Python.cpp
+            $<TARGET_OBJECTS:PycpRuntime_obj_shared>
+        )
+        target_include_directories(PycpRuntime4Python PRIVATE ${PYCP_INCLUDE_DIR})
 
-    set_target_properties(PycpRuntime4Python PROPERTIES
-        PREFIX ""
-        SUFFIX ".pyd"
-        OUTPUT_NAME "PycpRuntime4Python"
-        LIBRARY_OUTPUT_DIRECTORY ${OUTPUT_DIR}
-        RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_DIR}
-    )
+        set_target_properties(PycpRuntime4Python PROPERTIES
+            PREFIX ""
+            SUFFIX ".pyd"
+            OUTPUT_NAME "PycpRuntime4Python"
+            LIBRARY_OUTPUT_DIRECTORY ${OUTPUT_DIR}
+            RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_DIR}
+        )
+    endif()
 endif()
 
 # =====================================================================
 # 测试程序
+# ---------------------------------------------------------------------
+# 依赖静态 OBJECT；仅当静态库启用时才可构建。
 # =====================================================================
 if(BUILD_TEST)
-    add_executable(test_pycp ${CMAKE_CURRENT_SOURCE_DIR}/src/test.cpp)
-    target_link_libraries(test_pycp PRIVATE PycpRuntime_obj)
-    set_target_properties(test_pycp PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_DIR}
-    )
+    if(NOT BUILD_RUNTIME_STATIC)
+        message(WARNING "BUILD_TEST requires BUILD_RUNTIME_STATIC=ON; skipping.")
+    else()
+        add_executable(test_pycp ${CMAKE_CURRENT_SOURCE_DIR}/src/test.cpp)
+        target_link_libraries(test_pycp PRIVATE PycpRuntime_obj_static)
+        set_target_properties(test_pycp PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_DIR}
+        )
+    endif()
 endif()
 
 # =====================================================================

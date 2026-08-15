@@ -14,7 +14,7 @@ Pycp 将源码 `.pycp` 编译为自定义字节码 `.cpycp`（类似 Python 的 
 | 运行时 | GC、对象模型（Integer / String / None / Function）、ABI 接口 |
 | 虚拟机 | 栈式字节码 VM，支持函数调用、闭包、控制流 |
 | 字节码 | `.cpycp` 二进制格式（小端 + LEB128 编码），可序列化 / 反序列化 |
-| AOT（预留） | 将字节码翻译为独立 C++ 源文件的接口骨架 |
+| AOT | 将字节码逐指令翻译为依赖 PycpABI 的独立 C++ 源文件（真正的指令翻译，非骨架占位） |
 
 ### 已支持的语言子集
 
@@ -78,7 +78,7 @@ pycp [options] <input_file>
 | `-b, --bytecode` | 生成 `.cpycp` 字节码（`-c` 的别名） |
 | `-i, --interpret` | 解释执行（默认行为；接受 `.pycp` 或 `.cpycp`） |
 | `-o, --output <f>` | 指定输出文件路径（配合 `-c/-b/--emit-cpp`） |
-| `--emit-cpp` | 将 `.pycp` 翻译为独立 C++ 源文件（AOT 预留接口） |
+| `--emit-cpp` | 将 `.pycp` 翻译为独立 C++ 源文件（AOT 指令翻译，输出 `.cpp`） |
 | `-d, --dump` | 查看字节码内容（常量池 / 符号表 / 代码对象 / 指令与行号），接受 `.pycp` 或 `.cpycp` |
 
 ### 使用示例
@@ -155,7 +155,22 @@ pycp [options] <input_file>
   2  RETURN
 ```
 
-**4. 一个最小示例**
+**4. 翻译为独立 C++ 源文件（AOT）**
+
+```bash
+# 将 .pycp 逐指令翻译为依赖 PycpABI 的 C++ 源文件
+./build/pycp --emit-cpp hello.pycp -o hello.gen.cpp
+```
+
+生成的 `.cpp` 包含 `main()`，内部将字节码翻译为 `Pycp::Add`/`Sub`/`Call` 等
+ABI 调用序列（常量内联为 `g_c[]`，控制流翻译为 `goto`，函数翻译为
+`pycp_fn_N`）。它不依赖解释器循环，但编译时仍需链接 `PycpRuntime` 库
+（静态 `libPycpRuntime.a` 或动态 `libPycpRuntime.so`）。
+
+> 已知限制：闭包捕获（匿名函数引用外层局部变量）暂未实现，此类代码
+> 翻译后行为可能与解释器不一致。
+
+**5. 一个最小示例**
 
 创建 `hello.pycp`：
 
@@ -189,13 +204,22 @@ print(2 ** 3)
 
 ### 顶层构建选项
 
-顶层 `CMakeLists.txt` 在引入 backend 时强制设定以下选项以加速全量编译：
+顶层 `CMakeLists.txt` 在引入 backend 时强制设定以下选项（同时构建静态库
+与动态库，产物统一输出到 `backend/bin/`）：
 
 | 变量 | 值 | 说明 |
 |------|-----|------|
-| `BUILD_RUNTIME_SHARED` | `OFF` | 不构建动态库 |
+| `BUILD_RUNTIME_STATIC` | `ON` | 构建 `libPycpRuntime.a` 静态库 |
+| `BUILD_RUNTIME_SHARED` | `ON` | 构建 `libPycpRuntime.so` 动态库 |
 | `BUILD_PYTHON_BINDING` | `OFF` | 不构建 Python 绑定 |
 | `BUILD_TEST` | `OFF` | 不构建测试程序 |
+
+构建完成后，`backend/bin/` 下会同时产出：
+
+- `libPycpRuntime.a`（静态库）
+- `libPycpRuntime.so`（动态库，Linux；macOS 为 `.dylib`）
+
+顶层 `pycp` 可执行文件当前静态链接 `libPycpRuntime.a`。
 
 ### backend 独立构建选项
 
@@ -347,4 +371,4 @@ cmake --build build -j
 
 ## 免责声明
 
-本项目仍处于开发阶段，`--emit-cpp`（AOT）等接口为预留骨架，尚未完整实现；`example.pycp` 中包含的类型注解、`class`、`map`、`list`、`Pointer` 等高级语法可能尚未被当前解析器完全支持。
+本项目仍处于开发阶段，`--emit-cpp`（AOT）已实现真正的字节码指令翻译（输出依赖 PycpABI 的 `.cpp` 源文件），但闭包捕获暂未支持；`example.pycp` 中包含的类型注解、`class`、`map`、`list`、`Pointer` 等高级语法可能尚未被当前解析器完全支持。

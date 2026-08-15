@@ -112,14 +112,6 @@ Object* VM::execute(CodeObject* co,
 		if (argv[i] != nullptr) Incref(argv[i]);
 	}
 
-	auto is_false = [](Object* v) -> bool {
-		if (v == nullptr) return true;
-		if (v->type == Type::NONE) return true;
-		if (v->type == Type::INTEGER)
-			return static_cast<Integer*>(v)->get_value() == 0;
-		return false;
-	};
-
 	std::size_t dbg_pc = 0;
 
 	// 当前源码位置：文件路径与行号（不含函数名）。
@@ -173,25 +165,11 @@ Object* VM::execute(CodeObject* co,
 					throw VMError(cur_file(), cur_line(), "symbol index out of range.");
 				const std::string& name = module_->symtab[idx];
 
-				long local_idx = env->find_local(name);
-				if (local_idx >= 0) {
-					push(env->locals[local_idx]);
-					break;
-				}
-				// 闭包捕获链
-				std::shared_ptr<Environment> cap = env->captured;
-				while (cap) {
-					long c = cap->find_local(name);
-					if (c >= 0) { push(cap->locals[c]); goto loaded; }
-					cap = cap->captured;
-				}
-				// 全局
-				if (env->globals) {
-					auto it = env->globals->find(name);
-					if (it != env->globals->end()) { push(it->second); break; }
-				}
-				throw NameError(cur_file(), cur_line(), "name '" + name + "' is not defined");
-			loaded:
+				// 统一经 ABI 环境接口查找（局部 -> captured 链 -> 全局）
+				Object* v = Environment_Lookup(env.get(), name);
+				if (v == nullptr)
+					throw NameError(cur_file(), cur_line(), "name '" + name + "' is not defined");
+				push(v);
 				break;
 			}
 
@@ -202,35 +180,8 @@ Object* VM::execute(CodeObject* co,
 				const std::string& name = module_->symtab[idx];
 				Object* value = pop(); // 所有权
 
-				long local_idx = env->find_local(name);
-				if (local_idx >= 0) {
-					if (env->locals[local_idx]) Decref(env->locals[local_idx]);
-					env->locals[local_idx] = value;
-					break;
-				}
-				std::shared_ptr<Environment> cap = env->captured;
-				while (cap) {
-					long c = cap->find_local(name);
-					if (c >= 0) {
-						if (cap->locals[c]) Decref(cap->locals[c]);
-						cap->locals[c] = value;
-						goto stored;
-					}
-					cap = cap->captured;
-				}
-				if (env->globals) {
-					auto it = env->globals->find(name);
-					if (it != env->globals->end()) {
-						if (it->second) Decref(it->second);
-						it->second = value;
-					} else {
-						(*env->globals)[name] = value;
-					}
-					break;
-				}
-				Decref(value);
-				throw NameError(cur_file(), cur_line(), "name '" + name + "' is not defined");
-			stored:
+				// 统一经 ABI 环境接口存储（局部 -> captured 链 -> 全局）
+				Environment_Store(env.get(), name, value);
 				break;
 			}
 
@@ -293,43 +244,8 @@ Object* VM::execute(CodeObject* co,
 			// ---- 比较 ----
 			case Op::COMPARE_OP: {
 				Object* rhs = pop(); Object* lhs = pop();
-				CompareOp cop = static_cast<CompareOp>(ins.operand);
-				bool result = false;
-
-				if (lhs->type == Type::INTEGER && rhs->type == Type::INTEGER) {
-					int64_t a = static_cast<Integer*>(lhs)->get_value();
-					int64_t b = static_cast<Integer*>(rhs)->get_value();
-					switch (cop) {
-						case CompareOp::LT: result = a < b; break;
-						case CompareOp::LE: result = a <= b; break;
-						case CompareOp::EQ: result = a == b; break;
-						case CompareOp::NE: result = a != b; break;
-						case CompareOp::GT: result = a > b; break;
-						case CompareOp::GE: result = a >= b; break;
-					}
-				} else if (lhs->type == Type::STRING && rhs->type == Type::STRING) {
-					std::string a = static_cast<String*>(lhs)->get_value();
-					std::string b = static_cast<String*>(rhs)->get_value();
-					switch (cop) {
-						case CompareOp::LT: result = a < b; break;
-						case CompareOp::LE: result = a <= b; break;
-						case CompareOp::EQ: result = a == b; break;
-						case CompareOp::NE: result = a != b; break;
-						case CompareOp::GT: result = a > b; break;
-						case CompareOp::GE: result = a >= b; break;
-					}
-				} else {
-					switch (cop) {
-						case CompareOp::EQ: result = false; break;
-						case CompareOp::NE: result = true; break;
-						default:
-							Decref(lhs); Decref(rhs);
-							throw TypeError(cur_file(), cur_line(), "cannot compare different types.");
-					}
-				}
-
+				Object* res = Compare(lhs, rhs, static_cast<int>(ins.operand));
 				Decref(lhs); Decref(rhs);
-				Object* res = result ? Integer::instances[1] : Integer::instances[0];
 				push(res);
 				break;
 			}
@@ -343,7 +259,7 @@ Object* VM::execute(CodeObject* co,
 			}
 			case Op::JUMP_IF_FALSE: {
 				Object* cond = pop();
-				bool f = is_false(cond);
+				bool f = IsFalse(cond);
 				Decref(cond);
 				if (f) {
 					pc = pc + static_cast<std::size_t>(ins.operand) - 1;
@@ -354,7 +270,7 @@ Object* VM::execute(CodeObject* co,
 			}
 			case Op::JUMP_IF_TRUE: {
 				Object* cond = pop();
-				bool f = is_false(cond);
+				bool f = IsFalse(cond);
 				Decref(cond);
 				if (!f) {
 					pc = pc + static_cast<std::size_t>(ins.operand) - 1;
