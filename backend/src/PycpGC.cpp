@@ -3,6 +3,7 @@
 #include "PycpInteger.hpp"
 #include "PycpString.hpp"
 #include "PycpFunction.hpp"
+#include "PycpModule.hpp"
 
 #include <unordered_set>
 #include <vector>

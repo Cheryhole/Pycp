@@ -1,21 +1,13 @@
 # =====================================================================
-# Pycp 前端模块构建脚本（独立入口）
+# Pycp Compiler 前端构建脚本
 # ---------------------------------------------------------------------
-# 本脚本仅用于单独构建前端模块：生成 Flex/Bison 解析器并编译一个
-# 独立的解析器测试程序（parser_test），读取 .pycp 源码并打印 AST，
-# 用于验证解析器与 AST 构造逻辑。
-#
-# 注意：完整的 pycp 可执行文件由项目顶层 CMakeLists.txt 构建，
-#       本脚本不再承担主程序构建职责。
-#
-# 用法：
-#   cmake -S . -B build
-#   cmake --build build
+# 构建 pycp 可执行文件：整合 Flex/Bison 解析器、AST、Codegen、AOT
+# 与 backend 运行时，提供完整的编译 / 执行命令行接口。
 # =====================================================================
 
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.10)
 
-project(PycpParser
+project(PycpCompiler
     VERSION 1.0.0
     LANGUAGES CXX
 )
@@ -48,9 +40,17 @@ set(AST_SOURCES
     src/PycpAstNode.cpp
 )
 
-# 解析器测试程序：读取 .pycp 源码并打印 AST（自带 main）
-set(PARSER_TEST_SOURCE
-    src/PycpParser.cpp
+set(CODGEN_SOURCES
+    src/PycpCodegen.cpp
+)
+
+set(AOT_SOURCES
+    src/PycpAot.cpp
+)
+
+# 主程序入口：位于项目顶层目录
+set(MAIN_SOURCE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../PycpMain.cpp
 )
 
 include_directories(include)
@@ -69,6 +69,8 @@ set(FLEX_INPUT
 # =====================================================================
 # 生成解析器
 # =====================================================================
+message(STATUS "binary : ${CMAKE_CURRENT_BINARY_DIR}")
+
 bison_target(
     PycpParser
 
@@ -106,11 +108,24 @@ add_flex_bison_dependency(
 )
 
 # =====================================================================
-# 解析器测试程序
+# Backend 运行时（通过 add_subdirectory 引入）
+# ---------------------------------------------------------------------
+# 引入 backend 运行时：提供 Object/GC/ABI/Bytecode/VM 实现。
+# backend 会构建 PycpRuntime_static 静态库目标。
 # =====================================================================
-add_executable(parser_test
-    ${PARSER_TEST_SOURCE}
+set(BUILD_PYTHON_BINDING OFF CACHE BOOL "" FORCE)
+set(BUILD_TEST OFF CACHE BOOL "" FORCE)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../backend
+                 ${CMAKE_CURRENT_BINARY_DIR}/backend)
+
+# =====================================================================
+# 可执行文件
+# =====================================================================
+add_executable(pycp
+    ${MAIN_SOURCE}
     ${AST_SOURCES}
+    ${CODGEN_SOURCES}
+    ${AOT_SOURCES}
     ${BISON_PycpParser_OUTPUTS}
     ${FLEX_PycpLexer_OUTPUTS}
 )
@@ -118,24 +133,27 @@ add_executable(parser_test
 # =====================================================================
 # 头文件搜索路径
 # =====================================================================
-target_include_directories(parser_test
+target_include_directories(pycp
     PRIVATE
 
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}
+
+    # backend 头文件（Pycp.hpp / PycpBytecode.hpp / PycpBytecodeVM.hpp 等）
+    ${CMAKE_CURRENT_SOURCE_DIR}/../backend/include
 )
 
 # =====================================================================
 # 编译选项
 # =====================================================================
 if(MSVC)
-    target_compile_options(parser_test
+    target_compile_options(pycp
         PRIVATE
         /W4
         /MP
     )
 else()
-    target_compile_options(parser_test
+    target_compile_options(pycp
         PRIVATE
 
         -Wall
@@ -146,11 +164,39 @@ else()
 endif()
 
 # =====================================================================
-# 链接 Flex 库（仅 Linux）
+# 链接 Flex 库（仅 Linux）与 backend 运行时
 # =====================================================================
 if(UNIX AND NOT APPLE)
-    target_link_libraries(parser_test PRIVATE ${FLEX_LIBRARIES})
+    target_link_libraries(pycp PRIVATE ${FLEX_LIBRARIES})
 endif()
+
+target_link_libraries(pycp PRIVATE PycpRuntime_static)
+
+# =====================================================================
+# 调试宏
+# =====================================================================
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(pycp PRIVATE DEBUG=1)
+else()
+    target_compile_definitions(pycp PRIVATE NDEBUG=1)
+endif()
+
+# =====================================================================
+# 安装
+# =====================================================================
+install(TARGETS pycp
+    RUNTIME DESTINATION bin
+)
+
+# =====================================================================
+# 测试
+# =====================================================================
+enable_testing()
+
+add_test(
+    NAME ParserTest
+    COMMAND pycp
+)
 
 # =====================================================================
 # 实用目标

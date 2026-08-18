@@ -66,56 +66,6 @@ Object* String::__multiplication__(Object* other){
 	return New<String>(res);
 }
 
-// 比较运算：假定 other 为同类型 String（由 ABI::Compare 保证），
-// 返回小整数池对象 Integer::instances[0/1]（PERMANENT）。
-Object* String::__less_than__(Object* other){
-	if (other == nullptr || other->type != Type::STRING){
-		throw TypeError("Unsupported to compare.");
-	}
-	String* s = static_cast<String*>(other);
-	return this->_value < s->_value ? Integer::instances[1] : Integer::instances[0];
-}
-
-Object* String::__less_equal__(Object* other){
-	if (other == nullptr || other->type != Type::STRING){
-		throw TypeError("Unsupported to compare.");
-	}
-	String* s = static_cast<String*>(other);
-	return this->_value <= s->_value ? Integer::instances[1] : Integer::instances[0];
-}
-
-Object* String::__equal__(Object* other){
-	if (other == nullptr || other->type != Type::STRING){
-		throw TypeError("Unsupported to compare.");
-	}
-	String* s = static_cast<String*>(other);
-	return this->_value == s->_value ? Integer::instances[1] : Integer::instances[0];
-}
-
-Object* String::__not_equal__(Object* other){
-	if (other == nullptr || other->type != Type::STRING){
-		throw TypeError("Unsupported to compare.");
-	}
-	String* s = static_cast<String*>(other);
-	return this->_value != s->_value ? Integer::instances[1] : Integer::instances[0];
-}
-
-Object* String::__greater_than__(Object* other){
-	if (other == nullptr || other->type != Type::STRING){
-		throw TypeError("Unsupported to compare.");
-	}
-	String* s = static_cast<String*>(other);
-	return this->_value > s->_value ? Integer::instances[1] : Integer::instances[0];
-}
-
-Object* String::__greater_equal__(Object* other){
-	if (other == nullptr || other->type != Type::STRING){
-		throw TypeError("Unsupported to compare.");
-	}
-	String* s = static_cast<String*>(other);
-	return this->_value >= s->_value ? Integer::instances[1] : Integer::instances[0];
-}
-
 std::string AsString(Object* obj){
 	if (obj == nullptr){
 		throw TypeError("Cannot convert null object to string.");

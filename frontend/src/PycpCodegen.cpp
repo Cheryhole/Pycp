@@ -1,5 +1,6 @@
 #include "PycpCodegen.hpp"
 #include "PycpException.hpp"
+#include "PycpConfig.hpp"
 
 #include <cstdint>
 #include <stdexcept>
@@ -51,6 +52,22 @@ public:
 		Constant c; c.kind = ConstKind::NONE;
 		module.const_pool.push_back(std::move(c));
 		return module.const_pool.size() - 1;
+	}
+
+	// 登记被导入模块名，返回其在 module.imports 中的索引（LOAD_MODULE 操作数）。
+	// 同时记录 import 语句行号（当前 current_lineno），供 ImportError 报错位置。
+	std::size_t intern_import(const std::string& name) {
+		for (std::size_t i = 0; i < module.imports.size(); ++i)
+			if (module.imports[i] == name) return i;
+		module.imports.push_back(name);
+		module.import_linenos.push_back(current_lineno);
+		return module.imports.size() - 1;
+	}
+
+	// 登记一个类定义，返回其在 module.classes 中的索引（MAKE_CLASS 操作数）。
+	std::size_t intern_class(const ClassDef& cd) {
+		module.classes.push_back(cd);
+		return module.classes.size() - 1;
 	}
 
 	// ---- 指令发射 ----
@@ -140,6 +157,14 @@ static void collect_assignment_targets(Program* p, std::unordered_set<std::strin
 static void compile_expr(Emitter& em, Expression* e, Scope& scope);
 static void compile_stmt(Emitter& em, Statement* s, Scope& scope);
 static void compile_program(Emitter& em, Program* p, Scope& scope);
+static void compile_class_def(Emitter& em, ClassDefinition* cd, Scope& scope);
+static void compile_class_expr(Emitter& em, ClassExpression* ce, Scope& scope);
+// 通用类编译：根据类名/父类名/成员/方法构造 ClassDef 并发射 MAKE_CLASS。
+static void compile_class_body(Emitter& em, const std::string& name,
+                               const std::string* parent_name,
+                               std::vector<Statement*>* member_variables,
+                               std::vector<Statement*>* methods,
+                               Scope& scope);
 
 // =============================================================
 // 表达式编译
@@ -219,9 +244,19 @@ static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 				em.emit(Op::RETURN_NONE);
 			}
 
-			// 弹回父代码对象，发射 MAKE_FUNCTION
+			// 弹回父代码对象。
 			em.pop_code_object();
-			em.emit(Op::MAKE_FUNCTION, static_cast<int32_t>(co_idx));
+
+			// 装饰器（顶层函数定义 @decorator func）：装饰器作为 callee
+			// 需在栈底，被装饰函数作为参数在栈顶。故先求值装饰器表达式，
+			// 再发射 MAKE_FUNCTION，最后 CALL 1 用装饰器返回对象替换函数。
+			if (fe->decorator != nullptr) {
+				compile_expr(em, fe->decorator, scope);
+				em.emit(Op::MAKE_FUNCTION, static_cast<int32_t>(co_idx));
+				em.emit(Op::CALL, 1);
+			} else {
+				em.emit(Op::MAKE_FUNCTION, static_cast<int32_t>(co_idx));
+			}
 			break;
 		}
 		case NodeType::CALL_EXPRESSION: {
@@ -230,6 +265,17 @@ static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 			for (Expression* arg : ce->arguments)
 				compile_expr(em, arg, scope);
 			em.emit(Op::CALL, static_cast<int32_t>(ce->arguments.size()));
+			break;
+		}
+		case NodeType::ATTRIBUTE_EXPRESSION: {
+			AttributeExpression* ae = static_cast<AttributeExpression*>(e);
+			compile_expr(em, ae->target, scope);
+			em.emit(Op::LOAD_ATTR, static_cast<int32_t>(em.intern_name(*ae->attr)));
+			break;
+		}
+		case NodeType::CLASS_EXPRESSION: {
+			ClassExpression* ce = static_cast<ClassExpression*>(e);
+			compile_class_expr(em, ce, scope);
 			break;
 		}
 		default:
@@ -246,17 +292,55 @@ static void compile_stmt(Emitter& em, Statement* s, Scope& scope) {
 	switch (s->get_type()) {
 		case NodeType::ASSIGNMENT_STATEMENT: {
 			AssignmentStatement* as = static_cast<AssignmentStatement*>(s);
-			if (as->target->get_type() != NodeType::IDENTIFIER_EXPRESSION)
-				throw Pycp::Exception("Codegen: assignment target must be identifier.");
-			compile_expr(em, as->value, scope);
-			IdentifierExpression* id = static_cast<IdentifierExpression*>(as->target);
-			em.emit(Op::STORE_VAR, static_cast<int32_t>(em.intern_name(*id->name)));
+			if (as->target->get_type() == NodeType::IDENTIFIER_EXPRESSION) {
+				compile_expr(em, as->value, scope);
+				IdentifierExpression* id = static_cast<IdentifierExpression*>(as->target);
+				em.emit(Op::STORE_VAR, static_cast<int32_t>(em.intern_name(*id->name)));
+			} else if (as->target->get_type() == NodeType::ATTRIBUTE_EXPRESSION) {
+				// 成员赋值：obj.attr = value
+				AttributeExpression* ae = static_cast<AttributeExpression*>(as->target);
+				compile_expr(em, ae->target, scope);
+				compile_expr(em, as->value, scope);
+				em.emit(Op::STORE_ATTR, static_cast<int32_t>(em.intern_name(*ae->attr)));
+			} else {
+				throw Pycp::Exception("Codegen: unsupported assignment target.");
+			}
 			break;
 		}
 		case NodeType::EXPRESSION_STATEMENT: {
 			ExpressionStatement* es = static_cast<ExpressionStatement*>(s);
 			compile_expr(em, es->expression, scope);
 			em.emit(Op::POP_TOP);
+			break;
+		}
+		case NodeType::IMPORT_STATEMENT: {
+			ImportStatement* is = static_cast<ImportStatement*>(s);
+			// LOAD_MODULE <import_idx> 加载模块对象压栈
+			em.emit(Op::LOAD_MODULE,
+			        static_cast<int32_t>(em.intern_import(*is->module_name)));
+			// 绑定名：alias 优先，否则模块名
+			const std::string& bind_name = (is->alias != nullptr) ? *is->alias : *is->module_name;
+			em.emit(Op::STORE_VAR, static_cast<int32_t>(em.intern_name(bind_name)));
+			break;
+		}
+		case NodeType::FROM_IMPORT_STATEMENT: {
+			FromImportStatement* fis = static_cast<FromImportStatement*>(s);
+			// from module import a, b, ...：加载模块，逐个从模块命名空间
+			// 取属性并绑定到当前命名空间（super/private/public 等均为普通
+			// 运行时对象，走同一路径）。
+			em.emit(Op::LOAD_MODULE,
+			        static_cast<int32_t>(em.intern_import(*fis->module_name)));
+			for (std::string* n : *(fis->names)) {
+				em.emit(Op::DUP_TOP);
+				em.emit(Op::LOAD_ATTR, static_cast<int32_t>(em.intern_name(*n)));
+				em.emit(Op::STORE_VAR, static_cast<int32_t>(em.intern_name(*n)));
+			}
+			em.emit(Op::POP_TOP); // 丢弃模块对象
+			break;
+		}
+		case NodeType::CLASS_DEFINITION: {
+			ClassDefinition* cd = static_cast<ClassDefinition*>(s);
+			compile_class_def(em, cd, scope);
 			break;
 		}
 		case NodeType::RETURN_STATEMENT: {
@@ -317,6 +401,135 @@ static void compile_stmt(Emitter& em, Statement* s, Scope& scope) {
 	}
 }
 
+// =============================================================
+// 类定义编译
+// =============================================================
+
+// 命名类定义：class name [inherits parent]{...}，绑定到类名。
+static void compile_class_def(Emitter& em, ClassDefinition* cd, Scope& scope) {
+	compile_class_body(em, *cd->name, cd->parent_name,
+	                   cd->member_variables, cd->methods, scope);
+	em.emit(Op::STORE_VAR, static_cast<int32_t>(em.intern_name(*cd->name)));
+}
+
+// 匿名类表达式：class [inherits parent]{...}，内部名用 config 常量。
+static void compile_class_expr(Emitter& em, ClassExpression* ce, Scope& scope) {
+	compile_class_body(em, Pycp::ANONYMOUS_CLASS, ce->parent_name,
+	                   ce->member_variables, ce->methods, scope);
+	// 匿名类作为表达式值：结果留在栈上（不 STORE_VAR）。
+}
+
+// 通用类编译：构造 ClassDef 并发射 MAKE_CLASS。
+static void compile_class_body(Emitter& em, const std::string& name,
+                               const std::string* parent_name,
+                               std::vector<Statement*>* member_variables,
+                               std::vector<Statement*>* methods,
+                               Scope& scope) {
+	ClassDef cdef;
+	cdef.name = name;
+	cdef.parent_name = (parent_name != nullptr) ? *parent_name : "";
+
+	// 装饰器栈槽计数器：带装饰器的成员依次编号 0,1,2...，其装饰器对象
+	// 在 MAKE_CLASS 之前按「先成员变量、后方法」顺序求值压栈。
+	uint32_t deco_idx = 0;
+
+	// 成员变量名 + 装饰器（声明顺序）。带装饰器的成员先求值装饰器表达式
+	// 压栈，并记录栈槽序号；无装饰器记为 UINT32_MAX。
+	for (Statement* mv : *member_variables) {
+		MemberVariable* m = static_cast<MemberVariable*>(mv);
+		cdef.member_names.push_back(*m->name);
+		if (m->decorator != nullptr) {
+			compile_expr(em, m->decorator, scope);
+			cdef.member_decorators.push_back(deco_idx++);
+		} else {
+			cdef.member_decorators.push_back(UINT32_MAX);
+		}
+	}
+
+	// 方法：编译每个方法为独立代码对象，记录 (方法名, code_idx) + 装饰器。
+	for (Statement* ms : *methods) {
+		MethodDefinition* md = static_cast<MethodDefinition*>(ms);
+		FunctionExpression* fe = md->function;
+
+		std::size_t co_idx = em.push_code_object(fe->name);
+
+		// 构造方法局部作用域：参数（含 self）+ 方法体内赋值目标。
+		Scope fn_scope;
+		fn_scope.has_locals = true;
+		for (std::string* p : fe->params) fn_scope.add(*p);
+		std::unordered_set<std::string> targets;
+		collect_assignment_targets(fe->body, targets);
+		for (const auto& t : targets) fn_scope.add(t);
+
+		em.current()->nparams = static_cast<uint16_t>(fe->params.size());
+		em.current()->nlocals = static_cast<uint16_t>(fn_scope.names.size());
+		em.current()->names = fn_scope.names;
+
+		compile_program(em, fe->body, fn_scope);
+		if (em.current()->code.empty() ||
+		    (em.current()->code.back().op != Op::RETURN &&
+		     em.current()->code.back().op != Op::RETURN_NONE)) {
+			em.emit(Op::RETURN_NONE);
+		}
+
+		em.pop_code_object();
+
+		cdef.methods.emplace_back(fe->name, static_cast<uint32_t>(co_idx));
+		if (md->decorator != nullptr) {
+			// 回到外层 code object 后求值装饰器表达式压栈。
+			compile_expr(em, md->decorator, scope);
+			cdef.method_decorators.push_back(deco_idx++);
+		} else {
+			cdef.method_decorators.push_back(UINT32_MAX);
+		}
+	}
+
+	// 成员变量初始值：若存在带初始值的成员（var = expr），生成隐式方法
+	// __init_defaults__，方法体为 self.<name> = <expr> 序列，实例化时在
+	// __initialize__ 之前执行，完成字段默认值赋值。
+	{
+		// 收集带初始值的成员。
+		std::vector<std::pair<std::string, Expression*>> inits;
+		for (Statement* mv : *member_variables) {
+			MemberVariable* m = static_cast<MemberVariable*>(mv);
+			if (m->value != nullptr) inits.emplace_back(*m->name, m->value);
+		}
+
+		if (!inits.empty()) {
+			std::size_t co_idx = em.push_code_object("__init_defaults__");
+
+			// 方法作用域：仅 self 参数。
+			Scope fn_scope;
+			fn_scope.has_locals = true;
+			fn_scope.add("self");
+
+			em.current()->nparams = 1;
+			em.current()->nlocals = 1;
+			em.current()->names = fn_scope.names;
+
+			// 依次发射 self.<name> = <expr>。
+			for (const auto& [iname, value] : inits) {
+				em.emit(Op::LOAD_VAR, static_cast<int32_t>(em.intern_name("self")));
+				compile_expr(em, value, fn_scope);
+				em.emit(Op::STORE_ATTR, static_cast<int32_t>(em.intern_name(iname)));
+			}
+			em.emit(Op::RETURN_NONE);
+
+			em.pop_code_object();
+
+			cdef.methods.emplace_back("__init_defaults__", static_cast<uint32_t>(co_idx));
+			cdef.method_decorators.push_back(UINT32_MAX); // __init_defaults__ 无装饰器（public）
+			}
+	}
+
+	// 装饰器对象总数（MAKE_CLASS 据此从栈上取装饰器并弹出）。
+	cdef.decorator_count = deco_idx;
+
+	// 登记类定义，发射 MAKE_CLASS。
+	std::size_t cidx = em.intern_class(cdef);
+	em.emit(Op::MAKE_CLASS, static_cast<int32_t>(cidx));
+}
+
 static void compile_program(Emitter& em, Program* p, Scope& scope) {
 	for (Statement* s : *(p->statements)) {
 		compile_stmt(em, s, scope);
@@ -332,10 +545,10 @@ static void compile_program(Emitter& em, Program* p, Scope& scope) {
 Module Compile(Program* program) {
 	Emitter em;
 
-	// 顶层代码对象 "<module>"：无局部变量（全部走 globals）
-	// 将 "<module>" 名称 intern 进符号表，保证序列化时能正确解析其名称。
-	em.intern_name("<module>");
-	em.push_code_object("<module>");
+	// 顶层代码对象 MODULE_TOP_NAME：无局部变量（全部走 globals）
+	// 将顶层代码对象名 intern 进符号表，保证序列化时能正确解析其名称。
+	em.intern_name(Pycp::MODULE_TOP_NAME);
+	em.push_code_object(Pycp::MODULE_TOP_NAME);
 	Scope top_scope;
 	top_scope.has_locals = false;
 

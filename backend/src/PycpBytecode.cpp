@@ -3,6 +3,7 @@
 #include "PycpABI.hpp"
 #include "PycpNone.hpp"
 #include "PycpGC.hpp"
+#include "PycpConfig.hpp"
 
 #include <cstring>
 #include <stdexcept>
@@ -10,12 +11,18 @@
 namespace Pycp::BC {
 
 // =============================================================
-// 文件头常量定义
+// 文件头常量定义（值统一来自 Pycp::config 常量，见 PycpConfig.hpp）
 // =============================================================
 
-const uint8_t MAGIC[4] = { 0x43, 0x59, 0x43, 0x50 }; // "CYCP"
-const uint16_t FORMAT_VERSION_MAJOR = 2;
-const uint16_t FORMAT_VERSION_MINOR = 0;
+// 魔数 "CYCP" 从 config 字符串常量逐字节派生（保持 extern 数组定义）。
+const uint8_t MAGIC[4] = {
+	static_cast<uint8_t>(Pycp::BYTECODE_MAGIC[0]),
+	static_cast<uint8_t>(Pycp::BYTECODE_MAGIC[1]),
+	static_cast<uint8_t>(Pycp::BYTECODE_MAGIC[2]),
+	static_cast<uint8_t>(Pycp::BYTECODE_MAGIC[3]),
+};
+const uint16_t FORMAT_VERSION_MAJOR = Pycp::BYTECODE_VERSION_MAJOR;
+const uint16_t FORMAT_VERSION_MINOR = Pycp::BYTECODE_VERSION_MINOR;
 
 // =============================================================
 // 小端读写辅助
@@ -176,6 +183,22 @@ std::vector<uint8_t> Serialize(const Module& module) {
 		put_bytes(out, seg.data(), seg.size());
 	}
 
+	// ---- 导入表段（imports）----
+	{
+		std::vector<uint8_t> seg;
+		WriteULEB128(seg, module.imports.size());
+		for (std::size_t i = 0; i < module.imports.size(); ++i) {
+			const auto& name = module.imports[i];
+			WriteULEB128(seg, name.size());
+			put_bytes(seg, reinterpret_cast<const uint8_t*>(name.data()), name.size());
+			// 行号（缺失时以 -1 补齐）
+			int lineno = (i < module.import_linenos.size()) ? module.import_linenos[i] : -1;
+			WriteSLEB128(seg, lineno);
+		}
+		put_u32(out, static_cast<uint32_t>(seg.size()));
+		put_bytes(out, seg.data(), seg.size());
+	}
+
 	// ---- 代码对象表段 ----
 	{
 		std::vector<uint8_t> seg;
@@ -212,6 +235,71 @@ std::vector<uint8_t> Serialize(const Module& module) {
 			for (int ln : co.linenos) {
 				WriteSLEB128(seg, ln);
 			}
+		}
+		put_u32(out, static_cast<uint32_t>(seg.size()));
+		put_bytes(out, seg.data(), seg.size());
+	}
+
+	// ---- 类定义表段 ----
+	{
+		std::vector<uint8_t> seg;
+		WriteULEB128(seg, module.classes.size());
+		for (const auto& cd : module.classes) {
+			// 类名（符号索引）
+			size_t name_idx = 0;
+			for (size_t i = 0; i < module.symtab.size(); ++i) {
+				if (module.symtab[i] == cd.name) { name_idx = i; break; }
+			}
+			WriteULEB128(seg, name_idx);
+
+			// 父类名（符号索引，空串则索引为 ULEB128 0 特殊标记）
+			if (cd.parent_name.empty()) {
+				WriteULEB128(seg, 0);
+			} else {
+				size_t pidx = 0;
+				bool found = false;
+				for (size_t i = 0; i < module.symtab.size(); ++i) {
+					if (module.symtab[i] == cd.parent_name) { pidx = i + 1; found = true; break; }
+				}
+				if (!found) pidx = 0; // 父类名不在符号表（防御）
+				WriteULEB128(seg, pidx);
+			}
+
+			// 成员变量名表（符号索引序列）
+			WriteULEB128(seg, cd.member_names.size());
+			for (const auto& mn : cd.member_names) {
+				size_t nidx = 0;
+				for (size_t i = 0; i < module.symtab.size(); ++i) {
+					if (module.symtab[i] == mn) { nidx = i; break; }
+				}
+				WriteULEB128(seg, nidx);
+			}
+
+			// 成员装饰器栈槽序号（与 member_names 对齐；UINT32_MAX 表示无装饰器）
+			WriteULEB128(seg, cd.member_decorators.size());
+			for (uint32_t d : cd.member_decorators) {
+				WriteULEB128(seg, d);
+			}
+
+			// 方法表：方法名（符号索引）+ 方法代码对象索引
+			WriteULEB128(seg, cd.methods.size());
+			for (const auto& m : cd.methods) {
+				size_t nidx = 0;
+				for (size_t i = 0; i < module.symtab.size(); ++i) {
+					if (module.symtab[i] == m.first) { nidx = i; break; }
+				}
+				WriteULEB128(seg, nidx);
+				WriteULEB128(seg, m.second);
+			}
+
+			// 方法装饰器栈槽序号（与 methods 对齐；UINT32_MAX 表示无装饰器）
+			WriteULEB128(seg, cd.method_decorators.size());
+			for (uint32_t d : cd.method_decorators) {
+				WriteULEB128(seg, d);
+			}
+
+			// 装饰器对象总数
+			WriteULEB128(seg, cd.decorator_count);
 		}
 		put_u32(out, static_cast<uint32_t>(seg.size()));
 		put_bytes(out, seg.data(), seg.size());
@@ -300,6 +388,24 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 		off = seg_end;
 	}
 
+	// ---- 导入表段（imports）----
+	{
+		uint32_t seg_len = get_u32(data, size, off);
+		std::size_t seg_end = off + seg_len;
+		if (seg_end > size) throw BytecodeError("imports truncated.");
+		uint64_t count = ReadULEB128(data, size, off);
+		module.imports.reserve(count);
+		module.import_linenos.reserve(count);
+		for (uint64_t i = 0; i < count; ++i) {
+			uint64_t len = ReadULEB128(data, size, off);
+			if (off + len > size) throw BytecodeError("import name truncated.");
+			module.imports.emplace_back(reinterpret_cast<const char*>(data + off), len);
+			off += len;
+			module.import_linenos.push_back(static_cast<int>(ReadSLEB128(data, size, off)));
+		}
+		off = seg_end;
+	}
+
 	// ---- 代码对象表段 ----
 	{
 		uint32_t seg_len = get_u32(data, size, off);
@@ -342,6 +448,75 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 				co.linenos.push_back(static_cast<int>(ReadSLEB128(data, size, off)));
 			}
 			module.code_objects.push_back(std::move(co));
+		}
+		off = seg_end;
+	}
+
+	// ---- 类定义表段 ----
+	{
+		uint32_t seg_len = get_u32(data, size, off);
+		std::size_t seg_end = off + seg_len;
+		if (seg_end > size) throw BytecodeError("classes truncated.");
+		uint64_t count = ReadULEB128(data, size, off);
+		module.classes.reserve(count);
+		for (uint64_t i = 0; i < count; ++i) {
+			ClassDef cd;
+			uint64_t name_idx = ReadULEB128(data, size, off);
+			if (name_idx >= module.symtab.size())
+				throw BytecodeError("invalid class name index.");
+			cd.name = module.symtab[name_idx];
+
+			// 父类名（符号索引，0 表示无父类）
+			uint64_t pidx = ReadULEB128(data, size, off);
+			if (pidx == 0) {
+				cd.parent_name.clear();
+			} else {
+				if (pidx - 1 >= module.symtab.size())
+					throw BytecodeError("invalid parent name index.");
+				cd.parent_name = module.symtab[pidx - 1];
+			}
+
+			// 成员变量名表（符号索引序列）
+			uint64_t mcount = ReadULEB128(data, size, off);
+			cd.member_names.reserve(mcount);
+			for (uint64_t k = 0; k < mcount; ++k) {
+				uint64_t nidx = ReadULEB128(data, size, off);
+				if (nidx >= module.symtab.size())
+					throw BytecodeError("invalid member name index.");
+				cd.member_names.push_back(module.symtab[nidx]);
+			}
+
+			// 成员装饰器栈槽序号（与 member_names 对齐；UINT32_MAX = 无装饰器）
+			uint64_t mvcount = ReadULEB128(data, size, off);
+			cd.member_decorators.reserve(mvcount);
+			for (uint64_t k = 0; k < mvcount; ++k) {
+				cd.member_decorators.push_back(
+					static_cast<uint32_t>(ReadULEB128(data, size, off)));
+			}
+
+			// 方法表：方法名（符号索引）+ 方法代码对象索引
+			uint64_t mtd_count = ReadULEB128(data, size, off);
+			cd.methods.reserve(mtd_count);
+			for (uint64_t k = 0; k < mtd_count; ++k) {
+				uint64_t nidx = ReadULEB128(data, size, off);
+				if (nidx >= module.symtab.size())
+					throw BytecodeError("invalid method name index.");
+				uint64_t co_idx = ReadULEB128(data, size, off);
+				cd.methods.emplace_back(module.symtab[nidx], static_cast<uint32_t>(co_idx));
+			}
+
+			// 方法装饰器栈槽序号（与 methods 对齐；UINT32_MAX = 无装饰器）
+			uint64_t mtvcount = ReadULEB128(data, size, off);
+			cd.method_decorators.reserve(mtvcount);
+			for (uint64_t k = 0; k < mtvcount; ++k) {
+				cd.method_decorators.push_back(
+					static_cast<uint32_t>(ReadULEB128(data, size, off)));
+			}
+
+			// 装饰器对象总数
+			cd.decorator_count = static_cast<uint32_t>(ReadULEB128(data, size, off));
+
+			module.classes.push_back(std::move(cd));
 		}
 		off = seg_end;
 	}

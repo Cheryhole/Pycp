@@ -4,6 +4,11 @@
 #include "PycpFunction.hpp"
 #include "PycpGC.hpp"
 #include "PycpManager.hpp"
+#include "PycpModule.hpp"
+#include "PycpClass.hpp"
+
+#include <istream>
+#include <ostream>
 
 namespace Pycp {
 
@@ -13,6 +18,83 @@ Object* Integer_FromLong(long long value){
 
 Object* String_FromString(const char* value){
 	return New<String>(std::string(value));
+}
+
+ModuleObject* Module_New(const std::string& name){
+	return New<ModuleObject>(name);
+}
+
+Object* Module_GetAttr(ModuleObject* mod, const std::string& name){
+	if (mod == nullptr) throw AttributeError("cannot get attribute from null module.");
+	return mod->__getattr__(name);
+}
+
+ClassObject* Class_New(const std::string& name){
+	return New<ClassObject>(name);
+}
+
+InstanceObject* Instance_New(ClassObject* cls){
+	return New<InstanceObject>(cls);
+}
+
+// File_FromStream 的实现已迁至 builtin_libraries/io/FileFromStream.cpp
+//（FileObject 是 io 内建库的专属对象）。
+
+void Class_AddMemberName(ClassObject* cls, const std::string& name){
+	if (cls == nullptr) throw TypeError("cannot add member to null class.");
+	cls->add_member_name(name);
+}
+
+void Class_AddMethod(ClassObject* cls, const std::string& name, Object* fn){
+	if (cls == nullptr) throw TypeError("cannot add method to null class.");
+	if (fn == nullptr || fn->type != Type::FUNCTION)
+		throw TypeError("method must be a function.");
+	cls->add_method(name, static_cast<Function*>(fn));
+}
+
+Object* GetAttr(Object* obj, const std::string& name){
+	if (obj == nullptr) throw AttributeError("cannot get attribute from null object.");
+	// 返回 Owned：调用方负责 Decref。
+	// 实例方法：新建绑定方法（self 自动绑定）。
+	if (obj->type == Type::INSTANCE) {
+		InstanceObject* inst = static_cast<InstanceObject*>(obj);
+		// 字段优先；其次方法（绑定）。
+		Object* field = inst->__getattr__(name);
+		if (field != nullptr) {
+			Incref(field);
+			return field;
+		}
+		// 字段不存在时，尝试方法。
+		Object* bm = inst->get_bound_method(name);
+		if (bm != nullptr) return bm; // 已 Owned（refcount=1）
+		throw AttributeError("instance has no attribute '" + name + "'");
+	}
+	// 文件对象的方法：绑定到文件对象（self 自动绑定）。
+	if (obj->type == Type::FILE) {
+		Object* v = obj->__getattr__(name);
+		if (v == nullptr) {
+			throw AttributeError("file has no attribute '" + name + "'");
+		}
+		if (v->type == Type::FUNCTION) {
+			// 绑定方法：新建 BoundMethod（Owned）。
+			return New<BoundMethod>(obj, static_cast<Function*>(v));
+		}
+		// 非方法属性：Borrowed 转 Owned。
+		Incref(v);
+		return v;
+	}
+	// 其他类型（模块/类）：__getattr__ 返回 Borrowed，转 Owned。
+	Object* v = obj->__getattr__(name);
+	if (v != nullptr) Incref(v);
+	return v;
+}
+
+void SetAttr(Object* obj, const std::string& name, Object* value){
+	if (obj == nullptr) {
+		if (value != nullptr) Decref(value);
+		throw AttributeError("cannot set attribute on null object.");
+	}
+	obj->__setattr__(name, value);
 }
 
 Object* Add(Object* lhs, Object* rhs){
@@ -198,6 +280,23 @@ PYCP_C_API int PYCP_IsFalse(void* v){
 }
 PYCP_C_API void* PYCP_Call(void* callable, void** argv, std::size_t argc){
 	return static_cast<void*>(Pycp::Call(static_cast<Pycp::Object*>(callable), reinterpret_cast<Pycp::Object**>(argv), argc));
+}
+PYCP_C_API void* PYCP_Class_New_void(const char* name){
+	return static_cast<void*>(Pycp::Class_New(std::string(name)));
+}
+PYCP_C_API void* PYCP_Instance_New_void(void* cls){
+	return static_cast<void*>(Pycp::Instance_New(static_cast<Pycp::ClassObject*>(cls)));
+}
+PYCP_C_API void PYCP_Class_AddMethod(void* cls, const char* name, void* fn){
+	Pycp::Class_AddMethod(static_cast<Pycp::ClassObject*>(cls), std::string(name),
+	                      static_cast<Pycp::Object*>(fn));
+}
+PYCP_C_API void* PYCP_GetAttr(void* obj, const char* name){
+	return static_cast<void*>(Pycp::GetAttr(static_cast<Pycp::Object*>(obj), std::string(name)));
+}
+PYCP_C_API void PYCP_SetAttr(void* obj, const char* name, void* value){
+	Pycp::SetAttr(static_cast<Pycp::Object*>(obj), std::string(name),
+	              static_cast<Pycp::Object*>(value));
 }
 PYCP_C_API void PYCP_Incref(void* obj){
 	Pycp::Incref(static_cast<Pycp::Object*>(obj));

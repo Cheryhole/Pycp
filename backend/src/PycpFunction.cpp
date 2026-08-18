@@ -1,7 +1,18 @@
 #include "PycpFunction.hpp"
 #include "PycpGC.hpp"
+#include "PycpConfig.hpp"
+#include "PycpABI.hpp"
+
+#include <sstream>
 
 namespace Pycp {
+
+// 将指针格式化为十六进制地址字符串（0x...）。
+static std::string ptr_address(const void* p) {
+	std::ostringstream oss;
+	oss << "0x" << std::hex << reinterpret_cast<uintptr_t>(p);
+	return oss.str();
+}
 
 Function* BuiltinFunction::print = nullptr;
 
@@ -25,6 +36,17 @@ Function::Function(const char* name)
 Function::Function(const char* name, PycpNativeFunction func)
 		: Object(Type::FUNCTION), kind(FunctionKind::Native), name(name), native(func){}
 
+Object* Function::__string__(){
+	// 匿名函数（name 为空或匿名占位名）输出 "@anonymous"。
+	if (name == nullptr || name[0] == '\0' ||
+	    std::string(name) == ANONYMOUS_FUNCTION) {
+		return String_FromString("@anonymous");
+	}
+	// 普通函数："<function \"name\" at 0xADDR>"。
+	return String_FromString(("<function \"" + std::string(name) +
+	                          "\" at " + ptr_address(this) + ">").c_str());
+}
+
 Object* Function::invoke(Object** argv, std::size_t argc){
 	if (this->native != nullptr){
 		return this->native(this, argv, argc);
@@ -38,7 +60,7 @@ Object* Function::__call__([[maybe_unused]] Object* args){
 }
 
 void Function::Initialize(){
-	BuiltinFunction::print = New<Function>("print", _builtin_print);
+	BuiltinFunction::print = New<Function>(BUILTIN_PRINT, _builtin_print);
 	GC_AddRoot(BuiltinFunction::print);
 }
 

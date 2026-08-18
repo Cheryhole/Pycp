@@ -11,21 +11,29 @@ Pycp 将源码 `.pycp` 编译为自定义字节码 `.cpycp`（类似 Python 的 
 | 语言定位 | Python-like，沿用 Python 部分语法 |
 | 前端 | Flex 词法分析 + Bison 语法分析，生成 AST |
 | 编译器 | AST → 栈式字节码（Codegen），支持常量池 / 符号表 / 代码对象 |
-| 运行时 | GC、对象模型（Integer / String / None / Function）、ABI 接口 |
-| 虚拟机 | 栈式字节码 VM，支持函数调用、闭包、控制流 |
+| 运行时 | GC、对象模型（Integer / String / None / Function / Class / Instance / Module / File）、ABI 接口 |
+| 虚拟机 | 栈式字节码 VM，支持函数调用、闭包、类定义、继承、装饰器、控制流 |
 | 字节码 | `.cpycp` 二进制格式（小端 + LEB128 编码），可序列化 / 反序列化 |
+| 标准库 | C++ 原生动态库（`io` / `Pycp` / `classtools`），`import` 时动态加载 |
 | AOT | 将字节码逐指令翻译为依赖 PycpABI 的独立 C++ 源文件（真正的指令翻译，非骨架占位） |
 
 ### 已支持的语言子集
 
 - 赋值、表达式语句
 - 整数 / 字符串 / `None` 字面量
-- 算术（`+ - * /`）、一元取负（`-`）
+- 算术（`+ - * /`）、幂运算（`**`）、一元取负（`-`）
 - 比较（`< <= > >= == !=`）
 - `if / elif / else` 条件语句
 - 函数定义（`func name(params){...}`）与匿名函数（`func(params){...}`）
 - 函数调用、`return`
 - 闭包（匿名函数捕获外层局部变量）
+- 类定义（`class Name{...}`）与实例化，含 `__initialize__` / `__string__` 等魔术方法
+- 单继承（`class Child inherits Parent{...}`）
+- 运算符重载（`__addition__` / `__subtraction__` / `__power__` 等魔术方法）
+- 装饰器语法糖（`@decorator`）：把被装饰对象传给装饰器函数，用返回值替换
+- 成员可见性（`@private` / `@public` 修饰类内成员，控制类外访问）
+- 模块顶层装饰器与文件级导出（`@private` 的顶层符号对其他文件 import 不可见）
+- 模块导入（`import foo` / `import foo as bar` / `from foo import a, b`）
 
 ## 安装步骤
 
@@ -175,9 +183,14 @@ ABI 调用序列（常量内联为 `g_c[]`，控制流翻译为 `goto`，函数�
 创建 `hello.pycp`：
 
 ```
+import io
+import Pycp
+
 a = 23 - 5 * 7
-print(a)
-print(2 ** 3)
+io.stdout.write(Pycp.String(a))
+io.stdout.write("\n")
+io.stdout.write(Pycp.String(2 ** 3))
+io.stdout.write("\n")
 ```
 
 运行：
@@ -187,6 +200,49 @@ print(2 ** 3)
 # 输出：
 # -12
 # 8
+```
+
+**6. 标准输入输出与可见性装饰器示例**
+
+`io.print` / `io.input`（对齐 Python3 单参数语义）：
+
+```
+import io
+
+io.print("hello")           # 输出 "hello" 并自动换行
+name = io.input("Enter: ")  # 打印提示（不换行）后读取一行
+io.print("Hello " + name)
+```
+
+装饰器与成员可见性（`public` / `private` 可从 `Pycp` 或 `classtools` 导入）：
+
+```
+import Pycp
+import io
+from Pycp import public, private
+
+@public
+func greet(name) {
+    return "Hello " + name
+}
+
+class Animal {
+    @private
+    _age = 0
+    @public
+    func __initialize__(self, age) {
+        self._age = age
+    }
+    @public
+    func age(self) {
+        return self._age
+    }
+}
+
+io.print(greet("Pycp"))
+a = Animal(3)
+io.print(a.age())   # 类外访问 public 方法正常
+# a._age 在类外访问会抛 AttributeError（private 成员）
 ```
 
 ### 文件扩展名
@@ -292,6 +348,32 @@ Pycp/
     │   ├── PycpBytecode.hpp    # 字节码格式 / 序列化
     │   └── PycpBytecodeVM.hpp  # 虚拟机
     └── src/                # 运行时源文件（11 个 .cpp）
+├── builtin_libraries/     # 标准库（C++ 原生动态库，import 时动态加载）
+│   ├── CMakeLists.txt     # 标准库统一构建入口（逐个 add_subdirectory）
+│   ├── io/                # io 标准库（io.so）：标准流对象与 print/input
+│   │   ├── CMakeLists.txt
+│   │   ├── include/
+│   │   │   ├── io.hpp             # 模块名与入口声明
+│   │   │   └── PycpFile.hpp       # FileObject（stdin/stdout/stderr）
+│   │   └── src/
+│   │       ├── io.cpp             # 模块装配（stdin/stdout/stderr、print/input）
+│   │       ├── PycpFile.cpp       # FileObject 实现（write/readline）
+│   │       └── FileFromStream.cpp # File_FromStream 工厂
+│   ├── Pycp/              # Pycp 标准库（Pycp.so）：类型转换与可见性装饰器
+│   │   ├── CMakeLists.txt
+│   │   ├── include/
+│   │   │   └── pycp_stdlib.hpp    # 模块名与入口声明
+│   │   └── src/
+│   │       └── PycpModule.cpp     # String/Integer/Object 与 public/private
+│   └── classtools/        # classtools 标准库（classtools.so）：类工具
+│       ├── CMakeLists.txt
+│       ├── include/
+│       │   └── classtools.hpp     # 模块名与入口声明
+│       └── src/
+│           └── classtools.cpp     # super 与 public/private
+├── examples/              # 示例代码
+├── tests/                 # 测试源码（.pycp）
+└── LICENSE
 ```
 
 ### 目录职责说明
@@ -301,9 +383,12 @@ Pycp/
 | `PycpMain.cpp` | 真正的 `main()` 入口，统一前端解析 + 后端编译/执行 |
 | `frontend/` | 前端：词法/语法分析、AST、代码生成、AOT |
 | `backend/` | 后端：运行时库（对象模型、GC、VM、字节码），**不依赖前端** |
+| `builtin_libraries/` | 标准库：C++ 原生动态库（`io` / `Pycp` / `classtools`），`import` 时由 VM 动态加载 |
 | 顶层 `CMakeLists.txt` | 全项目统一构建入口，产出 `pycp` 可执行文件 |
 | `frontend/CMakeLists.txt` | 独立构建 `parser_test`（打印 AST 的解析器测试） |
 | `backend/CMakeLists.txt` | 独立构建运行时库与 `test_pycp` 测试 |
+
+> 各标准库子库统一采用 `<name>/include`（头文件）+ `<name>/src`（源文件）+ `<name>/CMakeLists.txt` 的目录结构，编译为独立动态库（`io.so` / `Pycp.so` / `classtools.so`），输出到 `build/stdlib/`。
 
 ### 模块独立构建
 
@@ -371,4 +456,22 @@ cmake --build build -j
 
 ## 免责声明
 
-本项目仍处于开发阶段，`--emit-cpp`（AOT）已实现真正的字节码指令翻译（输出依赖 PycpABI 的 `.cpp` 源文件），但闭包捕获暂未支持；`example.pycp` 中包含的类型注解、`class`、`map`、`list`、`Pointer` 等高级语法可能尚未被当前解析器完全支持。
+本项目仍处于开发阶段，`--emit-cpp`（AOT）已实现真正的字节码指令翻译（输出依赖 PycpABI 的 `.cpp` 源文件），但闭包捕获暂未支持。
+
+已支持的面向对象特性（解释执行）：
+
+- **类定义**：`class Name{ ... }`，含成员变量声明、方法定义（`func name(self, ...){}`）。
+- **单继承**：`class Child inherits Parent{ ... }`，子类复制父类成员与方法（含可见性），支持 `super()` 调用父类方法。
+- **构造与字符串转换**：`__initialize__`（创建实例自动调用）、`__string__`（转字符串时自动调用）。
+- **默认字符串表示**：未定义 `__string__` 的对象输出 `<name at 0xADDR>`；普通函数输出 `<function "name" at 0xADDR>`；类输出 `<class "name">`；匿名函数 / 匿名类统一输出 `@anonymous`。
+- **运算符重载**（魔术方法）：`__addition__` / `__subtraction__` / `__multiplication__` / `__division__` / `__power__` / `__negation__`，及比较 `__less_than__` / `__less_equal__` / `__equal__` / `__not_equal__` / `__greater_than__` / `__greater_equal__`。
+- **装饰器语法糖**：`@decorator` 把被装饰对象（函数或任意对象）作为参数传给装饰器函数，用返回值替换原对象。
+- **成员可见性**：`@private` / `@public` 修饰类内成员，控制该成员在类外的访问可见性（方法内部经 `self` 访问不受限）。
+- **文件级导出**：模块顶层符号默认 public；`@private func foo(){}` 的顶层符号对其他文件 `import` 时不可见。
+- **内置库**（`builtin_libraries/` 目录，C++ 原生实现）：
+  - `io`：`io.stdin` / `io.stdout` / `io.stderr` 文件对象（`write` / `readline` 方法），以及 `io.print(value)`（输出内容后自动换行）与 `io.input(prompt)`（打印提示后读取一行）。
+  - `Pycp`：`Pycp.String(x)` / `Pycp.Integer(x)` 类型转换类、`Pycp.Object` 基类，以及 `Pycp.public` / `Pycp.private` 可见性装饰器函数。
+  - `classtools`：`classtools.super()`（返回父类）、`classtools.public` / `classtools.private`（可见性装饰器函数，与 Pycp 库功能一致）。
+- 本版起不注入任何内建函数（不导入库时命名空间仅含用户定义内容）。
+
+暂不支持：类型注解（`x: int`）、`map`/`list` 字面量、`Pointer`、多继承，以及 AOT 后端的类定义翻译。

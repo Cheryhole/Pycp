@@ -58,8 +58,13 @@ set(PYCP_HEADERS
     ${PYCP_INCLUDE_DIR}/PycpException.hpp
     ${PYCP_INCLUDE_DIR}/PycpFunction.hpp
     ${PYCP_INCLUDE_DIR}/PycpManager.hpp
+    ${PYCP_INCLUDE_DIR}/PycpModule.hpp
+    ${PYCP_INCLUDE_DIR}/PycpClass.hpp
     ${PYCP_INCLUDE_DIR}/PycpBytecode.hpp
     ${PYCP_INCLUDE_DIR}/PycpBytecodeVM.hpp
+    ${PYCP_INCLUDE_DIR}/PycpEnvironment.hpp
+    ${PYCP_INCLUDE_DIR}/PycpNativeExt.hpp
+    ${PYCP_INCLUDE_DIR}/PycpExt.h
 )
 
 set(PYCP_SOURCES
@@ -70,9 +75,12 @@ set(PYCP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpFunction.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpGC.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpModule.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpClass.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpABI.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpBytecode.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpBytecodeVM.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpNativeExt.cpp
 )
 
 # =====================================================================
@@ -98,6 +106,10 @@ if(BUILD_RUNTIME_STATIC)
         OUTPUT_NAME "PycpRuntime"
         ARCHIVE_OUTPUT_DIRECTORY ${OUTPUT_DIR}
     )
+    # 原生扩展加载依赖 dlopen/dlsym（POSIX）；Windows 无额外库。
+    if(UNIX AND NOT APPLE)
+        target_link_libraries(PycpRuntime_static PUBLIC ${CMAKE_DL_LIBS})
+    endif()
 
     if(MSVC)
         target_compile_options(PycpRuntime_obj_static PRIVATE /W4 /EHsc /utf-8)

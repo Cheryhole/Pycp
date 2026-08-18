@@ -15,6 +15,58 @@ namespace Pycp {
 // 版本号：单一事实来源，CMake / pybind11 / 运行时均读取此处
 constexpr const char* PYCP_VERSION = "1.0.0";
 
+// =============================================================
+// 文件扩展名（源文件 / 字节码 / 生成 C++ 产物）
+// =============================================================
+constexpr const char* EXT_PYCP  = ".pycp";   // Pycp 源文件
+constexpr const char* EXT_CPYCP = ".cpycp";  // 序列化字节码
+constexpr const char* EXT_CPP   = ".cpp";    // AOT 生成的 C++ 源码
+
+// =============================================================
+// AOT 输出命名约定
+// =============================================================
+// AOT 生成的 C++ 文件统一后缀（入口与依赖模块一致）
+constexpr const char* AOT_CPP_SUFFIX = ".gen.cpp";
+// 入口 .pycp 生成的 C++ 文件固定名（含 main 函数）
+constexpr const char* AOT_ENTRY_CPP_FILENAME = "__pycp_main.gen.cpp";
+
+// =============================================================
+// 字节码魔数与格式版本（单一事实来源，序列化/反序列化共享）
+// =============================================================
+constexpr char BYTECODE_MAGIC[] = "CYCP";        // 4 字节魔数
+constexpr uint16_t BYTECODE_VERSION_MAJOR = 3;
+constexpr uint16_t BYTECODE_VERSION_MINOR = 0;
+
+// =============================================================
+// AOT 生成符号前缀（跨模块链接约定）
+// =============================================================
+constexpr const char* AOT_MODULE_INIT_PREFIX = "pycp_module_"; // 模块初始化函数前缀
+constexpr const char* AOT_FN_PREFIX          = "pycp_fn_";      // 代码对象翻译函数前缀
+constexpr const char* AOT_ENTRY_FN_NAME      = "pycp_main";     // 入口函数名
+
+// =============================================================
+// 特殊模块名
+// =============================================================
+constexpr const char* MODULE_TOP_NAME   = "<module>"; // 顶层代码对象名
+constexpr const char* MODULE_ENTRY_NAME = "<entry>";  // 入口占位模块名
+
+// =============================================================
+// 内建函数名
+// =============================================================
+constexpr const char* BUILTIN_PRINT = "print";
+
+// =============================================================
+// 魔术方法名
+// =============================================================
+constexpr const char* MAGIC_INITIALIZE = "__initialize__"; // 实例构造时调用
+constexpr const char* MAGIC_STRING     = "__string__";     // 字符串转换
+
+// =============================================================
+// 匿名对象内部名（匿名函数 / 匿名类）
+// =============================================================
+constexpr const char* ANONYMOUS_FUNCTION = "@anonymous"; // 匿名函数内部名
+constexpr const char* ANONYMOUS_CLASS    = "@anonymous"; // 匿名类内部名
+
 // GC 策略开关
 //   PYCP_GC_RC       : 引用计数（默认开启，refcount==0 立即释放）
 //   PYCP_GC_CYCLE    : 标记-清除兜底（处理循环引用，由 GC_Collect 触发）

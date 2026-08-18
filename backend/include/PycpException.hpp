@@ -84,6 +84,33 @@ class VMError : public Exception {
 				: Exception(file_, lineno_, "VMError: " + msg) {}
 };
 
+// 导入错误：import 目标模块不存在或加载失败
+class ImportError : public Exception {
+	public:
+		explicit ImportError(const std::string& msg)
+				: Exception("ImportError: " + msg) {}
+		ImportError(const std::string& file_, int lineno_, const std::string& msg)
+				: Exception(file_, lineno_, "ImportError: " + msg) {}
+};
+
+// 属性错误：对象不存在指定属性 / 方法
+class AttributeError : public Exception {
+	public:
+		explicit AttributeError(const std::string& msg)
+				: Exception("AttributeError: " + msg) {}
+		AttributeError(const std::string& file_, int lineno_, const std::string& msg)
+				: Exception(file_, lineno_, "AttributeError: " + msg) {}
+};
+
+// 原生扩展错误：动态库加载 / 符号解析 / 原生扩展初始化失败
+class NativeExtensionError : public Exception {
+	public:
+		explicit NativeExtensionError(const std::string& msg)
+				: Exception("NativeExtensionError: " + msg) {}
+		NativeExtensionError(const std::string& file_, int lineno_, const std::string& msg)
+				: Exception(file_, lineno_, "NativeExtensionError: " + msg) {}
+};
+
 } // namespace Pycp
 
 #endif // PYCP_EXCEPTION_HPP

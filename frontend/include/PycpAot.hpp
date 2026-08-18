@@ -20,19 +20,27 @@
 
 #include "PycpBytecode.hpp"
 
+#include <map>
 #include <string>
 
 namespace Pycp::AOT {
 
-// 将字节码 Module 翻译为独立 C++ 源文件内容，写入 out_cpp 字符串。
-//   返回生成的源文件名（如 "<module_name>.gen.cpp"）。
+// 将字节码 Module 翻译为独立 C++ 源文件内容（含 main，单模块模式）。
+//   返回生成的 C++ 源码字符串。
 // 参数：
 //   module     : 已编译的字节码 IR（常量池 + 符号表 + 代码对象）
-//   entry_name : 生成文件中 main() 的符号名（默认 "pycp_main"）
-//
-// 说明：本函数为骨架占位，当前抛出逻辑说明，待后续实现。
+//   entry_name : 生成文件中入口函数的符号名（默认 "pycp_main"）
 std::string EmitCpp(const Pycp::BC::Module& module,
                     const std::string& entry_name = "pycp_main");
+
+// 多文件输出：为「模块名 -> Module」集合生成各自独立的 C++ 源码。
+//   entry_name : 入口模块名（对应 modules 中的 key），其生成的源码含 main()，
+//                负责按需调用被导入模块。
+//   被导入模块生成的源码仅含初始化函数（无 main），供入口链接调用。
+//   返回 map<模块名, 源码>；每个值的文件名由调用方决定（如 <name>.gen.cpp）。
+std::map<std::string, std::string> EmitCppAll(
+    const std::map<std::string, Pycp::BC::Module>& modules,
+    const std::string& entry_name);
 
 // 将生成结果写入磁盘文件（path 为 .cpp 输出路径）。
 //   返回 true 表示写入成功。

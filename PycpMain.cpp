@@ -24,6 +24,7 @@
 // =============================================================
 
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -32,11 +33,15 @@
 #include "PycpAstNode.hpp"
 #include "PycpCodegen.hpp"
 #include "PycpAot.hpp"
+#include "PycpModuleLoader.hpp"
 
 #include "Pycp.hpp"          // 运行时（Object/GC/ABI/Manager）
 #include "PycpBytecode.hpp"  // 字节码格式 / 序列化
 #include "PycpBytecodeVM.hpp"// VM 执行
 #include "PycpException.hpp"
+#include "PycpConfig.hpp"    // 集中管理的常量（扩展名/输出命名/版本等）
+
+#include <map>
 
 // 由 Flex/Bison 生成的解析器提供
 extern Pycp::Ast::Node* parsef(const std::string& path);
@@ -65,18 +70,25 @@ void print_help(const char* prog) {
 		<< "  " << prog << " [options] <input_file>\n\n"
 		<< "Options:\n"
 		<< "  -h, --help        Show this help message\n"
+		<< "  -i, --interpret   Interpret & execute (default); accepts .pycp or .cpycp\n"
 		<< "  -c, --compile     Compile <input_file> (.pycp) to bytecode (.cpycp)\n"
 		<< "  -b, --bytecode    Generate .cpycp bytecode file (alias of -c)\n"
-		<< "  -i, --interpret   Interpret & execute (default); accepts .pycp or .cpycp\n"
-		<< "  -o, --output <f>  Output file path (used with -c/-b/--emit-cpp)\n"
-		<< "      --emit-cpp    Translate .pycp to a standalone C++ source file\n"
+		<< "      --emit-cpp    Translate .pycp to C++ source file(s)\n"
+		<< "  -o, --output <f>  Output path (used with -c/-b/--emit-cpp)\n"
 		<< "  -d, --dump        Dump bytecode (constant pool, symbols, code objects,\n"
 		<< "                    instructions & line numbers) of .pycp or .cpycp\n\n"
+		<< "Import & modules:\n"
+		<< "  * import foo / import foo as bar  loads foo.pycp from the entry\n"
+		<< "    file's directory and binds a module object in the current scope.\n"
+		<< "  * --emit-cpp generates one .gen.cpp per imported file into a\n"
+		<< "    subdirectory named after the entry file: the entry .pycp becomes\n"
+		<< "    <name>/__pycp_main.gen.cpp (contains main()), each imported module\n"
+		<< "    foo.pycp becomes <name>/foo.gen.cpp.\n\n"
 		<< "Examples:\n"
 		<< "  " << prog << " hello.pycp              # compile & run\n"
 		<< "  " << prog << " hello.cpycp             # run compiled bytecode directly\n"
 		<< "  " << prog << " -c hello.pycp -o hello.cpycp\n"
-		<< "  " << prog << " --emit-cpp hello.pycp -o hello.gen.cpp\n";
+		<< "  " << prog << " --emit-cpp hello.pycp   # -> hello/__pycp_main.gen.cpp (+ deps)\n";
 }
 
 bool has_suffix(const std::string& s, const std::string& suffix) {
@@ -151,27 +163,34 @@ void write_file_bytes(const std::string& path, const std::vector<uint8_t>& data)
 // 主流程
 // =============================================================
 
-// 从源文件编译得到字节码 Module（解析 + Codegen）
+// 从源文件编译得到字节码 Module（解析 + Codegen）。
+// 复用 ModuleLoader::compile_file 的单文件编译逻辑。
 Pycp::BC::Module compile_source(const std::string& path) {
-	Pycp::Ast::Node* ast = parsef(path);
-	// 词法/语法错误已由 lexer/parser 以两行格式直接输出到 stderr，
-	// 此处以空描述异常作为"静默失败"信号，避免重复打印冗余信息。
-	if (ast == nullptr || Pycp_parse_error_count > 0) {
-		throw Pycp::Exception("");
-	}
-	if (ast->get_type() != Pycp::Ast::NodeType::PROGRAM) {
-		throw Pycp::Exception("Expected a program AST.");
-	}
-	auto* program = static_cast<Pycp::Ast::Program*>(ast);
-	Pycp::BC::Module module = Pycp::Codegen::Compile(program);
-	module.source_path = path;
-	delete ast;
-	return module;
+	return Pycp::ModuleLoader::compile_file(path);
 }
 
-// 执行一个 Module（构造 VM 并 run）
-int execute_module(Pycp::BC::Module& module) {
-	Pycp::BC::VM vm(&module);
+// 计算文件 basename（去扩展名），用于从入口路径得到入口模块名。
+std::string entry_module_name(const std::string& path) {
+	std::size_t slash = path.find_last_of("/\\");
+	std::string base = (slash == std::string::npos) ? path : path.substr(slash + 1);
+	std::size_t dot = base.find_last_of('.');
+	if (dot != std::string::npos) base = base.substr(0, dot);
+	return base;
+}
+
+// 执行入口模块及其 import 依赖（构造带模块注册表的 VM 并 run）。
+//   modules : ModuleLoader::load_all 产出的「模块名 -> Module」映射，
+//             entry_name 为入口模块名（其 basename）。
+int execute_program(std::map<std::string, Pycp::BC::Module>& modules,
+                    const std::string& entry_name) {
+	// 构建模块注册表（模块名 -> Module*），供 VM 的 LOAD_MODULE 使用。
+	std::map<std::string, Pycp::BC::Module*> registry;
+	for (auto& kv : modules) {
+		registry[kv.first] = &kv.second;
+	}
+
+	Pycp::BC::Module* entry = &modules[entry_name];
+	Pycp::BC::VM vm(entry, &registry, entry_name);
 	Pycp::Object* result = vm.run();
 	if (result != nullptr) {
 		Pycp::Decref(result);
@@ -207,6 +226,11 @@ const char* op_name(Pycp::BC::Op op) {
 		case Pycp::BC::Op::CALL:          return "CALL";
 		case Pycp::BC::Op::RETURN:        return "RETURN";
 		case Pycp::BC::Op::RETURN_NONE:   return "RETURN_NONE";
+		case Pycp::BC::Op::LOAD_MODULE:   return "LOAD_MODULE";
+		case Pycp::BC::Op::GET_ATTR:      return "GET_ATTR";
+		case Pycp::BC::Op::MAKE_CLASS:    return "MAKE_CLASS";
+		case Pycp::BC::Op::LOAD_ATTR:     return "LOAD_ATTR";
+		case Pycp::BC::Op::STORE_ATTR:    return "STORE_ATTR";
 		default:                          return "UNKNOWN";
 	}
 }
@@ -263,6 +287,20 @@ void dump_instruction(std::ostream& os, const Pycp::BC::Instruction& ins,
 		if (ins.operand >= 0 &&
 		    static_cast<size_t>(ins.operand) < module.code_objects.size()) {
 			os << " " << ins.operand << "  # " << module.code_objects[ins.operand].name;
+		} else {
+			os << " " << ins.operand;
+		}
+	} else if (ins.op == Pycp::BC::Op::LOAD_MODULE) {
+		if (ins.operand >= 0 &&
+		    static_cast<size_t>(ins.operand) < module.imports.size()) {
+			os << " " << ins.operand << "  # import " << module.imports[ins.operand];
+		} else {
+			os << " " << ins.operand;
+		}
+	} else if (ins.op == Pycp::BC::Op::GET_ATTR) {
+		if (ins.operand >= 0 &&
+		    static_cast<size_t>(ins.operand) < module.symtab.size()) {
+			os << " " << ins.operand << "  # ." << module.symtab[ins.operand];
 		} else {
 			os << " " << ins.operand;
 		}
@@ -354,7 +392,7 @@ int main(int argc, char** argv) {
 		if (opt.dump) {
 			// 字节码查看：.pycp（解析+编译）或 .cpycp（反序列化）后输出详情
 			Pycp::BC::Module module;
-			if (has_suffix(opt.input_file, ".cpycp")) {
+			if (has_suffix(opt.input_file, Pycp::EXT_CPYCP)) {
 				std::vector<uint8_t> bytes = read_file_bytes(opt.input_file);
 				module = Pycp::BC::Deserialize(bytes.data(), bytes.size());
 			} else {
@@ -363,37 +401,71 @@ int main(int argc, char** argv) {
 			dump_module(module);
 		}
 		else if (opt.emit_cpp) {
-			// AOT：解析 -> 编译 -> 生成 C++ 源文件
-			Pycp::BC::Module module = compile_source(opt.input_file);
-			std::string out = opt.output_file.empty()
-				? default_output(opt.input_file, ".gen.cpp")
+			// AOT：收集入口与全部 import 依赖，逐文件生成 C++ 源码。
+			//   入口模块 -> <name>/__pycp_main.gen.cpp（含 main）；
+			//   被导入模块 foo -> <name>/foo.gen.cpp。
+			std::map<std::string, Pycp::BC::Module> modules =
+				Pycp::ModuleLoader::load_all(opt.input_file);
+			std::string entry_name = entry_module_name(opt.input_file);
+			auto sources = Pycp::AOT::EmitCppAll(modules, entry_name);
+
+			// 输出目录：以入口文件名（去扩展名）命名的子目录，位于当前工作目录。
+			//   如 ../tests/import_test.pycp -> ./import_test/。
+			std::string out_dir = entry_name;
+
+			// 入口输出路径：<out_dir>/__pycp_main.gen.cpp（-o 可覆盖为指定路径）。
+			std::string entry_out = opt.output_file.empty()
+				? out_dir + "/" + Pycp::AOT_ENTRY_CPP_FILENAME
 				: opt.output_file;
-			if (!Pycp::AOT::EmitCppToFile(module, out)) {
-				throw Pycp::Exception("Failed to write AOT output: " + out);
+
+			// 确保输出目录存在（std::ofstream 不会自动创建目录）。
+			std::error_code ec;
+			std::filesystem::create_directories(out_dir, ec);
+			if (ec) throw Pycp::Exception("Failed to create output directory: " + out_dir);
+
+			// 写入口 .cpp
+			{
+				std::ofstream f(entry_out, std::ios::binary);
+				if (!f) throw Pycp::Exception("Failed to write AOT output: " + entry_out);
+				f << sources[entry_name];
 			}
-			std::cout << "Generated C++ source: " << out << std::endl;
+			std::cout << "Generated C++ source: " << entry_out << std::endl;
+
+			// 写各依赖模块 .cpp（原始模块名 + .gen.cpp，写到同一输出目录）
+			for (const auto& kv : sources) {
+				if (kv.first == entry_name) continue; // 跳过入口
+				std::string dep_out = out_dir + "/" + kv.first + Pycp::AOT_CPP_SUFFIX;
+				std::ofstream f(dep_out, std::ios::binary);
+				if (!f) throw Pycp::Exception("Failed to write AOT output: " + dep_out);
+				f << kv.second;
+				std::cout << "Generated C++ source: " << dep_out << std::endl;
+			}
 		}
 		else if (opt.compile) {
 			// 编译模式：.pycp -> .cpycp
 			Pycp::BC::Module module = compile_source(opt.input_file);
 			std::vector<uint8_t> bytes = Pycp::BC::Serialize(module);
 			std::string out = opt.output_file.empty()
-				? default_output(opt.input_file, ".cpycp")
+				? default_output(opt.input_file, Pycp::EXT_CPYCP)
 				: opt.output_file;
 			write_file_bytes(out, bytes);
 			std::cout << "Compiled bytecode: " << out
 			          << " (" << bytes.size() << " bytes)" << std::endl;
 		}
 		else {
-			// 解释执行：.pycp（解析+编译+执行）或 .cpycp（反序列化+执行）
-			Pycp::BC::Module module;
-			if (has_suffix(opt.input_file, ".cpycp")) {
+			// 解释执行：.pycp（递归收集 import 依赖后执行）或
+			//          .cpycp（单文件反序列化执行；import 依赖需随源一起编译）。
+			if (has_suffix(opt.input_file, Pycp::EXT_CPYCP)) {
 				std::vector<uint8_t> bytes = read_file_bytes(opt.input_file);
-				module = Pycp::BC::Deserialize(bytes.data(), bytes.size());
+				Pycp::BC::Module module = Pycp::BC::Deserialize(bytes.data(), bytes.size());
+				Pycp::BC::VM vm(&module); // 无注册表：.cpycp 内 import 会在运行时报 ImportError
+				Pycp::Object* result = vm.run();
+				if (result != nullptr) Pycp::Decref(result);
 			} else {
-				module = compile_source(opt.input_file);
+				std::map<std::string, Pycp::BC::Module> modules =
+					Pycp::ModuleLoader::load_all(opt.input_file);
+				execute_program(modules, entry_module_name(opt.input_file));
 			}
-			execute_module(module);
 		}
 
 		Pycp::Finalize();

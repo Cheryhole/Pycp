@@ -3,6 +3,7 @@
 #include <string>
 #include "PycpAstNode.hpp"
 #include "PycpParser.hpp"
+#include "escape_handler.hpp"
 
 using namespace Pycp::Ast;
 
@@ -28,12 +29,17 @@ int _comment_return_state = 0; // 记录进入块注释前的状态（0=INITIAL�
 
 %%
 
-func { return KW_FUNC; }
-return { return KW_RETURN; }
-if    { return KW_IF; }
-elif  { return KW_ELIF; }
-else  { return KW_ELSE; }
-None  { return KW_NONE; }
+func     { return KW_FUNC; }
+return   { return KW_RETURN; }
+if       { return KW_IF; }
+elif     { return KW_ELIF; }
+else     { return KW_ELSE; }
+None     { return KW_NONE; }
+import   { return KW_IMPORT; }
+from     { return KW_FROM; }
+as       { return KW_AS; }
+class    { return KW_CLASS; }
+inherits { return KW_INHERITS; }
 
 [a-zA-Z_][a-zA-Z0-9_]* { // identifier
 	Pycplval.text = new std::string(Pycptext);
@@ -87,6 +93,8 @@ None  { return KW_NONE; }
 "<="   { return OP_LE; }
 ">="   { return OP_GE; }
 ","    { return OP_COMMA; }
+"."    { return OP_DOT; }
+"@"    { return OP_AT; }
 
 \"   { 
 	_string_buffer.clear();
@@ -98,8 +106,21 @@ None  { return KW_NONE; }
 	return LT_STRING;
 }
 
+<STRING>\\u[0-9a-fA-F]{4} {
+	// Unicode 转义 \uXXXX：剥离前导 '\' 后交给 escape_handler 解码（得到 "uXXXX"）。
+	_string_buffer += Pycp::Lexer::decode_escape(std::string(Pycptext + 1));
+}
+
+<STRING>\\x[0-9a-fA-F]{2} {
+	// 十六进制字节转义 \xHH：剥离前导 '\' 后交给 escape_handler 解码（得到 "xHH"）。
+	_string_buffer += Pycp::Lexer::decode_escape(std::string(Pycptext + 1));
+}
+
 <STRING>\\. {
-	_string_buffer += Pycptext;
+	// 常见转义（\n \t \r \0 \\ \" 等）。Pycptext 形如 "\n"（含前导反斜杠）。
+	// 剥离前导 '\' 后交给 escape_handler 解码，追加解码结果到缓冲区。
+	std::string seq(Pycptext + 1);
+	_string_buffer += Pycp::Lexer::decode_escape(seq);
 }
 
 <STRING>[^\\\"\n]+ {

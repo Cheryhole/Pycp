@@ -1,57 +1,46 @@
-from builtins import *
+# =============================================================
+# Pycp 示例：类定义 + io / Pycp 内置库
+# =============================================================
 
-a = 23 - 5 * 7
-print(a, file = stdout)
-print(2 ** 3)
+import io
+import Pycp
 
-func get_input(tip: string = "") -> string{
-	print(tip)
-	return input()
-}
+# ---- 类定义 ----
+# 成员变量声明（仅声明，初始化在 __initialize__ 中完成）。
+# __initialize__ 为构造函数，创建实例时自动调用。
+# __string__ 为字符串转换方法（Pycp.String / io.stdout.write 转换时自动调用）。
+class Point{
+	x
+	y
 
-fx = func(x){
-	if x % 2 == 0{
-		return x + 1
-	}
-	elif (x % 3) == 0{
-		return x - 1
-	}
-	else{
-		return 2 * x
-	}
-	
-}
-b = fx(3)
-
-class Data(Object){
-	func __initialize__(self, x: int, y: int){
+	func __initialize__(self, x, y){
 		self.x = x
-		self.y = y	  
+		self.y = y
 	}
 
-	func __string__(self) -> string{
-		return "x = " + str(self.x) + ", y = " + str(self.y)
+	func __string__(self){
+		return "Point(" + Pycp.String(self.x) + ", " + Pycp.String(self.y) + ")"
+	}
+
+	# 运算符重载：__addition__ 实现 + 操作
+	func __addition__(self, other){
+		return Point(self.x + other.x, self.y + other.y)
 	}
 }
 
-d = Data(1, 2)
-print(d)
+# ---- 创建实例 ----
+p = Point(1, 2)
+io.stdout.write(Pycp.String(p))
+io.stdout.write("\n")
 
-func modify(p: Pointer) -> void{
-	p.value = "Changed"
-}
+# ---- 运算符重载：+ 转发到 __addition__ ----
+q = Point(3, 4)
+r = p + q
+io.stdout.write(Pycp.String(r))
+io.stdout.write("\n")
 
-v = "Hello, World!"
-c = Pointer.new(v)
-modify(c)
-print(v)
-c.free()
-
-m: map = {
-	"key": "value",
-}
-
-v1 = m["key"] 
-
-l: list = [1,2,3]
-print(l[1])
+# ---- stdin 读取 ----
+io.stdout.write("请输入内容：")
+line = io.stdin.readline()
+io.stdout.write("你输入了：" + line)
+io.stdout.write("\n")

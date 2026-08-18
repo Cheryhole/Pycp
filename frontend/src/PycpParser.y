@@ -47,6 +47,7 @@ extern void Pycp_delete_buffer(YY_BUFFER_STATE);
 // PycpParser.hpp 的翻译单元中均可见。
 %code requires {
 	#include <vector>
+	#include "PycpConfig.hpp"
 	#include "PycpAstNode.hpp"
 	// if 语句的可选后缀：承载 elif 分支列表与可选的 else 代码块。
 	// 仅含裸指针，平凡可拷贝，可直接作为 Bison %union 成员。
@@ -58,13 +59,15 @@ extern void Pycp_delete_buffer(YY_BUFFER_STATE);
 
 %token NEWLINE
 %token <text> LT_INTEGER LT_STRING IDENTIFIER
-%token KW_FUNC KW_RETURN KW_IF KW_ELIF KW_ELSE KW_NONE
+%token KW_FUNC KW_RETURN KW_IF KW_ELIF KW_ELSE KW_NONE KW_IMPORT KW_AS KW_CLASS
+%token KW_FROM KW_INHERITS
 %token OP_PLUS OP_MINUS OP_MULTIPLY OP_DIVIDE OP_POWER
 %token OP_LPARENTHESES OP_RPARENTHESES
 %token OP_LBRACKET OP_RBRACKET
 %token OP_LBRACE OP_RBRACE
 %token OP_EQUALS OP_COMMA
 %token OP_LT OP_GT OP_LE OP_GE OP_EQ OP_NE
+%token OP_DOT OP_AT
 
 %left OP_PLUS OP_MINUS
 %left OP_MULTIPLY OP_DIVIDE
@@ -78,13 +81,26 @@ extern void Pycp_delete_buffer(YY_BUFFER_STATE);
 %type <node> statement
 %type <node> return_statement
 %type <node> assignment_statement
-%type <node> assignment_object
+%type <node> import_statement
+%type <node> from_import_statement
+%type <string_ptrs> from_import_names
 
 %type <node> function_def_statement
 %type <node> function_expr
 %type <string_ptrs> parameter_list
 %type <statements> code_block
 %type <expressions> arguments
+
+%type <node> class_def_statement
+%type <node> class_expr
+%type <text> opt_inherits
+%type <statements> class_body
+%type <statements> class_members
+%type <node> class_member
+%type <node> member_variable
+%type <node> method_definition
+%type <node> class_member_with_modifier
+%type <node> decorator_expr
 
 %type <node> if_statement
 %type <if_branches> elif_clauses
@@ -171,10 +187,19 @@ newlines: NEWLINE
 statement: assignment_statement {
 			$$ = $1;
 		}
+		| import_statement {
+			$$ = $1;
+		}
+		| from_import_statement {
+			$$ = $1;
+		}
 		| return_statement {
 			$$ = $1;
 		}
 		| function_def_statement {
+			$$ = $1;
+		}
+		| class_def_statement {
 			$$ = $1;
 		}
 		| if_statement {
@@ -245,6 +270,8 @@ arguments: %empty {
 // 函数定义语句：func name(params) { body }
 // 语法糖 —— 等价于将匿名函数表达式赋值给 name，
 // 与 .old PLY 版本的实现一致。
+// 可选装饰器前缀：@decorator func name(...){...}，装饰器表达式存入
+// FunctionExpression::decorator，运行时由 codegen 发射装饰器调用替换。
 function_def_statement: KW_FUNC IDENTIFIER OP_LPARENTHESES parameter_list OP_RPARENTHESES code_block {
 			FunctionExpression* func = new FunctionExpression(
 				*$4,                                  // params
@@ -261,6 +288,23 @@ function_def_statement: KW_FUNC IDENTIFIER OP_LPARENTHESES parameter_list OP_RPA
 				Pycplineno
 			);
 		}
+	| OP_AT decorator_expr opt_newlines KW_FUNC IDENTIFIER OP_LPARENTHESES parameter_list OP_RPARENTHESES code_block {
+			FunctionExpression* func = new FunctionExpression(
+				*$7,                                  // params
+				new Program($9),                     // body
+				*($5),                               // name
+				Pycplineno,
+				static_cast<Expression*>($2)          // decorator
+			);
+			delete $7; // 参数已移动进 FunctionExpression
+			delete $5;
+
+			$$ = new AssignmentStatement(
+				new IdentifierExpression(new std::string(func->name)),
+				static_cast<Expression*>(func),
+				Pycplineno
+			);
+		}
 ;
 
 // 匿名函数表达式：func(params) { body }
@@ -268,10 +312,185 @@ function_expr: KW_FUNC OP_LPARENTHESES parameter_list OP_RPARENTHESES code_block
 			$$ = new FunctionExpression(
 				*$3,                       // params
 				new Program($5),           // body
-				"@anonymous",              // name
+				Pycp::ANONYMOUS_FUNCTION,  // name（config 常量）
 				Pycplineno
 			);
 			delete $3; // 参数已移动进 FunctionExpression
+		}
+;
+
+// ============================================================
+// 类定义：class name [inherits parent] { 成员变量... 方法... }
+//
+// 语法：
+//   class name [inherits parent]{
+//       variables...
+//       functions...
+//       func __initialize__(self, ...){...}
+//       func __string__(self){...}
+//       magic_methods...
+//   }
+//
+// 成员变量声明：`name = expr` 或 `name`（仅声明）。
+// 方法定义：`func name(params){ body }`（复用 function 语法）。
+// 成员可用 @private / @public 修饰（一次修饰一个成员）。
+// ============================================================
+class_def_statement: KW_CLASS IDENTIFIER opt_inherits OP_LBRACE class_body OP_RBRACE {
+			// 分离成员变量与方法。
+			std::vector<Statement*>* members = static_cast<std::vector<Statement*>*>($5);
+			std::vector<Statement*>* vars = new std::vector<Statement*>();
+			std::vector<Statement*>* methods = new std::vector<Statement*>();
+			for (Statement* m : *members) {
+				if (m->get_type() == NodeType::MEMBER_VARIABLE) {
+					vars->push_back(m);
+				} else if (m->get_type() == NodeType::METHOD_DEFINITION) {
+					methods->push_back(m);
+				} else {
+					delete m;
+				}
+			}
+			delete members;
+			$$ = new ClassDefinition($2, $3, vars, methods, Pycplineno);
+		}
+;
+
+// 匿名类表达式：class [inherits parent]{...}，无名字，内部名由 Codegen 填
+// 入 config 常量 ANONYMOUS_CLASS。用于 `X = class inherits Pycp.Object{...}`。
+class_expr: KW_CLASS opt_inherits OP_LBRACE class_body OP_RBRACE {
+			std::vector<Statement*>* members = static_cast<std::vector<Statement*>*>($4);
+			std::vector<Statement*>* vars = new std::vector<Statement*>();
+			std::vector<Statement*>* methods = new std::vector<Statement*>();
+			for (Statement* m : *members) {
+				if (m->get_type() == NodeType::MEMBER_VARIABLE) {
+					vars->push_back(m);
+				} else if (m->get_type() == NodeType::METHOD_DEFINITION) {
+					methods->push_back(m);
+				} else {
+					delete m;
+				}
+			}
+			delete members;
+			// 匿名类：name 为 nullptr，Codegen 使用 ANONYMOUS_CLASS 内部名。
+			$$ = new ClassExpression($2, vars, methods, Pycplineno);
+		}
+;
+
+// 可选继承子句：inherits parent，无则 nullptr。
+// parent 可为单个标识符（inherits A）或属性访问路径（inherits Pycp.Object）。
+opt_inherits: %empty {
+			$$ = nullptr;
+		}
+		| KW_INHERITS IDENTIFIER {
+			$$ = $2;
+		}
+		| KW_INHERITS IDENTIFIER OP_DOT IDENTIFIER {
+			// 属性访问路径：拼接为 "A.B"。
+			std::string* path = new std::string(*$2 + "." + *$4);
+			delete $2;
+			delete $4;
+			$$ = path;
+		}
+;
+
+// 类体：成员列表（成员变量或方法），可为空。
+// 允许前导/尾部换行（与 code_block 一致）。
+class_body: %empty {
+			$$ = new std::vector<Statement*>();
+		}
+		| newlines {
+			$$ = new std::vector<Statement*>();
+		}
+		| class_members {
+			$$ = $1;
+		}
+		| class_members newlines {
+			$$ = $1;
+		}
+		| newlines class_members {
+			$$ = $2;
+		}
+		| newlines class_members newlines {
+			$$ = $2;
+		}
+;
+
+class_members: class_member {
+			$$ = new std::vector<Statement*>();
+			$$->push_back(static_cast<Statement*>($1));
+		}
+		| class_members newlines class_member {
+			$1->push_back(static_cast<Statement*>($3));
+			$$ = $1;
+		}
+;
+
+class_member: member_variable {
+			$$ = $1;
+		}
+		| method_definition {
+			$$ = $1;
+		}
+		| class_member_with_modifier {
+			$$ = $1;
+		}
+;
+
+// 带装饰器的成员：@expr 后跟一个成员变量或方法。expr 为装饰器表达式，
+// 可为单个标识符（@private）或点分名称路径（@classtools.private），
+// 运行时求值得到装饰器函数（如 classtools 导出的 private/public），
+// 由 MAKE_CLASS 调用该函数设置被装饰对象的可见性。
+// 装饰器与成员之间允许换行（与 class_object 示例一致）。
+class_member_with_modifier: OP_AT decorator_expr opt_newlines member_variable {
+		MemberVariable* mv = static_cast<MemberVariable*>($4);
+		mv->decorator = static_cast<Expression*>($2);
+		$$ = $4;
+	}
+	| OP_AT decorator_expr opt_newlines method_definition {
+		MethodDefinition* md = static_cast<MethodDefinition*>($4);
+		md->decorator = static_cast<Expression*>($2);
+		$$ = $4;
+	}
+;
+
+// 装饰器表达式：单个标识符（@private）或点分名称路径（@classtools.private）。
+// 前者解析为 IdentifierExpression，后者解析为链式 AttributeExpression，
+// 复用现有属性访问表达式语义（运行时 LOAD_VAR + LOAD_ATTR 求值）。
+decorator_expr: IDENTIFIER {
+		$$ = new IdentifierExpression($1, Pycplineno);
+	}
+	| decorator_expr OP_DOT IDENTIFIER {
+		$$ = new AttributeExpression(
+			static_cast<Expression*>($1), $3, Pycplineno);
+	}
+;
+
+// 可选换行（0 或多个 NEWLINE）。
+opt_newlines: %empty
+		| newlines
+;
+
+// 成员变量声明：可选初始值（var1 = Pycp.None()）。
+// 无初始值则 value 为 nullptr，初始化由 __initialize__ 负责；
+// 有初始值则实例化时自动求值并赋值给实例字段。
+member_variable: IDENTIFIER {
+			$$ = new MemberVariable($1, nullptr, Pycplineno);
+		}
+		| IDENTIFIER OP_EQUALS expression {
+			$$ = new MemberVariable($1, static_cast<Expression*>($3), Pycplineno);
+		}
+;
+
+// 方法定义：func name(params){ body }
+method_definition: KW_FUNC IDENTIFIER OP_LPARENTHESES parameter_list OP_RPARENTHESES code_block {
+			FunctionExpression* func = new FunctionExpression(
+				*$4,                                  // params
+				new Program($6),                     // body
+				*($2),                               // name
+				Pycplineno
+			);
+			delete $4;
+			delete $2;
+			$$ = new MethodDefinition(func, Pycplineno);
 		}
 ;
 
@@ -337,6 +556,34 @@ elif_clauses: KW_ELIF expression code_block {
 		}
 ;
 
+// import 语句：import foo 或 import foo as bar
+// 模块名暂为单标识符（不含点，对应"仅入口目录查找"的第一阶段实现）。
+import_statement: KW_IMPORT IDENTIFIER {
+			$$ = new ImportStatement($2, nullptr, Pycplineno);
+		}
+		| KW_IMPORT IDENTIFIER KW_AS IDENTIFIER {
+			$$ = new ImportStatement($2, $4, Pycplineno);
+		}
+;
+
+// from ... import ... 语句：from module import name1, name2, ...
+// 名称均为普通标识符（含 super/private/public，它们不再是关键字）。
+from_import_statement: KW_FROM IDENTIFIER KW_IMPORT from_import_names {
+		$$ = new FromImportStatement($2, $4, Pycplineno);
+	}
+;
+
+// 导入名称列表：逗号分隔的标识符。
+from_import_names: IDENTIFIER {
+		$$ = new std::vector<std::string*>();
+		$$->push_back($1);
+	}
+	| from_import_names OP_COMMA IDENTIFIER {
+		$1->push_back($3);
+		$$ = $1;
+	}
+;
+
 return_statement: KW_RETURN expression {
 		$$ = new ReturnStatement(
 			static_cast<Expression*>($2),
@@ -344,18 +591,15 @@ return_statement: KW_RETURN expression {
 		);
 };
 
-assignment_statement: assignment_object OP_EQUALS expression {
+assignment_statement: primary_expression OP_EQUALS expression {
+		// 赋值目标复用 primary_expression（标识符或属性访问）。
+		// 非法的目标（字面量、调用、函数等）在 Codegen 中校验拒绝。
 		$$ = new AssignmentStatement(
 			static_cast<Expression*>($1),
 			static_cast<Expression*>($3),
 			Pycplineno
 		);
 	}
-;
-
-assignment_object : IDENTIFIER {
-	$$ = new IdentifierExpression($1, Pycplineno);
-}
 ;
 
 expression: comparison_expression
@@ -478,6 +722,9 @@ primary_expression: LT_INTEGER {
 		| LT_STRING {
 			$$ = new StringLiteral($1, Pycplineno);
 		}
+		| KW_NONE {
+			$$ = new NoneLiteral(Pycplineno);
+		}
 		| OP_LPARENTHESES expression OP_RPARENTHESES {
 			$$ = $2;
 		}
@@ -487,6 +734,9 @@ primary_expression: LT_INTEGER {
 		| function_expr {
 			$$ = $1;
 		}
+		| class_expr {
+			$$ = $1;
+		}
 		| primary_expression OP_LPARENTHESES arguments OP_RPARENTHESES {
 			$$ = new CallExpression(
 				static_cast<Expression*>($1),
@@ -494,6 +744,13 @@ primary_expression: LT_INTEGER {
 				Pycplineno
 			);
 			delete $3; // 实参已移动进 CallExpression
+		}
+		| primary_expression OP_DOT IDENTIFIER {
+			$$ = new AttributeExpression(
+				static_cast<Expression*>($1),
+				$3,
+				Pycplineno
+			);
 		}
 ;
 

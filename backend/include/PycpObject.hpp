@@ -14,6 +14,10 @@ enum class Type{
 	INTEGER,
 	STRING,
 	FUNCTION,
+	MODULE,
+	CLASS,
+	INSTANCE,
+	FILE,
 };
 
 // 对象头 GC 标记位（gc_flags）
@@ -48,12 +52,21 @@ class Object{
 	private:
 		uint32_t refcount;
 		GCFlag gc_flags;
+		// 可见性标记：true 表示私有（private），false 表示公开（public）。
+		// 作为所有对象的通用属性，供 public/private 装饰器（C++ ABI 底层）设置：
+		//   - 类内成员：控制该成员在类外的访问可见性。
+		//   - 模块顶层符号：控制其他文件 import 时是否可访问。
+		bool private_;
 
 	public:
 		Type type;
 
 		Object(Type type = Type::OBJECT);
 		virtual ~Object();
+
+		// 可见性查询/设置（默认 public，即 private_ == false）。
+		bool is_private() const { return private_; }
+		void set_private(bool priv) { private_ = priv; }
 
 		// 引用计数访问（仅 GC 层使用）
 		uint32_t _refcount() const { return refcount; }
@@ -65,9 +78,16 @@ class Object{
 			gc_flags = gc_flags & ~GCFlag::MARKED;
 		}
 
+		// 对象显示名（供默认 __string__ 输出 <name at 0xADDR> 使用）。
+		// 默认返回匿名占位名 @anonymous；有名字的子类型（Function /
+		// ClassObject / ModuleObject 等）override 返回各自的真实名字。
+		virtual const char* get_name() const;
+
 		virtual Object* __integer__();
 		virtual Object* __string__();
 		virtual Object* __negation__();
+		virtual Object* __getattr__(const std::string& name);
+		virtual void __setattr__(const std::string& name, Object* value);
 		virtual Object* __call__(Object*);
 		virtual Object* __addition__(Object*);
 		virtual Object* __subtraction__(Object*);

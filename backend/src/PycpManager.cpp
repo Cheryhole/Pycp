@@ -4,6 +4,7 @@
 #include "PycpString.hpp"
 #include "PycpFunction.hpp"
 #include "PycpGC.hpp"
+#include "PycpNativeExt.hpp"
 
 #include <atomic>
 
@@ -29,6 +30,7 @@ void Initialize(){
 void Finalize(){
 	if (!g_initialized.exchange(false)) return;
 
+	NativeExt_Finalize();    // 关闭所有已加载的原生扩展句柄
 	Function::Finalize();
 	String::Finalize();
 	Integer::Finalize();

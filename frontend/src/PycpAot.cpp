@@ -1,4 +1,5 @@
 #include "PycpAot.hpp"
+#include "PycpConfig.hpp"
 
 #include <cstdio>
 #include <fstream>
@@ -12,19 +13,17 @@ namespace Pycp::AOT {
 //
 // 将字节码 Module（常量池 + 符号表 + 代码对象）逐指令翻译为依赖
 // PycpABI 的独立 C++ 源文件。生成的代码不嵌入解释器循环，而是把
-// 每条栈式指令展开为对应的 ABI 调用 / 控制流语句：
+// 每条栈式指令展开为对应的 ABI 调用 / 控制流语句。
 //
-//   - 常量 LOAD_CONST  → 内联常量池对象（g_c[..]，main 中预构造）
-//   - 变量 LOAD/STORE   → ABI 环境接口（局部 -> captured 链 -> 全局）
-//   - 运算 BINARY_*     → Pycp::Add / Sub / Mul / Div / Pow
-//   - 比较 COMPARE_OP   → Pycp::Compare（比较虚函数分发）
-//   - 真值判定          → Pycp::IsFalse
-//   - 控制流 JUMP_*     → goto 标签
-//   - 函数 MAKE/CALL    → 每个 CodeObject 翻译为 pycp_fn_N，用 Closure
-//                         携带捕获环境，支持闭包作为参数/返回值传递
-//
-// 与 VM 的一致性：变量查找、比较、真值判定均统一走 ABI 接口，闭包
-// 捕获环境以 shared_ptr 持有，保证两者行为完全一致。
+// 多模块（import）支持：
+//   - 每个模块生成一个 .cpp，模块私有符号（pycp_fn_N / g_c / g_globals）
+//     均为 static，避免跨文件符号冲突。
+//   - 每个模块导出一个【非 static】初始化函数 pycp_module_<hash>(void)，
+//     返回该模块的 ModuleObject*（懒执行，首次调用才运行顶层）。
+//   - 入口模块的 .cpp 额外生成 main()，并在其 LOAD_MODULE 处调用被导入
+//     模块的 pycp_module_<hash>()。
+//   - 模块顶层变量写入 ModuleObject 的命名空间（经 g_mod_ns 指针），
+//     与 VM 的模块隔离语义一致。
 // =============================================================
 
 namespace {
@@ -54,6 +53,23 @@ std::string cpp_string_literal(const std::string& s) {
 	return out;
 }
 
+// 模块名 -> 唯一 C++ 标识符后缀（FNV-1a 哈希，8 位十六进制）。
+std::string module_hash(const std::string& name) {
+	uint64_t h = 1469598103934665603ULL;
+	for (unsigned char c : name) {
+		h ^= c;
+		h *= 1099511628211ULL;
+	}
+	char buf[17];
+	std::snprintf(buf, sizeof(buf), "%016llx", static_cast<unsigned long long>(h));
+	return std::string(buf);
+}
+
+// 模块初始化函数符号名。
+std::string module_init_symbol(const std::string& name) {
+	return std::string(Pycp::AOT_MODULE_INIT_PREFIX) + module_hash(name);
+}
+
 // 计算单个代码对象指令流的最大可能栈深（保守顺序扫描）。
 std::size_t estimate_stack_depth(const Pycp::BC::CodeObject& co) {
 	std::size_t depth = 0;
@@ -64,6 +80,7 @@ std::size_t estimate_stack_depth(const Pycp::BC::CodeObject& co) {
 			case Pycp::BC::Op::LOAD_VAR:
 			case Pycp::BC::Op::LOAD_NONE:
 			case Pycp::BC::Op::MAKE_FUNCTION:
+			case Pycp::BC::Op::LOAD_MODULE:
 				++depth;
 				break;
 			case Pycp::BC::Op::BINARY_ADD:
@@ -90,6 +107,17 @@ std::size_t estimate_stack_depth(const Pycp::BC::CodeObject& co) {
 			case Pycp::BC::Op::DUP_TOP:
 				++depth;
 				break;
+			case Pycp::BC::Op::GET_ATTR:
+			case Pycp::BC::Op::LOAD_ATTR:
+				// 弹对象再压属性值，栈深不变
+				break;
+			case Pycp::BC::Op::STORE_ATTR:
+				// 弹值 + 对象，栈深减 1
+				if (depth > 0) --depth;
+				break;
+			case Pycp::BC::Op::MAKE_CLASS:
+				++depth;
+				break;
 			case Pycp::BC::Op::JUMP:
 			case Pycp::BC::Op::RETURN_NONE:
 			case Pycp::BC::Op::HALT:
@@ -103,6 +131,7 @@ std::size_t estimate_stack_depth(const Pycp::BC::CodeObject& co) {
 }
 
 // 单个 CodeObject 翻译为一个 native 函数体。
+//   self == nullptr 时 env->globals 指向 g_mod_ns（模块命名空间）。
 void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
                    const Pycp::BC::CodeObject& co, std::size_t co_idx) {
 	std::size_t nlocals = co.nlocals;
@@ -110,7 +139,7 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 	std::size_t nparams = co.nparams;
 
 	// 函数签名：self 指向 Closure（携带捕获环境），顶层 self == nullptr
-	os << "static Pycp::Object* pycp_fn_" << co_idx
+	os << "static Pycp::Object* " << Pycp::AOT_FN_PREFIX << co_idx
 	   << "(Pycp::Object* self, Pycp::Object** argv, std::size_t argc) {\n";
 
 	// 构造本函数执行环境
@@ -120,7 +149,7 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 	os << "        Pycp::Closure* cl = static_cast<Pycp::Closure*>(self);\n";
 	os << "        env->captured = cl->get_captured();\n";
 	os << "    }\n";
-	os << "    env->globals = &g_globals;\n";
+	os << "    env->globals = g_mod_ns;\n";
 
 	// 局部变量名表
 	os << "    env->local_names = {";
@@ -179,6 +208,26 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 				os << "    { Pycp::Object* v = st.back(); st.pop_back();\n";
 				os << "      Pycp::Environment_Store(env.get(), "
 				   << cpp_string_literal(name) << ", v); }\n";
+				break;
+			}
+
+			case Pycp::BC::Op::LOAD_MODULE: {
+				std::size_t idx = static_cast<std::size_t>(ins.operand);
+				const std::string& dep = module.imports[idx];
+				os << "    { Pycp::ModuleObject* m = "
+				   << module_init_symbol(dep) << "();\n";
+				os << "      Pycp::Incref(m); st.push_back(m); }\n";
+				break;
+			}
+			case Pycp::BC::Op::GET_ATTR: {
+				std::size_t idx = static_cast<std::size_t>(ins.operand);
+				const std::string& attr = module.symtab[idx];
+				os << "    { Pycp::Object* obj = st.back(); st.pop_back();\n";
+				os << "      Pycp::Object* v = Pycp::Module_GetAttr("
+				   << "static_cast<Pycp::ModuleObject*>(obj), "
+				   << cpp_string_literal(attr) << ");\n";
+				os << "      Pycp::Decref(obj);\n";
+				os << "      st.push_back(v); Pycp::Incref(v); }\n";
 				break;
 			}
 
@@ -246,7 +295,7 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 				std::size_t fidx = static_cast<std::size_t>(ins.operand);
 				os << "    { Pycp::Closure* fn = new Pycp::Closure("
 				   << cpp_string_literal(module.code_objects[fidx].name)
-				   << ", pycp_fn_" << fidx << ", env);\n";
+				   << ", " << Pycp::AOT_FN_PREFIX << fidx << ", env);\n";
 				os << "      Pycp::GC_Track(fn);\n";
 				os << "      st.push_back(fn); }\n";
 				break;
@@ -295,10 +344,15 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 	os << "}\n\n";
 }
 
-} // anonymous namespace
-
-std::string EmitCpp(const Pycp::BC::Module& module,
-                    const std::string& entry_name) {
+// 生成单个模块的 .cpp 内容（不含 main）。
+//   is_entry : 是否入口模块（入口模块额外生成 main）。
+//   all_deps : 全部依赖模块名列表（含入口自身为空串除外），供入口生成
+//              被导入模块初始化函数的 extern 声明（跨文件链接）。
+std::string emit_module_cpp(const Pycp::BC::Module& module,
+                            const std::string& modname,
+                            bool is_entry,
+                            const std::string& entry_name,
+                            const std::vector<std::string>& all_deps) {
 	if (module.code_objects.empty()) {
 		throw std::runtime_error("AOT: empty module (no code objects).");
 	}
@@ -309,6 +363,7 @@ std::string EmitCpp(const Pycp::BC::Module& module,
 	os << "// =====================================================\n";
 	os << "// Auto-generated by Pycp AOT compiler.\n";
 	os << "// Source: " << module.source_path << "\n";
+	os << "// Module: " << (modname.empty() ? std::string(Pycp::MODULE_ENTRY_NAME) : modname) << "\n";
 	os << "// Do not edit manually.\n";
 	os << "// =====================================================\n\n";
 
@@ -320,6 +375,7 @@ std::string EmitCpp(const Pycp::BC::Module& module,
 	os << "#include \"PycpNone.hpp\"\n";
 	os << "#include \"PycpInteger.hpp\"\n";
 	os << "#include \"PycpString.hpp\"\n";
+	os << "#include \"PycpModule.hpp\"\n";
 	os << "#include \"PycpException.hpp\"\n";
 	os << "#include <vector>\n";
 	os << "#include <string>\n";
@@ -328,11 +384,21 @@ std::string EmitCpp(const Pycp::BC::Module& module,
 	os << "#include <iostream>\n";
 	os << "#include <cstddef>\n\n";
 
+	// ---- 被导入模块初始化函数的 extern 声明（仅入口模块需要跨文件链接）----
+	if (is_entry) {
+		for (const std::string& dep : all_deps) {
+			os << "Pycp::ModuleObject* " << module_init_symbol(dep) << "();\n";
+		}
+		if (!all_deps.empty()) os << "\n";
+	}
+
 	// ---- 全局状态 ----
-	os << "// 全局常量池对象（对应 .pycp 编译期常量池，main 中预构造）\n";
+	os << "// 全局常量池对象（对应 .pycp 编译期常量池，模块初始化时预构造）\n";
 	os << "static Pycp::Object* g_c[" << (module.const_pool.empty() ? 1 : module.const_pool.size()) << "];\n\n";
-	os << "// 全局变量表\n";
+	os << "// 全局变量表（冗余保留；顶层变量实际写入 g_mod_ns 指向的模块命名空间）\n";
 	os << "static std::unordered_map<std::string, Pycp::Object*> g_globals;\n\n";
+	os << "// 模块命名空间指针（指向本模块 ModuleObject 的 namespace）\n";
+	os << "static std::unordered_map<std::string, Pycp::Object*>* g_mod_ns = nullptr;\n\n";
 
 	// ---- 辅助函数：环境/栈清理 ----
 	os << "static void pycp_cleanup_env(std::shared_ptr<Pycp::BC::Environment>& env, std::vector<Pycp::Object*>& st) {\n";
@@ -344,7 +410,7 @@ std::string EmitCpp(const Pycp::BC::Module& module,
 
 	// ---- 前向声明（支持函数间相互引用，如嵌套闭包）----
 	for (std::size_t i = 0; i < module.code_objects.size(); ++i) {
-		os << "static Pycp::Object* pycp_fn_" << i
+		os << "static Pycp::Object* " << Pycp::AOT_FN_PREFIX << i
 		   << "(Pycp::Object* self, Pycp::Object** argv, std::size_t argc);\n";
 	}
 	os << "\n";
@@ -389,37 +455,75 @@ std::string EmitCpp(const Pycp::BC::Module& module,
 	os << "    g_globals.clear();\n";
 	os << "}\n\n";
 
-	// ---- 入口函数 ----
-	// 与 VM 的 main 异常处理对齐：Pycp::Exception 打印 format()
-	// （File "<file>", line N 两行）并返回 1；其余异常兜底。
-	os << "int " << entry_name << "() {\n";
-	os << "    Pycp::Initialize();\n";
-	os << "    pycp_init_consts();\n";
-	os << "    // 注册内建 print\n";
-	os << "    if (Pycp::BuiltinFunction::print) {\n";
-	os << "        g_globals[\"print\"] = Pycp::BuiltinFunction::print;\n";
-	os << "        Pycp::Incref(Pycp::BuiltinFunction::print);\n";
-	os << "    }\n";
-	os << "    try {\n";
-	os << "        Pycp::Object* r = pycp_fn_0(nullptr, nullptr, 0);\n";
+	// ---- 模块初始化函数（非 static，供跨模块调用）----
+	os << "// 初始化并返回本模块的 ModuleObject（懒执行，首次调用运行顶层）。\n";
+	os << "Pycp::ModuleObject* " << module_init_symbol(modname) << "() {\n";
+	os << "    static Pycp::ModuleObject* mod = nullptr;\n";
+	os << "    static bool done = false;\n";
+	os << "    if (!done) {\n";
+	os << "        pycp_init_consts();\n";
+	os << "        mod = Pycp::Module_New(" << cpp_string_literal(modname) << ");\n";
+	os << "        Pycp::GC_AddRoot(mod);\n";
+	os << "        g_mod_ns = mod->get_namespace();\n";
+	os << "        Pycp::Object* r = " << Pycp::AOT_FN_PREFIX << "0(nullptr, nullptr, 0);\n";
 	os << "        if (r) Pycp::Decref(r);\n";
-	os << "        pycp_fini_consts();\n";
-	os << "        Pycp::Finalize();\n";
-	os << "        return 0;\n";
-	os << "    } catch (const Pycp::Exception& e) {\n";
-	os << "        std::cerr << e.format() << std::endl;\n";
-	os << "        return 1;\n";
-	os << "    } catch (const std::exception& e) {\n";
-	os << "        std::cerr << \"Error: \" << e.what() << std::endl;\n";
-	os << "        return 1;\n";
+	os << "        done = true;\n";
 	os << "    }\n";
+	os << "    return mod;\n";
 	os << "}\n\n";
 
-	os << "int main() {\n";
-	os << "    return " << entry_name << "();\n";
-	os << "}\n";
+	// ---- 入口 main（仅入口模块生成）----
+	if (is_entry) {
+		os << "int " << entry_name << "() {\n";
+		os << "    Pycp::Initialize();\n";
+		os << "    try {\n";
+		os << "        " << module_init_symbol(modname) << "();\n";
+		os << "        pycp_fini_consts();\n";
+		os << "        Pycp::Finalize();\n";
+		os << "        return 0;\n";
+		os << "    } catch (const Pycp::Exception& e) {\n";
+		os << "        std::cerr << e.format() << std::endl;\n";
+		os << "        return 1;\n";
+		os << "    } catch (const std::exception& e) {\n";
+		os << "        std::cerr << \"Error: \" << e.what() << std::endl;\n";
+		os << "        return 1;\n";
+		os << "    }\n";
+		os << "}\n\n";
+
+		os << "int main() {\n";
+		os << "    return " << entry_name << "();\n";
+		os << "}\n";
+	}
 
 	return os.str();
+}
+
+} // anonymous namespace
+
+std::string EmitCpp(const Pycp::BC::Module& module,
+                    const std::string& entry_name) {
+	// 单模块模式：视为入口模块（模块名为空，无依赖）。
+	std::vector<std::string> no_deps;
+	return emit_module_cpp(module, "", /*is_entry=*/true, entry_name, no_deps);
+}
+
+std::map<std::string, std::string> EmitCppAll(
+    const std::map<std::string, Pycp::BC::Module>& modules,
+    const std::string& entry_name) {
+	// 收集所有依赖模块名（除入口模块外的所有模块）。
+	std::vector<std::string> all_deps;
+	for (const auto& kv : modules) {
+		if (kv.first != entry_name) all_deps.push_back(kv.first);
+	}
+
+	std::map<std::string, std::string> result;
+	for (const auto& kv : modules) {
+		const std::string& modname = kv.first;
+		bool is_entry = (modname == entry_name);
+		result[modname] = emit_module_cpp(kv.second, modname, is_entry,
+		                                  Pycp::AOT_ENTRY_FN_NAME, all_deps);
+	}
+	return result;
 }
 
 bool EmitCppToFile(const Pycp::BC::Module& module, const std::string& path) {

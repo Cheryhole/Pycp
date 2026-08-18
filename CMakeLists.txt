@@ -59,6 +59,14 @@ endif()
 add_subdirectory(backend)
 
 # =====================================================================
+# 标准库动态库（io / Pycp）：编译为 .so/.dll，import 时动态加载
+# ---------------------------------------------------------------------
+# 在 backend 之后引入，使动态库可链接 PycpRuntime。产物输出到
+# ${CMAKE_BINARY_DIR}/stdlib/，运行时可执行文件旁的 stdlib/ 目录加载。
+# =====================================================================
+add_subdirectory(builtin_libraries)
+
+# =====================================================================
 # 目录路径
 # =====================================================================
 set(PYCP_FRONTEND_DIR ${CMAKE_CURRENT_SOURCE_DIR}/frontend)
@@ -80,6 +88,14 @@ set(CODGEN_SOURCES
 
 set(AOT_SOURCES
     ${PYCP_FRONTEND_DIR}/src/PycpAot.cpp
+)
+
+set(LOADER_SOURCES
+    ${PYCP_FRONTEND_DIR}/src/PycpModuleLoader.cpp
+)
+
+set(LEXER_SOURCES
+    ${PYCP_FRONTEND_DIR}/src/escape_handler.cpp
 )
 
 # 主程序入口：位于项目顶层目录
@@ -145,6 +161,8 @@ add_executable(pycp
     ${AST_SOURCES}
     ${CODGEN_SOURCES}
     ${AOT_SOURCES}
+    ${LOADER_SOURCES}
+    ${LEXER_SOURCES}
     ${BISON_PycpParser_OUTPUTS}
     ${FLEX_PycpLexer_OUTPUTS}
 )
@@ -195,7 +213,15 @@ else()
     set(PYCP_RUNTIME_TARGET PycpRuntime_static)
 endif()
 
+# io/Pycp 库已改为动态库（stdlib/），import 时通过 LoadNativeModule 动态加载，
+# 不再静态链接进 pycp。pycp 仅链接 PycpRuntime。
 target_link_libraries(pycp PRIVATE ${PYCP_RUNTIME_TARGET})
+
+# 原生扩展（dlopen 加载的 .so）需解析主程序的 C++ 符号（Module_New/New 等），
+# 因此以 -rdynamic 导出全局符号（POSIX）。Windows 下静态链接需 --export-all-symbols。
+if(UNIX AND NOT APPLE)
+    target_link_options(pycp PRIVATE -rdynamic)
+endif()
 
 # 动态链接时设置 rpath：构建树内指向 backend/bin，安装后用 $ORIGIN
 if(BUILD_RUNTIME_SHARED)
@@ -248,6 +274,7 @@ set(PYCP_AOT_HEADERS
     PycpInteger.hpp
     PycpString.hpp
     PycpManager.hpp
+    PycpModule.hpp
     PycpABI.hpp
 )
 

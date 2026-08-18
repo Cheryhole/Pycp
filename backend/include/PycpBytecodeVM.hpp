@@ -21,7 +21,9 @@
 #include "PycpObject.hpp"
 #include "PycpFunction.hpp"
 #include "PycpEnvironment.hpp"
+#include "PycpModule.hpp"
 
+#include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -42,17 +44,24 @@ public:
 	// 从反序列化后的 Module 构造 VM。
 	//   module 的 runtime_consts 已为 GC root 保护的对象，
 	//   其生命周期由调用方（Module 持有者）保证存活于 VM 使用期间。
-	explicit VM(Module* module);
+	//   registry : 模块注册表（模块名 -> Module*）。含入口模块及其所有
+	//              import 依赖。为 nullptr 时 VM 仅执行单模块，
+	//              遇到 LOAD_MODULE 抛 ImportError。
+	//   entry_name : 入口模块名（registry 中 module 对应的 key）。
+	//              用于循环导入占坑；空串表示无注册表。
+	explicit VM(Module* module, std::map<std::string, Module*>* registry = nullptr,
+	            const std::string& entry_name = "");
 	~VM();
 
 	// 执行顶层代码（code_objects[0]），返回其返回值（通常为 None）。
 	Object* run();
 
-	// 供 BytecodeFunction::invoke 调用：执行指定代码对象。
-	//   co_idx : code_objects 索引
+	// 供 BytecodeFunction::invoke 调用：执行指定模块的指定代码对象。
+	//   m       : 所属模块（函数定义时所在模块，跨模块调用需切换）
+	//   co_idx  : code_objects 索引
 	//   argv/argc : 实参
 	//   captured  : 闭包捕获环境（定义时所在环境）
-	Object* call(size_t co_idx, Object** argv, std::size_t argc,
+	Object* call(Module* m, size_t co_idx, Object** argv, std::size_t argc,
 	             std::shared_ptr<Environment> captured);
 
 	// 获取所属模块（供 BytecodeFunction 读取函数名等元数据）
@@ -61,11 +70,21 @@ public:
 private:
 	Module* module_;
 	std::shared_ptr<Environment> global_env_; // 持有 globals map
+	ModuleObject* entry_mod_ = nullptr;       // 入口模块对象（其 namespace 即顶层 globals）
+
+	// 模块注册表（模块名 -> Module*）与已加载模块对象缓存。
+	// 生命周期由调用方保证（registry 中的 Module 存活于 VM 使用期间）。
+	std::map<std::string, Module*>* registry_;
+	std::map<std::string, ModuleObject*> module_cache_;
 
 	// 执行单个代码对象（共享执行循环核心）
 	Object* execute(CodeObject* co,
 	                std::shared_ptr<Environment> env,
 	                Object** argv, std::size_t argc);
+
+	// 加载（或取缓存）指定模块，返回其 ModuleObject（Borrowed，不增引用）。
+	// 首次加载会执行该模块顶层并填充命名空间。
+	ModuleObject* load_module(const std::string& name);
 };
 
 } // namespace BC
@@ -77,11 +96,12 @@ private:
 class BytecodeFunction : public Function {
 private:
 	BC::VM* vm;                                 // 所属 VM（执行上下文）
+	BC::Module* module;                         // 定义时所属模块（跨模块调用切换用）
 	std::size_t code_idx;                       // code_objects 索引
 	std::shared_ptr<BC::Environment> captured;  // 定义时环境（闭包）
 
 public:
-	BytecodeFunction(BC::VM* vm, std::size_t code_idx,
+	BytecodeFunction(BC::VM* vm, BC::Module* module, std::size_t code_idx,
 	                 std::shared_ptr<BC::Environment> captured);
 
 	Object* invoke(Object** argv, std::size_t argc) override;

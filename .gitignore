@@ -8,7 +8,6 @@ Makefile
 
 test.*
 test*/
-!tests/
 *.pyi
 *.dll
 *.pyd

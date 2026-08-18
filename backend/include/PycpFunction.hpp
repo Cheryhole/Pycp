@@ -38,7 +38,11 @@ class Function : public Object{
 		Function(const char* name, PycpNativeFunction func);
 
 		FunctionKind get_kind() const { return kind; }
-		const char* get_name() const { return name; }
+		const char* get_name() const override { return name; }
+
+		// 字符串表示：普通函数 "<function \"name\" at 0xADDR>"，
+		// 匿名函数（name 为空或 @anonymous）输出 "@anonymous"。
+		Object* __string__() override;
 
 		// 内部调用：经统一 argv/argc 形态
 		Object* __call__(Object* args) override;
@@ -51,26 +55,6 @@ class Function : public Object{
 
 struct BuiltinFunction{
 	static Function* print;
-};
-
-// =============================================================
-// 闭包（Closure）：携带捕获环境的 native 函数对象
-//
-// AOT 生成的函数 pycp_fn_N 通过 self（本对象）取捕获环境，
-// 从而访问外层作用域的局部变量，实现与 VM 的 BytecodeFunction
-// 一致的闭包语义。捕获环境以 shared_ptr 持有，保证闭包作为
-// 参数 / 返回值传递时被捕获变量不被提前释放。
-// =============================================================
-class Closure : public Function{
-	private:
-		std::shared_ptr<BC::Environment> captured_;
-
-	public:
-		Closure(const char* name, PycpNativeFunction func,
-		        std::shared_ptr<BC::Environment> captured)
-			: Function(name, func), captured_(std::move(captured)) {}
-
-		std::shared_ptr<BC::Environment> get_captured() const { return captured_; }
 };
 
 } // namespace Pycp

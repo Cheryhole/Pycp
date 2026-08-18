@@ -29,9 +29,37 @@
 
 namespace Pycp {
 
+class ModuleObject;
+class ClassObject;
+class InstanceObject;
+class FileObject;
+
 // 工厂函数：返回 Owned 引用（refcount = 1），调用方负责 Decref
 PYCP_API Object* Integer_FromLong(long long value);
 PYCP_API Object* String_FromString(const char* value);
+
+// 模块对象工厂：创建指定名字的模块对象（返回 Owned，refcount=1）。
+PYCP_API ModuleObject* Module_New(const std::string& name);
+
+// 类 / 实例 / 文件对象工厂（返回 Owned，refcount=1）。
+PYCP_API ClassObject* Class_New(const std::string& name);
+PYCP_API InstanceObject* Instance_New(ClassObject* cls);
+// 文件对象工厂：由已有流构造（不拥有流）。
+PYCP_API FileObject* File_FromStream(const std::string& name,
+                                     void* in, void* out);
+
+// 类操作方法：添加成员名 / 方法。
+PYCP_API void Class_AddMemberName(ClassObject* cls, const std::string& name);
+PYCP_API void Class_AddMethod(ClassObject* cls, const std::string& name, Object* fn);
+
+// 属性访问：从模块对象取属性，返回 Borrowed 引用；未找到抛 AttributeError。
+PYCP_API Object* Module_GetAttr(ModuleObject* mod, const std::string& name);
+
+// 通用属性访问/赋值：对任意对象（模块/类/实例/文件）执行。
+//   GetAttr 返回 Borrowed 引用；未找到抛 AttributeError。
+//   SetAttr 接管 value 所有权（内部按需 Incref）。
+PYCP_API Object* GetAttr(Object* obj, const std::string& name);
+PYCP_API void SetAttr(Object* obj, const std::string& name, Object* value);
 
 // 运算：内部转调虚函数，返回 Owned 结果
 PYCP_API Object* Add(Object* lhs, Object* rhs);

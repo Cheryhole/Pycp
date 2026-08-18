@@ -148,13 +148,15 @@ std::string BinaryExpression::to_string() const {
 // ============================================================
 FunctionExpression::FunctionExpression(std::vector<std::string*> p,
                                        Program* b,
-                                       std::string n, int line)
-	: name(std::move(n)), params(std::move(p)), body(b) {
+                                       std::string n, int line,
+                                       Expression* deco)
+	: name(std::move(n)), params(std::move(p)), body(b), decorator(deco) {
 	lineno = line;
 }
 
 FunctionExpression::~FunctionExpression() {
 	delete body;
+	delete decorator;
 	for (std::string* param : params) {
 		delete param;
 	}
@@ -351,6 +353,189 @@ std::string IfStatement::to_string() const {
 	}
 
 	return result;
+}
+
+// ============================================================
+// ImportStatement 实现
+// ============================================================
+ImportStatement::ImportStatement(std::string* mod, std::string* al, int line)
+	: module_name(mod), alias(al) {
+	lineno = line;
+}
+
+ImportStatement::~ImportStatement() {
+	delete module_name;
+	delete alias;
+}
+
+std::string ImportStatement::to_string() const {
+	if (alias != nullptr) {
+		return "<Import: " + *module_name + " as " + *alias + ">";
+	}
+	return "<Import: " + *module_name + ">";
+}
+
+// ============================================================
+// FromImportStatement 实现
+// ============================================================
+FromImportStatement::FromImportStatement(std::string* mod,
+                                         std::vector<std::string*>* ns, int line)
+	: module_name(mod), names(ns) {
+	lineno = line;
+}
+
+FromImportStatement::~FromImportStatement() {
+	delete module_name;
+	if (names != nullptr) {
+		for (std::string* n : *names) delete n;
+		delete names;
+	}
+}
+
+std::string FromImportStatement::to_string() const {
+	std::string result = "<FromImport: " + *module_name + " import ";
+	if (names != nullptr) {
+		for (std::size_t i = 0; i < names->size(); ++i) {
+			if (i > 0) result += ", ";
+			result += *((*names)[i]);
+		}
+	}
+	return result + ">";
+}
+
+// ============================================================
+// AttributeExpression 实现
+// ============================================================
+AttributeExpression::AttributeExpression(Expression* t, std::string* a, int line)
+	: target(t), attr(a) {
+	lineno = line;
+}
+
+AttributeExpression::~AttributeExpression() {
+	delete target;
+	delete attr;
+}
+
+std::string AttributeExpression::to_string() const {
+	return "<Attribute: " + target->to_string() + "." + *attr + ">";
+}
+
+// ============================================================
+// ClassDefinition 实现
+// ============================================================
+ClassDefinition::ClassDefinition(std::string* n,
+                                 std::string* parent,
+                                 std::vector<Statement*>* mv,
+                                 std::vector<Statement*>* ms, int line)
+	: name(n), parent_name(parent), member_variables(mv), methods(ms) {
+	lineno = line;
+}
+
+ClassDefinition::~ClassDefinition() {
+	delete name;
+	delete parent_name;
+	if (member_variables != nullptr) {
+		for (Statement* s : *member_variables) delete s;
+		delete member_variables;
+	}
+	if (methods != nullptr) {
+		for (Statement* s : *methods) delete s;
+		delete methods;
+	}
+}
+
+std::string ClassDefinition::to_string() const {
+	std::string result = "<Class: " + (name ? *name : "?");
+	if (parent_name != nullptr) {
+		result += " inherits " + *parent_name;
+	}
+	if (member_variables != nullptr) {
+		for (Statement* s : *member_variables) {
+			result += "\n  " + s->to_string();
+		}
+	}
+	if (methods != nullptr) {
+		for (Statement* s : *methods) {
+			result += "\n  " + s->to_string();
+		}
+	}
+	return result + ">";
+}
+
+// ============================================================
+// MemberVariable 实现
+// ============================================================
+MemberVariable::MemberVariable(std::string* n, Expression* v, int line,
+                               Expression* decorator)
+	: name(n), value(v), decorator(decorator) {
+	lineno = line;
+}
+
+MemberVariable::~MemberVariable() {
+	delete name;
+	delete value;
+	delete decorator;
+}
+
+std::string MemberVariable::to_string() const {
+	std::string dec = (decorator != nullptr) ? ("@" + decorator->to_string() + " ") : "";
+	if (value != nullptr) {
+		return "<Member: " + dec + (name ? *name : "?") + " = " + value->to_string() + ">";
+	}
+	return "<Member: " + dec + (name ? *name : "?") + ">";
+}
+
+// ============================================================
+// MethodDefinition 实现
+// ============================================================
+MethodDefinition::MethodDefinition(FunctionExpression* f, int line,
+                                   Expression* decorator)
+	: function(f), decorator(decorator) {
+	lineno = line;
+}
+
+MethodDefinition::~MethodDefinition() {
+	delete function;
+	delete decorator;
+}
+
+std::string MethodDefinition::to_string() const {
+	std::string dec = (decorator != nullptr) ? ("@" + decorator->to_string() + " ") : "";
+	return "<Method: " + dec + (function ? function->to_string() : "?") + ">";
+}
+
+// ============================================================
+// ClassExpression 实现
+// ============================================================
+ClassExpression::ClassExpression(std::string* parent,
+                                 std::vector<Statement*>* mv,
+                                 std::vector<Statement*>* ms, int line)
+	: parent_name(parent), member_variables(mv), methods(ms) {
+	lineno = line;
+}
+
+ClassExpression::~ClassExpression() {
+	delete parent_name;
+	if (member_variables != nullptr) {
+		for (Statement* s : *member_variables) delete s;
+		delete member_variables;
+	}
+	if (methods != nullptr) {
+		for (Statement* s : *methods) delete s;
+		delete methods;
+	}
+}
+
+std::string ClassExpression::to_string() const {
+	std::string result = "<ClassExpr: ?";
+	if (parent_name != nullptr) result += " inherits " + *parent_name;
+	if (member_variables != nullptr) {
+		for (Statement* s : *member_variables) result += "\n  " + s->to_string();
+	}
+	if (methods != nullptr) {
+		for (Statement* s : *methods) result += "\n  " + s->to_string();
+	}
+	return result + ">";
 }
 
 } // namespace Pycp::AstNode

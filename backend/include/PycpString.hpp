@@ -24,13 +24,6 @@ class String : public Object{
 		Object* __addition__(Object*);
 		Object* __multiplication__(Object*);
 
-		Object* __less_than__(Object*) override;
-		Object* __less_equal__(Object*) override;
-		Object* __equal__(Object*) override;
-		Object* __not_equal__(Object*) override;
-		Object* __greater_than__(Object*) override;
-		Object* __greater_equal__(Object*) override;
-
 		static void Initialize();
 		static void Finalize();
 

@@ -70,6 +70,15 @@ enum class Op : uint8_t {
 	RETURN        = 0x42, // 弹返回值返回调用者
 	RETURN_NONE   = 0x43, // 返回 None
 
+	// ---- 模块导入 ----
+	LOAD_MODULE = 0x50,  // 操作数: imports 索引 -> 加载模块对象压栈
+	GET_ATTR    = 0x51,  // 操作数: name_idx    -> 从栈顶对象取属性
+
+	// ---- 类与实例 ----
+	MAKE_CLASS  = 0x52,  // 操作数: class_idx   -> 创建 ClassObject 压栈
+	LOAD_ATTR   = 0x53,  // 操作数: name_idx    -> 从栈顶对象取属性（实例/类/模块/文件通用）
+	STORE_ATTR  = 0x54,  // 操作数: name_idx    -> 弹栈顶值写入栈顶对象的属性
+
 	// ---- 其他 ----
 	HALT          = 0x00, // 模块执行结束
 };
@@ -124,6 +133,28 @@ struct CodeObject {
 };
 
 // =============================================================
+// 类定义信息（MAKE_CLASS 操作数索引到 ClassDef）
+// =============================================================
+
+struct ClassDef {
+	std::string name;                            // 类名
+	std::string parent_name;                     // 父类名（空串表示无父类）
+	std::vector<std::string> member_names;       // 成员变量名（声明顺序）
+	// 成员变量装饰器栈槽序号：与 member_names 对齐。
+	//   值 < decorator_count 表示该成员有装饰器，指向「装饰器栈区」中的
+	//   第 idx 个装饰器对象；UINT32_MAX 表示无装饰器（默认 public）。
+	//   装饰器对象在 MAKE_CLASS 之前按「先成员变量、后方法」顺序求值压栈。
+	std::vector<uint32_t> member_decorators;
+	// 方法：方法名 -> 方法代码对象索引（指向 code_objects）。
+	std::vector<std::pair<std::string, uint32_t>> methods;
+	// 方法装饰器栈槽序号：与 methods 对齐（语义同 member_decorators）。
+	std::vector<uint32_t> method_decorators;
+	// 装饰器对象总数（= 所有带装饰器成员的数量），MAKE_CLASS 据此
+	// 从栈上取装饰器对象并在结束时弹出。
+	uint32_t decorator_count = 0;
+};
+
+// =============================================================
 // 编译单元（一个 .cpycp 文件的内存表示）
 // =============================================================
 
@@ -132,6 +163,13 @@ struct Module {
 	std::vector<Constant> const_pool;  // 全局常量池（反序列化后为 Object* 的宿主）
 	std::vector<std::string> symtab;   // 全局符号表（去重）
 	std::vector<CodeObject> code_objects; // code_objects[0] 为 <module> 顶层代码
+	std::vector<ClassDef> classes;     // 类定义表（MAKE_CLASS 操作数索引）
+
+	// 被导入的模块名列表（按序，去重）。LOAD_MODULE 操作数即此列表索引。
+	// 模块名不含 .pycp 后缀，与 import 语句中的标识符一致。
+	std::vector<std::string> imports;
+	// 与 imports 对齐的 import 语句行号（用于 ImportError 报错位置）。
+	std::vector<int> import_linenos;
 
 	// 反序列化后重建的运行时对象（GC root 持有）
 	std::vector<Object*> runtime_consts; // 与 const_pool 对齐的 Object* 实例
