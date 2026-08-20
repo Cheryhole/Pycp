@@ -7,10 +7,10 @@
 #   1. 作为项目顶层 CMakeLists.txt 的子目录被引入（顶层会关闭
 #      动态库 / Python 绑定 / 测试选项，仅构建 PycpRuntime_static 静态库）。
 #   2. 独立构建（cd backend && cmake -S . -B build），构建完整运行时
-#      库与 test_pycp 测试程序，产物输出到 backend/bin/。
+#      库与 test_pycp 测试程序，产物输出到编译目录（backend/build/）。
 #
-# 输出目录使用绝对路径（CMAKE_CURRENT_SOURCE_DIR），天然隔离，
-# 不会污染顶层 build/ 目录。
+# 输出目录使用 CMAKE_CURRENT_BINARY_DIR（编译目录），产物落在 build/
+# 树内，不会污染源码目录（backend/）。
 # =====================================================================
 
 cmake_minimum_required(VERSION 3.15)
@@ -27,8 +27,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# 统一输出目录
-set(OUTPUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/bin)
+# 统一输出目录：使用编译目录（顶层构建为 build/backend，独立构建为
+# backend/build），避免在任何源码目录下生成二进制文件。
+set(OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_DIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${OUTPUT_DIR})
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${OUTPUT_DIR})
@@ -62,6 +63,7 @@ set(PYCP_HEADERS
     ${PYCP_INCLUDE_DIR}/PycpModule.hpp
     ${PYCP_INCLUDE_DIR}/PycpClass.hpp
     ${PYCP_INCLUDE_DIR}/PycpBytecode.hpp
+    ${PYCP_INCLUDE_DIR}/PycpBytecodeDump.hpp
     ${PYCP_INCLUDE_DIR}/PycpBytecodeVM.hpp
     ${PYCP_INCLUDE_DIR}/PycpEnvironment.hpp
     ${PYCP_INCLUDE_DIR}/PycpNativeExt.hpp
@@ -82,6 +84,7 @@ set(PYCP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpABI.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpBytecode.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpBytecodeVM.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpBytecodeDump.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpNativeExt.cpp
 )
 

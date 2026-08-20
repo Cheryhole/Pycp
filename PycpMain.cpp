@@ -37,6 +37,7 @@
 
 #include "Pycp.hpp"          // 运行时（Object/GC/ABI/Manager）
 #include "PycpBytecode.hpp"  // 字节码格式 / 序列化
+#include "PycpBytecodeDump.hpp" // 字节码查看（dump）接口
 #include "PycpBytecodeVM.hpp"// VM 执行
 #include "PycpException.hpp"
 #include "PycpConfig.hpp"    // 集中管理的常量（扩展名/输出命名/版本等）
@@ -202,180 +203,6 @@ int execute_program(std::map<std::string, Pycp::BC::Module>& modules,
 	return 0;
 }
 
-// =============================================================
-// 字节码查看（dump）
-// =============================================================
-
-// 操作码 -> 可读名称
-const char* op_name(Pycp::BC::Op op) {
-	switch (op) {
-		case Pycp::BC::Op::HALT:          return "HALT";
-		case Pycp::BC::Op::LOAD_CONST:    return "LOAD_CONST";
-		case Pycp::BC::Op::LOAD_VAR:      return "LOAD_VAR";
-		case Pycp::BC::Op::STORE_VAR:     return "STORE_VAR";
-		case Pycp::BC::Op::LOAD_NONE:     return "LOAD_NONE";
-		case Pycp::BC::Op::POP_TOP:       return "POP_TOP";
-		case Pycp::BC::Op::DUP_TOP:       return "DUP_TOP";
-		case Pycp::BC::Op::BINARY_ADD:    return "BINARY_ADD";
-		case Pycp::BC::Op::BINARY_SUB:    return "BINARY_SUB";
-		case Pycp::BC::Op::BINARY_MUL:    return "BINARY_MUL";
-		case Pycp::BC::Op::BINARY_DIV:    return "BINARY_DIV";
-		case Pycp::BC::Op::BINARY_POW:    return "BINARY_POW";
-		case Pycp::BC::Op::UNARY_NEG:     return "UNARY_NEG";
-		case Pycp::BC::Op::COMPARE_OP:    return "COMPARE_OP";
-		case Pycp::BC::Op::JUMP:          return "JUMP";
-		case Pycp::BC::Op::JUMP_IF_FALSE: return "JUMP_IF_FALSE";
-		case Pycp::BC::Op::JUMP_IF_TRUE:  return "JUMP_IF_TRUE";
-		case Pycp::BC::Op::MAKE_FUNCTION: return "MAKE_FUNCTION";
-		case Pycp::BC::Op::CALL:          return "CALL";
-		case Pycp::BC::Op::RETURN:        return "RETURN";
-		case Pycp::BC::Op::RETURN_NONE:   return "RETURN_NONE";
-		case Pycp::BC::Op::LOAD_MODULE:   return "LOAD_MODULE";
-		case Pycp::BC::Op::GET_ATTR:      return "GET_ATTR";
-		case Pycp::BC::Op::MAKE_CLASS:    return "MAKE_CLASS";
-		case Pycp::BC::Op::LOAD_ATTR:     return "LOAD_ATTR";
-		case Pycp::BC::Op::STORE_ATTR:    return "STORE_ATTR";
-		default:                          return "UNKNOWN";
-	}
-}
-
-// 比较子操作码 -> 可读名称
-const char* cmp_op_name(uint8_t op) {
-	switch (static_cast<Pycp::BC::CompareOp>(op)) {
-		case Pycp::BC::CompareOp::LT: return "LT";
-		case Pycp::BC::CompareOp::LE: return "LE";
-		case Pycp::BC::CompareOp::EQ: return "EQ";
-		case Pycp::BC::CompareOp::NE: return "NE";
-		case Pycp::BC::CompareOp::GT: return "GT";
-		case Pycp::BC::CompareOp::GE: return "GE";
-		default:                      return "?";
-	}
-}
-
-// 常量池条目 -> 可读文本
-std::string const_text(const Pycp::BC::Constant& c) {
-	switch (c.kind) {
-		case Pycp::BC::ConstKind::INTEGER: return std::to_string(c.int_value);
-		case Pycp::BC::ConstKind::STRING:  return "\"" + c.str_value + "\"";
-		case Pycp::BC::ConstKind::NONE:    return "None";
-		default:                           return "<unknown>";
-	}
-}
-
-// 打印单个指令（带行号与操作数解释）
-void dump_instruction(std::ostream& os, const Pycp::BC::Instruction& ins,
-                      int lineno, const Pycp::BC::Module& module) {
-	os << "  " << (lineno >= 0 ? std::to_string(lineno) : "?") << "  "
-	   << op_name(ins.op);
-
-	// 带操作数注释，便于阅读
-	if (ins.op == Pycp::BC::Op::LOAD_CONST) {
-		if (ins.operand >= 0 &&
-		    static_cast<size_t>(ins.operand) < module.const_pool.size()) {
-			os << " " << ins.operand << "  # "
-			   << const_text(module.const_pool[ins.operand]);
-		} else {
-			os << " " << ins.operand;
-		}
-	} else if (ins.op == Pycp::BC::Op::LOAD_VAR ||
-	           ins.op == Pycp::BC::Op::STORE_VAR) {
-		if (ins.operand >= 0 &&
-		    static_cast<size_t>(ins.operand) < module.symtab.size()) {
-			os << " " << ins.operand << "  # " << module.symtab[ins.operand];
-		} else {
-			os << " " << ins.operand;
-		}
-	} else if (ins.op == Pycp::BC::Op::COMPARE_OP) {
-		os << " " << ins.operand << "  # " << cmp_op_name(static_cast<uint8_t>(ins.operand));
-	} else if (ins.op == Pycp::BC::Op::MAKE_FUNCTION) {
-		if (ins.operand >= 0 &&
-		    static_cast<size_t>(ins.operand) < module.code_objects.size()) {
-			os << " " << ins.operand << "  # " << module.code_objects[ins.operand].name;
-		} else {
-			os << " " << ins.operand;
-		}
-	} else if (ins.op == Pycp::BC::Op::LOAD_MODULE) {
-		if (ins.operand >= 0 &&
-		    static_cast<size_t>(ins.operand) < module.imports.size()) {
-			os << " " << ins.operand << "  # import " << module.imports[ins.operand];
-		} else {
-			os << " " << ins.operand;
-		}
-	} else if (ins.op == Pycp::BC::Op::GET_ATTR) {
-		if (ins.operand >= 0 &&
-		    static_cast<size_t>(ins.operand) < module.symtab.size()) {
-			os << " " << ins.operand << "  # ." << module.symtab[ins.operand];
-		} else {
-			os << " " << ins.operand;
-		}
-	} else if (ins.operand != 0) {
-		os << " " << ins.operand;
-	}
-	os << "\n";
-}
-
-// 查看字节码内容：常量池 / 符号表 / 代码对象（方法签名、字段、指令与行号）
-void dump_module(const Pycp::BC::Module& module) {
-	using namespace Pycp::BC;
-
-	std::cout << "==============================================\n"
-	          << "Pycp Bytecode Dump\n"
-	          << "==============================================\n";
-
-	// ---- 文件头 ----
-	std::cout << "\n[Header]\n"
-	          << "  format version : " << FORMAT_VERSION_MAJOR << "."
-	          << FORMAT_VERSION_MINOR << "\n"
-	          << "  source path    : " << module.source_path << "\n";
-
-	// ---- 常量池 ----
-	std::cout << "\n[Constant Pool] (" << module.const_pool.size() << " entries)\n";
-	for (size_t i = 0; i < module.const_pool.size(); ++i) {
-		std::cout << "  " << i << ": " << const_text(module.const_pool[i]) << "\n";
-	}
-
-	// ---- 符号表 ----
-	std::cout << "\n[Symbol Table] (" << module.symtab.size() << " entries)\n";
-	for (size_t i = 0; i < module.symtab.size(); ++i) {
-		std::cout << "  " << i << ": " << module.symtab[i] << "\n";
-	}
-
-	// ---- 代码对象（含方法签名 / 字段 / 指令与行号）----
-	std::cout << "\n[Code Objects] (" << module.code_objects.size() << ")\n";
-	for (size_t ci = 0; ci < module.code_objects.size(); ++ci) {
-		const CodeObject& co = module.code_objects[ci];
-		std::cout << "\n--- CodeObject[" << ci << "] ---\n"
-		          << "  name    : " << co.name << "\n"
-		          << "  nparams : " << co.nparams << "\n"
-		          << "  nlocals : " << co.nlocals << "\n";
-
-		// 局部变量名表（字段信息）
-		if (!co.names.empty()) {
-			std::cout << "  locals  : ";
-			for (size_t k = 0; k < co.names.size(); ++k) {
-				if (k) std::cout << ", ";
-				std::cout << co.names[k];
-			}
-			std::cout << "\n";
-		}
-
-		// 常量引用
-		if (!co.const_refs.empty()) {
-			std::cout << "  const_refs:";
-			for (size_t k : co.const_refs) std::cout << " " << k;
-			std::cout << "\n";
-		}
-
-		// 指令流（含行号）
-		std::cout << "  code (" << co.code.size() << " instrs):\n";
-		for (size_t k = 0; k < co.code.size(); ++k) {
-			int lineno = (k < co.linenos.size()) ? co.linenos[k] : -1;
-			dump_instruction(std::cout, co.code[k], lineno, module);
-		}
-	}
-	std::cout << "\n==============================================\n";
-}
-
 } // anonymous namespace
 
 int main(int argc, char** argv) {
@@ -399,7 +226,9 @@ int main(int argc, char** argv) {
 		Pycp::Initialize();
 
 		if (opt.dump) {
-			// 字节码查看：.pycp（解析+编译）或 .cpycp（反序列化）后输出详情
+			// 字节码查看：.pycp（解析+编译）或 .cpycp（反序列化）后输出详情。
+			// 加载逻辑（按后缀获取 Module）保留在前端；具体的格式化打印
+			// 由后端 Pycp::BC::DumpModule 实现。
 			Pycp::BC::Module module;
 			if (has_suffix(opt.input_file, Pycp::EXT_CPYCP)) {
 				std::vector<uint8_t> bytes = read_file_bytes(opt.input_file);
@@ -407,7 +236,7 @@ int main(int argc, char** argv) {
 			} else {
 				module = compile_source(opt.input_file);
 			}
-			dump_module(module);
+			Pycp::BC::DumpModule(module);
 		}
 		else if (opt.emit_cpp) {
 			// AOT：收集入口与全部 import 依赖，逐文件生成 C++ 源码。
