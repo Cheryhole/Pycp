@@ -11,11 +11,23 @@ Pycp 将源码 `.pycp` 编译为自定义字节码 `.cpycp`（类似 Python 的 
 | 语言定位 | Python-like，沿用 Python 部分语法 |
 | 前端 | Flex 词法分析 + Bison 语法分析，生成 AST |
 | 编译器 | AST → 栈式字节码（Codegen），支持常量池 / 符号表 / 代码对象 |
-| 运行时 | GC、对象模型（Integer / String / None / Function / Class / Instance / Module / File）、ABI 接口 |
+| 运行时 | GC、对象模型（Integer / String / None / Function / Class / Instance / Module / File / List）、ABI 接口 |
 | 虚拟机 | 栈式字节码 VM，支持函数调用、闭包、类定义、继承、装饰器、控制流 |
 | 字节码 | `.cpycp` 二进制格式（小端 + LEB128 编码），可序列化 / 反序列化 |
 | 标准库 | C++ 原生动态库（`io` / `Pycp` / `classtools`），`import` 时动态加载 |
 | AOT | 将字节码逐指令翻译为依赖 PycpABI 的独立 C++ 源文件（真正的指令翻译，非骨架占位） |
+
+### 对象命名规范
+
+Pycp 对象的类型判定使用**字符串**（而非枚举），与 ABI 保持一致：
+
+- **内置类型名使用大写**：`None`、`Integer`、`String`、`List`、`Function`、`File`。
+- **`class` / `instance` / `module` 不采用统一大写名**，而是返回各自的真实名称：
+  - 类 `class a{}` 的类型名即 `a`，其实例类型名也为 `a`；
+  - 模块的类型名即模块名（如 `io`）。
+- **自定义类型的名称与代码定义时的实际名称完全一致（含大小写）**，不做任何改写。
+  例如 `class MyClass{}` 的类型名、`<class "MyClass">`、`<MyClass instance at ...>` 均保留 `MyClass`。
+- 匿名函数 / 匿名类使用内部名 `@anonymous`。
 
 ### 已支持的语言子集
 
@@ -30,6 +42,9 @@ Pycp 将源码 `.pycp` 编译为自定义字节码 `.cpycp`（类似 Python 的 
 - 类定义（`class Name{...}`）与实例化，含 `__initialize__` / `__string__` 等魔术方法
 - 单继承（`class Child inherits Parent{...}`）
 - 运算符重载（`__addition__` / `__subtraction__` / `__power__` 等魔术方法）
+- **列表（List）**：方括号字面量 `[a, b, c]`、下标访问 `obj[key]` 与赋值 `obj[key] = value`、
+  负索引、`length()` 方法、`+` 拼接、字符串表示、`Pycp.List(obj)` 转换
+  （支持 `__get_item__` / `__set_item__` / `__list__` 魔术方法，自定义类可重载）
 - 装饰器语法糖（`@decorator`）：把被装饰对象传给装饰器函数，用返回值替换
 - 成员可见性（`@private` / `@public` 修饰类内成员，控制类外访问）
 - 模块顶层装饰器与文件级导出（`@private` 的顶层符号对其他文件 import 不可见）
@@ -175,8 +190,11 @@ ABI 调用序列（常量内联为 `g_c[]`，控制流翻译为 `goto`，函数�
 `pycp_fn_N`）。它不依赖解释器循环，但编译时仍需链接 `PycpRuntime` 库
 （静态 `libPycpRuntime.a` 或动态 `libPycpRuntime.so`）。
 
-> 已知限制：闭包捕获（匿名函数引用外层局部变量）暂未实现，此类代码
-> 翻译后行为可能与解释器不一致。
+> 说明：AOT 已实现完整的指令翻译（含类定义 `MAKE_CLASS`、属性
+> `LOAD_ATTR`/`STORE_ATTR`、列表字面量与下标 `BUILD_LIST`/`GET_ITEM`/`SET_ITEM`、
+> 函数调用等）。闭包通过 `BytecodeFunction` 的 native 模式落地，匿名函数捕获
+> 外层局部变量后翻译出的 C++ 与原生函数一致。生成的代码需链接 `PycpRuntime`
+> 库（静态 `libPycpRuntime.a` 或动态 `libPycpRuntime.so`）。
 
 **5. 一个最小示例**
 
@@ -354,11 +372,11 @@ Pycp/
 │   │   ├── CMakeLists.txt
 │   │   ├── include/
 │   │   │   ├── io.hpp             # 模块名与入口声明
-│   │   │   └── PycpFile.hpp       # FileObject（stdin/stdout/stderr）
+│   │   │   └── PycpFile.hpp       # File（stdin/stdout/stderr）
 │   │   └── src/
 │   │       ├── io.cpp             # 模块装配（stdin/stdout/stderr、print/input）
-│   │       ├── PycpFile.cpp       # FileObject 实现（write/readline）
-│   │       └── FileFromStream.cpp # File_FromStream 工厂
+│   │       ├── PycpFile.cpp       # File 实现（write/readline）
+│   │       └── FileFromStream.cpp # File::FromStream 工厂
 │   ├── Pycp/              # Pycp 标准库（Pycp.so）：类型转换与可见性装饰器
 │   │   ├── CMakeLists.txt
 │   │   ├── include/
@@ -406,6 +424,19 @@ cd backend
 cmake -S . -B build
 cmake --build build -j
 ```
+
+## 最近更新
+
+- **运行时类型命名去 `Object` 后缀**：`ListObject`→`List`、`ClassObject`→`Class`、
+  `InstanceObject`→`Instance`、`ModuleObject`→`Module`、`FileObject`→`File`，ABI 工厂/
+  类型操作函数统一改为对应类型的静态方法（`Integer::FromLong`、`String::FromCString`、
+  `List::New` 等），旧名与旧自由函数已完全移除。
+- **AOT（`--emit-cpp`）指令翻译补齐**：新增 `LOAD_ATTR`/`STORE_ATTR`/`BUILD_LIST`/
+  `GET_ITEM`/`SET_ITEM`/`MAKE_CLASS` 翻译，闭包通过 `BytecodeFunction` native 模式落地，
+  内建库导入经 `LoadNativeModule` 缓存，生成的 C++ 可经 g++ 真正编译运行。
+- **解释执行 bug 修复**：修复 `STORE_ATTR` 未释放 `pop` 传入值的引用计数导致的退出时
+  double free；`Module` 新增 `foreach_ref` 遍历命名空间使模块级对象在 GC 标记阶段可达，
+  避免误回收。
 
 ## 贡献指南
 
@@ -456,7 +487,7 @@ cmake --build build -j
 
 ## 免责声明
 
-本项目仍处于开发阶段，`--emit-cpp`（AOT）已实现真正的字节码指令翻译（输出依赖 PycpABI 的 `.cpp` 源文件），但闭包捕获暂未支持。
+本项目仍处于开发阶段，`--emit-cpp`（AOT）已实现真正的字节码指令翻译（输出依赖 PycpABI 的 `.cpp` 源文件），覆盖函数调用、类定义、属性访问、列表与下标、闭包（native 模式）等完整指令集。
 
 已支持的面向对象特性（解释执行）：
 
@@ -474,4 +505,4 @@ cmake --build build -j
   - `classtools`：`classtools.super()`（返回父类）、`classtools.public` / `classtools.private`（可见性装饰器函数，与 Pycp 库功能一致）。
 - 本版起不注入任何内建函数（不导入库时命名空间仅含用户定义内容）。
 
-暂不支持：类型注解（`x: int`）、`map`/`list` 字面量、`Pointer`、多继承，以及 AOT 后端的类定义翻译。
+暂不支持：类型注解（`x: int`）、`map` 字面量、`Pointer`、多继承。AOT 后端已支持类定义、属性、列表与下标翻译。

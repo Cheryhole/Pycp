@@ -2,16 +2,16 @@
 #define PYCP_CLASS_HPP
 
 // =============================================================
-// Pycp 类与实例对象（ClassObject / InstanceObject）
+// Pycp 类与实例对象（Class / Instance）
 //
-// ClassObject 对应一次 class 定义：持有类名、成员变量名表与
+// Class 对应一次 class 定义：持有类名、成员变量名表与
 // 方法表（方法名 -> Function*，含 __initialize__ / __string__ /
 // 运算符重载等魔术方法）。
 //
-// InstanceObject 对应一次实例化：持有所属 ClassObject 与实例
+// Instance 对应一次实例化：持有所属 Class 与实例
 // 字段表（字段名 -> Object*）。字段读写经 __getattr__/__setattr__。
 //
-// 运算符重载语义：InstanceObject 的 __addition__ 等虚函数转发到
+// 运算符重载语义：Instance 的 __addition__ 等虚函数转发到
 // 其类中同名魔术方法（__addition__ 等），即通过 ABI 的 Call 调
 // 用该方法。未定义对应魔术方法时抛 TypeError。
 //
@@ -27,11 +27,11 @@
 
 namespace Pycp {
 
-class ClassObject : public Object {
+class Class : public Object {
 private:
 	std::string name_;
 	// 父类（单继承，无父类时为 nullptr）。
-	ClassObject* parent_;
+	Class* parent_;
 	// 成员变量名（类定义中声明的顺序）。
 	std::vector<std::string> member_names_;
 	// 成员变量可见性：name -> true 表示 private。
@@ -42,14 +42,21 @@ private:
 	std::unordered_map<std::string, bool> method_visibility_;
 
 public:
-	explicit ClassObject(const std::string& name);
-	~ClassObject() override;
+	explicit Class(const std::string& name);
+	~Class() override;
+
+	// 静态工厂：创建指定名字的类对象（返回 Owned，refcount=1）。
+	static Class* New(const std::string& name);
+
+	// 静态操作：添加成员名 / 方法（与旧 ABI 自由函数语义一致）。
+	static void AddMemberName(Class* cls, const std::string& name);
+	static void AddMethod(Class* cls, const std::string& name, Object* fn);
 
 	// 覆盖基类虚函数：返回类名（供默认 __string__ 与异常信息使用）。
 	const char* get_name() const override { return name_.c_str(); }
 
-	ClassObject* get_parent() const { return parent_; }
-	void set_parent(ClassObject* parent);
+	Class* get_parent() const { return parent_; }
+	void set_parent(Class* parent);
 
 	const std::vector<std::string>& get_member_names() const { return member_names_; }
 	void add_member_name(const std::string& name);
@@ -79,11 +86,14 @@ public:
 	// 类的字符串表示：<Name class at 0xADDR>。
 	Object* __string__() override;
 
-	// 实例化钩子：调用类（Type::CLASS）时由 VM 的 CALL 指令触发。
-	// 默认实现创建 InstanceObject，先应用成员初始值（__init_defaults__），
+	// 实例化钩子：调用类时由 VM 的 CALL 指令触发。
+	// 默认实现创建 Instance，先应用成员初始值（__init_defaults__），
 	// 再调用 __initialize__（MAGIC_INITIALIZE）并返回该实例（Owned）。
 	// 子类（如 BuiltinTypeClass）可重写以返回内置对象。
 	virtual Object* instantiate(Object** argv, std::size_t argc);
+
+	// GC 子引用遍历：枚举方法表（methods_）中的 Function。
+	void foreach_ref(const std::function<void(Object*)>& visit) override;
 };
 
 // =============================================================
@@ -91,9 +101,9 @@ public:
 //
 // 通过「类实例化」语义暴露内置类型：调用 BuiltinTypeClass 时把
 // 参数传给原生构造回调，直接返回内置对象（String / Integer），
-// 而非 InstanceObject。语义对齐 Python 的 str(x) / int(x)。
+// 而非 Instance。语义对齐 Python 的 str(x) / int(x)。
 // =============================================================
-class BuiltinTypeClass : public ClassObject {
+class BuiltinTypeClass : public Class {
 private:
 	// 原生构造回调：接收 argv/argc，返回 Owned 内置对象。
 	PycpNativeFunction ctor_;
@@ -105,9 +115,9 @@ public:
 	Object* instantiate(Object** argv, std::size_t argc) override;
 };
 
-class InstanceObject : public Object {
+class Instance : public Object {
 private:
-	ClassObject* cls_;
+	Class* cls_;
 	// 实例字段表：字段名 -> Object*。实例拥有其引用。
 	std::unordered_map<std::string, Object*> fields_;
 
@@ -115,10 +125,13 @@ private:
 	Object* dispatch_magic(const std::string& name, Object* other);
 
 public:
-	explicit InstanceObject(ClassObject* cls);
-	~InstanceObject() override;
+	explicit Instance(Class* cls);
+	~Instance() override;
 
-	ClassObject* get_class() const { return cls_; }
+	// 静态工厂：创建指定类的实例（返回 Owned，refcount=1）。
+	static Instance* New(Class* cls);
+
+	Class* get_class() const { return cls_; }
 
 	// 字段读写。
 	Object* __getattr__(const std::string& name) override;
@@ -147,13 +160,23 @@ public:
 	Object* __not_equal__(Object* other) override;
 	Object* __greater_than__(Object* other) override;
 	Object* __greater_equal__(Object* other) override;
+
+	// 下标运算：转发到类的 __get_item__ / __set_item__ 方法。
+	Object* __get_item__(Object* key) override;
+	Object* __set_item__(Object* key, Object* value) override;
+
+	// list 转换：转发到类的 __list__ 方法（未定义抛 TypeError）。
+	Object* __list__() override;
+
+	// GC 子引用遍历：枚举所属类（cls_）与实例字段（fields_）。
+	void foreach_ref(const std::function<void(Object*)>& visit) override;
 };
 
 // =============================================================
 // 方法内部访问标志（thread_local）
 // =============================================================
 // 方法体执行期间（BytecodeFunction::invoke）递增深度，退出递减。
-// InstanceObject 的 __getattr__/__setattr__ 据此区分「方法内部 self 访问」
+// Instance 的 __getattr__/__setattr__ 据此区分「方法内部 self 访问」
 // 与「外部 obj 访问」：深度 > 0 时放行 private，否则拦截。
 // =============================================================
 int internal_access_depth();
@@ -166,16 +189,16 @@ void leave_internal_access();
 // 方法体执行期间压入当前接收者实例（self），供 super() 原生函数读取
 // 当前实例 → 所属类 → 父类。与 internal_access_depth 配套使用。
 // =============================================================
-void push_current_self(InstanceObject* self);
+void push_current_self(Instance* self);
 void pop_current_self();
-InstanceObject* current_self();
+Instance* current_self();
 
 // =============================================================
 // BoundMethod：绑定到接收者对象的方法对象
 //
 // 当从实例 / 文件等对象取方法（obj.method）时返回 BoundMethod，其
 // invoke 会将接收者作为 self（argv[0]）传入底层方法，实现 self 的
-// 自动绑定。接收者为任意 Object*（InstanceObject / FileObject 等）。
+// 自动绑定。接收者为任意 Object*（Instance / File 等）。
 // =============================================================
 class BoundMethod : public Function {
 private:
@@ -187,6 +210,9 @@ public:
 	~BoundMethod() override;
 
 	Object* invoke(Object** argv, std::size_t argc) override;
+
+	// GC 子引用遍历：枚举绑定接收者（instance_）与底层方法（method_）。
+	void foreach_ref(const std::function<void(Object*)>& visit) override;
 };
 
 } // namespace Pycp

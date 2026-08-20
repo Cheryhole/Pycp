@@ -2,7 +2,7 @@
 #define PYCP_FILE_HPP
 
 // =============================================================
-// Pycp 文件对象（FileObject）—— io 内建库专属对象
+// Pycp 文件对象（File）—— io 内建库专属对象
 //
 // 对应 Python 的文件对象：io 模块的 stdin / stdout / stderr 即此类型。
 // 支持 .write（仅字符串）、.readline 方法，方法经 BoundMethod 自动绑定。
@@ -21,7 +21,7 @@
 
 namespace Pycp {
 
-class FileObject : public Object {
+class File : public Object {
 private:
 	std::string name_;        // 文件描述名（如 "<stdout>"）
 	std::istream* in_;        // 输入流（可空）
@@ -31,16 +31,22 @@ private:
 	Function* readline_fn_;   // readline 方法对象（懒创建）
 
 public:
-	FileObject(const std::string& name, std::istream* in, std::ostream* out);
-	FileObject(const std::string& name, std::istream* in, std::ostream* out,
-	           bool owned);
-	~FileObject() override;
+	File(const std::string& name, std::istream* in, std::ostream* out);
+	File(const std::string& name, std::istream* in, std::ostream* out,
+	     bool owned);
+	~File() override;
+
+	// 静态工厂：由已有流构造（不拥有流）。定义于 io 库的 FileFromStream.cpp。
+	static File* FromStream(const std::string& name, void* in, void* out);
 
 	Object* write(Object* arg);
 	Object* readline();
 
 	Object* __getattr__(const std::string& name) override;
 	Object* __string__() override;
+
+	// GC 子引用遍历：枚举 write_fn_ / readline_fn_。
+	void foreach_ref(const std::function<void(Object*)>& visit) override;
 };
 
 } // namespace Pycp

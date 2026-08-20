@@ -31,19 +31,19 @@ Object* _builtin_print([[maybe_unused]] Object* self, Object** argv, std::size_t
 Function::Function() : Function("", nullptr){}
 
 Function::Function(const char* name)
-		: Object(Type::FUNCTION), kind(FunctionKind::Native), name(name), native(nullptr){}
+		: Object("Function"), kind(FunctionKind::Native), name(name), native(nullptr){}
 
 Function::Function(const char* name, PycpNativeFunction func)
-		: Object(Type::FUNCTION), kind(FunctionKind::Native), name(name), native(func){}
+		: Object("Function"), kind(FunctionKind::Native), name(name), native(func){}
 
 Object* Function::__string__(){
 	// 匿名函数（name 为空或匿名占位名）输出 "@anonymous"。
 	if (name == nullptr || name[0] == '\0' ||
 	    std::string(name) == ANONYMOUS_FUNCTION) {
-		return String_FromString("@anonymous");
+		return String::FromCString("@anonymous");
 	}
 	// 普通函数："<function \"name\" at 0xADDR>"。
-	return String_FromString(("<function \"" + std::string(name) +
+	return String::FromCString(("<function \"" + std::string(name) +
 	                          "\" at " + ptr_address(this) + ">").c_str());
 }
 

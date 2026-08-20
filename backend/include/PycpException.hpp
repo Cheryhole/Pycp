@@ -93,6 +93,15 @@ class ImportError : public Exception {
 				: Exception(file_, lineno_, "ImportError: " + msg) {}
 };
 
+// 索引错误：下标越界 / 非法索引
+class IndexError : public Exception {
+	public:
+		explicit IndexError(const std::string& msg)
+				: Exception("IndexError: " + msg) {}
+		IndexError(const std::string& file_, int lineno_, const std::string& msg)
+				: Exception(file_, lineno_, "IndexError: " + msg) {}
+};
+
 // 属性错误：对象不存在指定属性 / 方法
 class AttributeError : public Exception {
 	public:

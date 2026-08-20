@@ -278,6 +278,25 @@ static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 			compile_class_expr(em, ce, scope);
 			break;
 		}
+		case NodeType::LIST_LITERAL: {
+			ListLiteral* ll = static_cast<ListLiteral*>(e);
+			// 元素依次求值压栈（保持书写顺序），最后 BUILD_LIST n。
+			std::size_t n = (ll->elements != nullptr) ? ll->elements->size() : 0;
+			if (ll->elements != nullptr) {
+				for (Expression* el : *(ll->elements)) {
+					compile_expr(em, el, scope);
+				}
+			}
+			em.emit(Op::BUILD_LIST, static_cast<int32_t>(n));
+			break;
+		}
+		case NodeType::INDEX_EXPRESSION: {
+			IndexExpression* ie = static_cast<IndexExpression*>(e);
+			compile_expr(em, ie->target, scope);
+			compile_expr(em, ie->index, scope);
+			em.emit(Op::GET_ITEM);
+			break;
+		}
 		default:
 			throw Pycp::Exception("Codegen: unsupported expression type.");
 	}
@@ -302,6 +321,13 @@ static void compile_stmt(Emitter& em, Statement* s, Scope& scope) {
 				compile_expr(em, ae->target, scope);
 				compile_expr(em, as->value, scope);
 				em.emit(Op::STORE_ATTR, static_cast<int32_t>(em.intern_name(*ae->attr)));
+			} else if (as->target->get_type() == NodeType::INDEX_EXPRESSION) {
+				// 下标赋值：obj[key] = value
+				IndexExpression* ie = static_cast<IndexExpression*>(as->target);
+				compile_expr(em, ie->target, scope);
+				compile_expr(em, ie->index, scope);
+				compile_expr(em, as->value, scope);
+				em.emit(Op::SET_ITEM);
 			} else {
 				throw Pycp::Exception("Codegen: unsupported assignment target.");
 			}

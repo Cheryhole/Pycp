@@ -6,58 +6,21 @@
 #include "PycpManager.hpp"
 #include "PycpModule.hpp"
 #include "PycpClass.hpp"
+#include "PycpList.hpp"
 
 #include <istream>
 #include <ostream>
 
 namespace Pycp {
 
-Object* Integer_FromLong(long long value){
-	return New<Integer>(static_cast<int64_t>(value));
-}
-
-Object* String_FromString(const char* value){
-	return New<String>(std::string(value));
-}
-
-ModuleObject* Module_New(const std::string& name){
-	return New<ModuleObject>(name);
-}
-
-Object* Module_GetAttr(ModuleObject* mod, const std::string& name){
-	if (mod == nullptr) throw AttributeError("cannot get attribute from null module.");
-	return mod->__getattr__(name);
-}
-
-ClassObject* Class_New(const std::string& name){
-	return New<ClassObject>(name);
-}
-
-InstanceObject* Instance_New(ClassObject* cls){
-	return New<InstanceObject>(cls);
-}
-
-// File_FromStream 的实现已迁至 builtin_libraries/io/FileFromStream.cpp
-//（FileObject 是 io 内建库的专属对象）。
-
-void Class_AddMemberName(ClassObject* cls, const std::string& name){
-	if (cls == nullptr) throw TypeError("cannot add member to null class.");
-	cls->add_member_name(name);
-}
-
-void Class_AddMethod(ClassObject* cls, const std::string& name, Object* fn){
-	if (cls == nullptr) throw TypeError("cannot add method to null class.");
-	if (fn == nullptr || fn->type != Type::FUNCTION)
-		throw TypeError("method must be a function.");
-	cls->add_method(name, static_cast<Function*>(fn));
-}
-
 Object* GetAttr(Object* obj, const std::string& name){
 	if (obj == nullptr) throw AttributeError("cannot get attribute from null object.");
 	// 返回 Owned：调用方负责 Decref。
 	// 实例方法：新建绑定方法（self 自动绑定）。
-	if (obj->type == Type::INSTANCE) {
-		InstanceObject* inst = static_cast<InstanceObject*>(obj);
+	// 注：instance 的 type_name 为所属类名，无法用字符串与 class 区分，
+	// 故用 dynamic_cast 判定（类与实例的「名称」一致，正是用户预期）。
+	if (dynamic_cast<Instance*>(obj) != nullptr) {
+		Instance* inst = static_cast<Instance*>(obj);
 		// 字段优先；其次方法（绑定）。
 		Object* field = inst->__getattr__(name);
 		if (field != nullptr) {
@@ -70,12 +33,12 @@ Object* GetAttr(Object* obj, const std::string& name){
 		throw AttributeError("instance has no attribute '" + name + "'");
 	}
 	// 文件对象的方法：绑定到文件对象（self 自动绑定）。
-	if (obj->type == Type::FILE) {
+	if (obj->is_type("File")) {
 		Object* v = obj->__getattr__(name);
 		if (v == nullptr) {
 			throw AttributeError("file has no attribute '" + name + "'");
 		}
-		if (v->type == Type::FUNCTION) {
+		if (v->is_type("Function")) {
 			// 绑定方法：新建 BoundMethod（Owned）。
 			return New<BoundMethod>(obj, static_cast<Function*>(v));
 		}
@@ -83,8 +46,13 @@ Object* GetAttr(Object* obj, const std::string& name){
 		Incref(v);
 		return v;
 	}
-	// 其他类型（模块/类）：__getattr__ 返回 Borrowed，转 Owned。
+	// 其他类型（模块/类/list 等）：__getattr__ 返回 Borrowed。
+	// 若返回的是 Function（如 list 的 length 方法），包装为绑定方法，
+	// 使调用时 self 自动绑定到接收者对象（与 File 分支一致）。
 	Object* v = obj->__getattr__(name);
+	if (v != nullptr && v->is_type("Function")) {
+		return New<BoundMethod>(obj, static_cast<Function*>(v));
+	}
 	if (v != nullptr) Incref(v);
 	return v;
 }
@@ -95,6 +63,43 @@ void SetAttr(Object* obj, const std::string& name, Object* value){
 		throw AttributeError("cannot set attribute on null object.");
 	}
 	obj->__setattr__(name, value);
+}
+
+Object* GetItem(Object* obj, Object* key){
+	if (obj == nullptr) throw TypeError("Cannot get item from null object.");
+	return obj->__get_item__(key);
+}
+
+Object* SetItem(Object* obj, Object* key, Object* value){
+	if (obj == nullptr) throw TypeError("Cannot set item on null object.");
+	return obj->__set_item__(key, value);
+}
+
+Object* ApplyDecorator(Object* deco, Object* target,
+                       const std::string& file, int line){
+	if (deco == nullptr) {
+		throw TypeError(file, line, "decorator object is null");
+	}
+	if (!deco->is_type("Function")) {
+		throw TypeError(file, line, "decorator is not callable");
+	}
+	Object* argv[1] = { target };
+	Function* fn = static_cast<Function*>(deco);
+	// 装饰器返回 Owned；调用方负责接管或释放。
+	return fn->invoke(argv, 1);
+}
+
+bool ApplyDecoratorVisibility(Object* deco,
+                              const std::string& file, int line){
+	Object* placeholder = New<Object>("@anonymous");
+	Object* result = ApplyDecorator(deco, placeholder, file, line);
+	Decref(placeholder);
+	if (result == nullptr) {
+		throw TypeError(file, line, "decorator returned null");
+	}
+	bool priv = result->is_private();
+	Decref(result);
+	return priv;
 }
 
 Object* Add(Object* lhs, Object* rhs){
@@ -126,12 +131,12 @@ Object* Compare(Object* lhs, Object* rhs, int op){
 	if (lhs == nullptr || rhs == nullptr)
 		throw TypeError("Cannot compare null object.");
 
-	// 仅同类型的 INTEGER / STRING 可参与真正的值比较；
+	// 仅同类型的 Integer / String 可参与真正的值比较；
 	// 其余组合（含 None、跨类型）与 VM COMPARE_OP 语义一致：
 	//   EQ → 0（false）、NE → 1（true）、其余抛 TypeError。
 	bool comparable =
-		(lhs->type == rhs->type) &&
-		(lhs->type == Type::INTEGER || lhs->type == Type::STRING);
+		(lhs->type_name() == rhs->type_name()) &&
+		(lhs->is_type("Integer") || lhs->is_type("String"));
 
 	if (comparable) {
 		switch (op) {
@@ -156,15 +161,15 @@ Object* Compare(Object* lhs, Object* rhs, int op){
 
 bool IsFalse(Object* v){
 	if (v == nullptr) return true;
-	if (v->type == Type::NONE) return true;
-	if (v->type == Type::INTEGER)
+	if (v->is_type("None")) return true;
+	if (v->is_type("Integer"))
 		return static_cast<Integer*>(v)->get_value() == 0;
 	return false;
 }
 
 Object* Call(Object* callable, Object** argv, std::size_t argc){
 	if (callable == nullptr) throw TypeError("Cannot call null object.");
-	if (callable->type != Type::FUNCTION){
+	if (!callable->is_type("Function")){
 		throw TypeError("Object is not callable.");
 	}
 	Function* fn = static_cast<Function*>(callable);
@@ -244,7 +249,8 @@ void Environment_Store(BC::Environment* env, const std::string& name,
 
 // =============================================================
 // C 语言 ABI 转发（保留 PYCP 前缀，extern "C"）
-//   纯转发至 namespace Pycp 内无前缀版本。C 端以 void* 操作句柄。
+//   纯转发至各类型的静态方法 / namespace Pycp 内无前缀版本。
+//   C 端以 void* 操作句柄。
 // =============================================================
 
 #ifdef __cplusplus
@@ -252,10 +258,10 @@ extern "C" {
 #endif
 
 PYCP_C_API void* PYCP_Integer_FromLong_void(long long value){
-	return static_cast<void*>(Pycp::Integer_FromLong(value));
+	return static_cast<void*>(Pycp::Integer::FromLong(value));
 }
-PYCP_C_API void* PYCP_String_FromString_void(const char* value){
-	return static_cast<void*>(Pycp::String_FromString(value));
+PYCP_C_API void* PYCP_String_FromCString_void(const char* value){
+	return static_cast<void*>(Pycp::String::FromCString(value));
 }
 PYCP_C_API void* PYCP_Add(void* lhs, void* rhs){
 	return static_cast<void*>(Pycp::Add(static_cast<Pycp::Object*>(lhs), static_cast<Pycp::Object*>(rhs)));
@@ -282,14 +288,14 @@ PYCP_C_API void* PYCP_Call(void* callable, void** argv, std::size_t argc){
 	return static_cast<void*>(Pycp::Call(static_cast<Pycp::Object*>(callable), reinterpret_cast<Pycp::Object**>(argv), argc));
 }
 PYCP_C_API void* PYCP_Class_New_void(const char* name){
-	return static_cast<void*>(Pycp::Class_New(std::string(name)));
+	return static_cast<void*>(Pycp::Class::New(std::string(name)));
 }
 PYCP_C_API void* PYCP_Instance_New_void(void* cls){
-	return static_cast<void*>(Pycp::Instance_New(static_cast<Pycp::ClassObject*>(cls)));
+	return static_cast<void*>(Pycp::Instance::New(static_cast<Pycp::Class*>(cls)));
 }
 PYCP_C_API void PYCP_Class_AddMethod(void* cls, const char* name, void* fn){
-	Pycp::Class_AddMethod(static_cast<Pycp::ClassObject*>(cls), std::string(name),
-	                      static_cast<Pycp::Object*>(fn));
+	Pycp::Class::AddMethod(static_cast<Pycp::Class*>(cls), std::string(name),
+	                       static_cast<Pycp::Object*>(fn));
 }
 PYCP_C_API void* PYCP_GetAttr(void* obj, const char* name){
 	return static_cast<void*>(Pycp::GetAttr(static_cast<Pycp::Object*>(obj), std::string(name)));

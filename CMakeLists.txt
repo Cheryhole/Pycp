@@ -203,7 +203,12 @@ endif()
 # 链接 Flex 库（仅 Linux）与 backend 运行时
 # =====================================================================
 if(UNIX AND NOT APPLE)
-    target_link_libraries(pycp PRIVATE ${FLEX_LIBRARIES})
+    # flex 库（libfl）提供 yywrap/main，但本工程 lexer 已 noyywrap 且自带
+    # main，故通常无需链接；仅当 find_package 显式给出且非空时才链接，
+    # 且允许通过 -DPYCP_SKIP_FLEX_LINK=ON 跳过（ASan 下 libfl 符号异常）。
+    if(FLEX_LIBRARIES AND NOT PYCP_SKIP_FLEX_LINK)
+        target_link_libraries(pycp PRIVATE ${FLEX_LIBRARIES})
+    endif()
 endif()
 
 # 根据选项选择 runtime 库：shared ON 时动态链接，否则静态链接（默认）
@@ -217,7 +222,7 @@ endif()
 # 不再静态链接进 pycp。pycp 仅链接 PycpRuntime。
 target_link_libraries(pycp PRIVATE ${PYCP_RUNTIME_TARGET})
 
-# 原生扩展（dlopen 加载的 .so）需解析主程序的 C++ 符号（Module_New/New 等），
+# 原生扩展（dlopen 加载的 .so）需解析主程序的 C++ 符号（Module::New/New 等），
 # 因此以 -rdynamic 导出全局符号（POSIX）。Windows 下静态链接需 --export-all-symbols。
 if(UNIX AND NOT APPLE)
     target_link_options(pycp PRIVATE -rdynamic)
@@ -273,8 +278,13 @@ set(PYCP_AOT_HEADERS
     PycpNone.hpp
     PycpInteger.hpp
     PycpString.hpp
+    PycpList.hpp
     PycpManager.hpp
     PycpModule.hpp
+    PycpClass.hpp
+    PycpBytecode.hpp
+    PycpBytecodeVM.hpp
+    PycpNativeExt.hpp
     PycpABI.hpp
 )
 

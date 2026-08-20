@@ -5,20 +5,10 @@
 #include "PycpConfig.hpp"
 
 #include <cstdint>
+#include <functional>
+#include <string>
 
 namespace Pycp{
-
-enum class Type{
-	OBJECT,
-	NONE,
-	INTEGER,
-	STRING,
-	FUNCTION,
-	MODULE,
-	CLASS,
-	INSTANCE,
-	FILE,
-};
 
 // 对象头 GC 标记位（gc_flags）
 enum class GCFlag : uint32_t{
@@ -52,6 +42,9 @@ class Object{
 	private:
 		uint32_t refcount;
 		GCFlag gc_flags;
+		// 类型名（替代旧 Type 枚举，字符串判型）。
+		std::string type_name_;
+
 		// 可见性标记：true 表示私有（private），false 表示公开（public）。
 		// 作为所有对象的通用属性，供 public/private 装饰器（C++ ABI 底层）设置：
 		//   - 类内成员：控制该成员在类外的访问可见性。
@@ -59,10 +52,18 @@ class Object{
 		bool private_;
 
 	public:
-		Type type;
-
-		Object(Type type = Type::OBJECT);
+		Object(const std::string& type_name);
 		virtual ~Object();
+
+		// 类型名：用于运行时类型判定，替代旧的 Type 枚举。
+		// 内置类型使用大写名（与 ABI 一致）："None" / "Integer" / "String" /
+		// "Function" / "List" / "File"；class / instance / module 不采用统一
+		// 大写名，而是返回各自的真实名称（get_name()），自定义类型名
+		// 原样保留大小写（如 class a{} 的类与实例类型名均为 "a"）。
+		const std::string& type_name() const { return type_name_; }
+
+		// 类型判定便捷方法。
+		bool is_type(const std::string& name) const { return type_name_ == name; }
 
 		// 可见性查询/设置（默认 public，即 private_ == false）。
 		bool is_private() const { return private_; }
@@ -80,7 +81,7 @@ class Object{
 
 		// 对象显示名（供默认 __string__ 输出 <name at 0xADDR> 使用）。
 		// 默认返回匿名占位名 @anonymous；有名字的子类型（Function /
-		// ClassObject / ModuleObject 等）override 返回各自的真实名字。
+		// Class / Module 等）override 返回各自的真实名字。
 		virtual const char* get_name() const;
 
 		virtual Object* __integer__();
@@ -103,6 +104,22 @@ class Object{
 		virtual Object* __not_equal__(Object*);
 		virtual Object* __greater_than__(Object*);
 		virtual Object* __greater_equal__(Object*);
+
+	// 下标运算（self[key] 与 self[key] = value）。
+	// 默认抛 TypeError；List 与 Instance（转发到类的
+	// __get_item__/__set_item__ 方法）override。
+	virtual Object* __get_item__(Object* key);
+	virtual Object* __set_item__(Object* key, Object* value);
+
+	// list 转换（Pycp.List(obj)）。
+	// 默认抛 TypeError；List 返回自身（幂等）。
+	virtual Object* __list__();
+
+	// GC 子引用遍历：枚举本对象持有的 Object* 子引用，供标记-清除与
+	// Decref 递归释放统一使用（替代旧 Type 枚举的 switch 分发）。
+	// 默认空实现；持有子引用的子类（None/Class/Instance/
+	// File/List 等）override。
+	virtual void foreach_ref(const std::function<void(Object*)>& visit);
 
 		};
 

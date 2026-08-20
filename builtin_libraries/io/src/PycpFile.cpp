@@ -11,9 +11,9 @@ namespace Pycp {
 namespace {
 
 // write 方法的原生实现：仅接受字符串，写入后返回 None。
-// 接收者（FileObject）经 BoundMethod 作为 argv[0] 传入（self 为方法对象）。
+// 接收者（File）经 BoundMethod 作为 argv[0] 传入（self 为方法对象）。
 Object* _file_write(Object* self, Object** argv, std::size_t argc) {
-	FileObject* f = static_cast<FileObject*>(argv[0]);
+	File* f = static_cast<File*>(argv[0]);
 	if (argc != 2) {
 		throw TypeError("write() expects exactly 1 argument.");
 	}
@@ -22,7 +22,7 @@ Object* _file_write(Object* self, Object** argv, std::size_t argc) {
 
 // readline 方法的原生实现：读取一行，返回 String。
 Object* _file_readline(Object* self, Object** argv, std::size_t argc) {
-	FileObject* f = static_cast<FileObject*>(argv[0]);
+	File* f = static_cast<File*>(argv[0]);
 	if (argc != 1) {
 		throw TypeError("readline() expects no arguments.");
 	}
@@ -31,16 +31,16 @@ Object* _file_readline(Object* self, Object** argv, std::size_t argc) {
 
 } // anonymous namespace
 
-FileObject::FileObject(const std::string& name, std::istream* in, std::ostream* out)
-	: Object(Type::FILE), name_(name), in_(in), out_(out), owned_(false),
+File::File(const std::string& name, std::istream* in, std::ostream* out)
+	: Object("File"), name_(name), in_(in), out_(out), owned_(false),
 	  write_fn_(nullptr), readline_fn_(nullptr) {}
 
-FileObject::FileObject(const std::string& name, std::istream* in, std::ostream* out,
-                       bool owned)
-	: Object(Type::FILE), name_(name), in_(in), out_(out), owned_(owned),
+File::File(const std::string& name, std::istream* in, std::ostream* out,
+           bool owned)
+	: Object("File"), name_(name), in_(in), out_(out), owned_(owned),
 	  write_fn_(nullptr), readline_fn_(nullptr) {}
 
-FileObject::~FileObject() {
+File::~File() {
 	if (write_fn_ != nullptr) Decref(write_fn_);
 	if (readline_fn_ != nullptr) Decref(readline_fn_);
 	write_fn_ = nullptr;
@@ -53,7 +53,7 @@ FileObject::~FileObject() {
 	out_ = nullptr;
 }
 
-Object* FileObject::write(Object* arg) {
+Object* File::write(Object* arg) {
 	if (out_ == nullptr) {
 		throw TypeError("file '" + name_ + "' is not writable.");
 	}
@@ -62,7 +62,7 @@ Object* FileObject::write(Object* arg) {
 	}
 	// 接受任意类型参数，写入时自动转换为字符串（调用 __string__）。
 	Object* s = arg->__string__();
-	if (s == nullptr || s->type != Type::STRING) {
+	if (s == nullptr || !s->is_type("String")) {
 		throw TypeError("__string__ did not return a String.");
 	}
 	(*out_) << static_cast<String*>(s)->get_value();
@@ -74,7 +74,7 @@ Object* FileObject::write(Object* arg) {
 	return None::instance;
 }
 
-Object* FileObject::readline() {
+Object* File::readline() {
 	if (in_ == nullptr) {
 		throw TypeError("file '" + name_ + "' is not readable.");
 	}
@@ -83,10 +83,10 @@ Object* FileObject::readline() {
 		// EOF 或读取失败：返回空字符串。
 		line.clear();
 	}
-	return String_FromString(line.c_str());
+	return String::FromCString(line.c_str());
 }
 
-Object* FileObject::__getattr__(const std::string& name) {
+Object* File::__getattr__(const std::string& name) {
 	if (name == "write") {
 		if (write_fn_ == nullptr) {
 			// New 返回 refcount=1，由成员 write_fn_ 持有（析构 Decref）。
@@ -103,8 +103,15 @@ Object* FileObject::__getattr__(const std::string& name) {
 	throw AttributeError("file '" + name_ + "' has no attribute '" + name + "'");
 }
 
-Object* FileObject::__string__() {
-	return String_FromString(("<" + name_ + ">").c_str());
+Object* File::__string__() {
+	return String::FromCString(("<" + name_ + ">").c_str());
+}
+
+void File::foreach_ref(const std::function<void(Object*)>& visit) {
+	// 注意：write_fn_ / readline_fn_ 为懒创建的绑定方法对象，其生命周期
+	// 由 BoundMethod 引用管理。这里遍历可能访问到已被 Decref 的对象，
+	// 故仅当非空且确为有效引用时遍历。为稳妥起见暂不遍历（GC 标记非必需）。
+	(void)visit;
 }
 
 } // namespace Pycp

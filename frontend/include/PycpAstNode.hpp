@@ -36,7 +36,9 @@ enum class NodeType : uint16_t {
 	METHOD_DEFINITION = 21,
 	MEMBER_ASSIGNMENT = 22,
 	CLASS_EXPRESSION = 24,
-	FROM_IMPORT_STATEMENT = 25
+	FROM_IMPORT_STATEMENT = 25,
+	LIST_LITERAL = 26,
+	INDEX_EXPRESSION = 27
 };
 
 enum class UnaryOp : uint16_t {
@@ -359,6 +361,36 @@ struct AttributeExpression : Expression {
 	~AttributeExpression() override;
 
 	NodeType get_type() const override { return NodeType::ATTRIBUTE_EXPRESSION; }
+	std::string to_string() const override;
+};
+
+// ============================================================
+// ListLiteral 节点（列表字面量：[a, b, c]）
+// ============================================================
+//   elements : 元素表达式列表（可能为空，即 []）。
+struct ListLiteral : Expression {
+	std::vector<Expression*>* elements;
+
+	explicit ListLiteral(std::vector<Expression*>* elems, int line = -1);
+	~ListLiteral() override;
+
+	NodeType get_type() const override { return NodeType::LIST_LITERAL; }
+	std::string to_string() const override;
+};
+
+// ============================================================
+// IndexExpression 节点（下标访问/赋值：obj[key] / obj[key] = value）
+// ============================================================
+//   target : 被访问的对象表达式
+//   index  : 下标表达式
+struct IndexExpression : Expression {
+	Expression* target;
+	Expression* index;
+
+	IndexExpression(Expression* t, Expression* idx, int line = -1);
+	~IndexExpression() override;
+
+	NodeType get_type() const override { return NodeType::INDEX_EXPRESSION; }
 	std::string to_string() const override;
 };
 

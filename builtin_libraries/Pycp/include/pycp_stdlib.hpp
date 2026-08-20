@@ -17,13 +17,13 @@
 
 namespace Pycp {
 
-class ModuleObject; // 前置声明（完整定义见 runtime 的 backend/include/PycpModule.hpp）
+class Module; // 前置声明（完整定义见 runtime 的 backend/include/PycpModule.hpp）
 
 // 本库的模块名（import Pycp 时匹配）。
 constexpr const char* MODULE_NAME = "Pycp";
 
 // 动态库入口（extern "C" 定义于 PycpModule.cpp）。
-extern "C" ModuleObject* PycpModuleInit();
+extern "C" Module* PycpModuleInit();
 
 } // namespace Pycp
 

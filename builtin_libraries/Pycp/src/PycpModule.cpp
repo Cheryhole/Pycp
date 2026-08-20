@@ -1,5 +1,5 @@
 #include "pycp_stdlib.hpp"
-#include "PycpModule.hpp"   // runtime 的 ModuleObject 完整定义
+#include "PycpModule.hpp"   // runtime 的 Module 完整定义
 #include "PycpFunction.hpp"
 #include "PycpString.hpp"
 #include "PycpInteger.hpp"
@@ -20,7 +20,7 @@ Object* _builtin_string_ctor(Object*, Object** argv, std::size_t argc) {
 	if (argc != 1) throw TypeError("String() expects exactly 1 argument.");
 	if (argv[0] == nullptr) throw TypeError("String() argument is null.");
 	Object* s = argv[0]->__string__();
-	if (s == nullptr) return String_FromString("");
+	if (s == nullptr) return String::FromCString("");
 	// __string__ 可能返回 Borrowed（如 String 返回 this），需 Incref 转为
 	// Owned（BuiltinTypeClass::instantiate 期望 Owned 返回值）。
 	Incref(s);
@@ -36,9 +36,19 @@ Object* _builtin_integer_ctor(Object*, Object** argv, std::size_t argc) {
 	return New<Integer>(argv[0]);
 }
 
+// List(x)：List 类型构造器。调用对象的 __list__ 转换，返回内置 List。
+// 本版仅 list -> list 幂等（返回自身）；其他类型抛 TypeError。
+Object* _builtin_list_ctor(Object*, Object** argv, std::size_t argc) {
+	if (argc != 1) throw TypeError("List() expects exactly 1 argument.");
+	if (argv[0] == nullptr) throw TypeError("List() argument is null.");
+	Object* r = argv[0]->__list__();
+	if (r == nullptr) throw TypeError("List() conversion failed.");
+	return r;
+}
+
 // 将类对象以指定名字放入模块命名空间（构造 BuiltinTypeClass ->
 // Incref 进 map -> 释放 Owned）。
-void set_type_class(ModuleObject* mod, const char* name, PycpNativeFunction ctor) {
+void set_type_class(Module* mod, const char* name, PycpNativeFunction ctor) {
 	auto* ns = mod->get_namespace();
 	BuiltinTypeClass* cls = New<BuiltinTypeClass>(name, ctor);
 	(*ns)[name] = cls;
@@ -80,7 +90,7 @@ Object* _builtin_public(Object* self, Object** argv, std::size_t argc) {
 }
 
 // 将原生函数以指定名字放入模块命名空间。
-void set_func(ModuleObject* mod, const char* name, PycpNativeFunction fn) {
+void set_func(Module* mod, const char* name, PycpNativeFunction fn) {
 	auto* ns = mod->get_namespace();
 	Function* f = New<Function>(name, fn);
 	(*ns)[name] = f;
@@ -95,18 +105,18 @@ Object* _object_init(Object*, Object** argv, std::size_t argc) {
 }
 
 // 将普通类对象放入命名空间（用于 Pycp.Object 基类）。
-void set_plain_class(ModuleObject* mod, const char* name) {
+void set_plain_class(Module* mod, const char* name) {
 	auto* ns = mod->get_namespace();
-	ClassObject* cls = New<ClassObject>(name);
+	Class* cls = New<Class>(name);
 	(*ns)[name] = cls;
 	Incref(cls);
 	Decref(cls); // namespace 持有
 }
 
 // 将普通类对象放入命名空间，并附带默认 __initialize__（用于 Pycp.Object）。
-void set_object_class(ModuleObject* mod, const char* name) {
+void set_object_class(Module* mod, const char* name) {
 	auto* ns = mod->get_namespace();
-	ClassObject* cls = New<ClassObject>(name);
+	Class* cls = New<Class>(name);
 	// 默认 __initialize__：空实现，供子类 super().__initialize__(self) 调用。
 	Function* init = New<Function>("__initialize__", _object_init);
 	cls->add_method("__initialize__", init);
@@ -116,18 +126,19 @@ void set_object_class(ModuleObject* mod, const char* name) {
 	Decref(cls); // namespace 持有
 }
 
-ModuleObject* make_pycp_module() {
-	ModuleObject* mod = Module_New(MODULE_NAME);
+Module* make_pycp_module() {
+	Module* mod = Module::New(MODULE_NAME);
 
 	// 内置类型类：Pycp.String(x) / Pycp.Integer(x)。
 	// 调用时走类实例化路径（BuiltinTypeClass::instantiate），把参数
 	// 传给构造回调，返回内置 String / Integer 对象。
 	set_type_class(mod, "String", _builtin_string_ctor);
 	set_type_class(mod, "Integer", _builtin_integer_ctor);
+	set_type_class(mod, "List", _builtin_list_ctor);
 
 	// Pycp.Object 基类：类似 Python 的 object，含默认空 __initialize__
 	// （供子类 super().__initialize__(self) 调用）。不自动继承；
-	// 实例化走默认 instantiate（返回 InstanceObject）。
+	// 实例化走默认 instantiate（返回 Instance）。
 	set_object_class(mod, "Object");
 
 	// 可见性装饰器函数：@private / @public（与 classtools 库功能一致）。
@@ -141,7 +152,7 @@ ModuleObject* make_pycp_module() {
 
 // 动态库入口（统一符号名 PycpModuleInit，靠文件名区分模块）。
 // 由 VM::load_module 经 LoadNativeModule 的 dlsym("PycpModuleInit") 调用。
-extern "C" ModuleObject* PycpModuleInit() {
+extern "C" Module* PycpModuleInit() {
 	return make_pycp_module();
 }
 

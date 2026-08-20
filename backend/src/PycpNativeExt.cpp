@@ -21,13 +21,13 @@
 namespace Pycp {
 
 // 原生扩展入口符号约定：所有动态库导出统一符号
-//   extern "C" ModuleObject* PycpModuleInit();
+//   extern "C" Module* PycpModuleInit();
 // （靠文件名区分模块，dlsym 统一查 "PycpModuleInit"）。
 namespace {
 constexpr const char* ENTRY_SYMBOL = "PycpModuleInit";
 
 // 模块初始化入口函数指针类型。
-using NativeModuleInitFn = ModuleObject* (*)();
+using NativeModuleInitFn = Module* (*)();
 
 // 已加载的动态库句柄缓存（模块名 -> dlopen 句柄），进程级。
 std::unordered_map<std::string, void*>* g_handles = nullptr;
@@ -85,8 +85,8 @@ const std::string& GetStdlibDir() {
 	return g_stdlib_dir;
 }
 
-ModuleObject* LoadNativeModule(const std::string& name,
-                               const std::string& search_dir) {
+Module* LoadNativeModule(const std::string& name,
+                         const std::string& search_dir) {
 	const std::string fname = name + native_ext_suffix();
 
 	// 候选路径：优先当前工作目录（cwd），其次 search_dir（脚本目录），
@@ -148,7 +148,7 @@ ModuleObject* LoadNativeModule(const std::string& name,
 	}
 
 	// 调用入口，跨 ABI 边界保护异常。
-	ModuleObject* mod = nullptr;
+	Module* mod = nullptr;
 	try {
 		mod = init();
 	} catch (const Pycp::Exception&) {
@@ -227,7 +227,7 @@ void NativeExt_Finalize() {
 // =============================================================
 
 int64_t ArgInt(Object** argv, std::size_t i, const char* fn) {
-	if (argv == nullptr || argv[i] == nullptr || argv[i]->type != Type::INTEGER) {
+	if (argv == nullptr || argv[i] == nullptr || !argv[i]->is_type("Integer")) {
 		throw TypeError(std::string(fn) + "(): argument " + std::to_string(i + 1) +
 		                " expects an integer.");
 	}
@@ -235,7 +235,7 @@ int64_t ArgInt(Object** argv, std::size_t i, const char* fn) {
 }
 
 std::string ArgString(Object** argv, std::size_t i, const char* fn) {
-	if (argv == nullptr || argv[i] == nullptr || argv[i]->type != Type::STRING) {
+	if (argv == nullptr || argv[i] == nullptr || !argv[i]->is_type("String")) {
 		throw TypeError(std::string(fn) + "(): argument " + std::to_string(i + 1) +
 		                " expects a string.");
 	}

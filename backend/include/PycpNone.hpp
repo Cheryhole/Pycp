@@ -24,6 +24,8 @@ class None : public Object{
 
 		Object* __integer__() override;
 		Object* __string__() override;
+
+		void foreach_ref(const std::function<void(Object*)>& visit) override;
 };
 
 } // namespace Pycp

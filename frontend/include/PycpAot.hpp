@@ -10,7 +10,7 @@
 // 设计要点：
 //   1. 接口与 Codegen/VM 解耦：EmitCpp 仅依赖 BC::Module（字节码 IR），
 //      与 VM 执行共享同一份 IR，保证行为一致。
-//   2. 生成的 .cpp 仅依赖稳定的 PycpABI.hpp（Integer_FromLong / Add / Call 等），
+//   2. 生成的 .cpp 仅依赖稳定的 PycpABI.hpp（Integer::FromLong / Add / Call 等），
 //      通过 `extern "C"` 的 PYCP_* 符号链接到 PycpRuntime 库。
 //   3. 常量池在生成代码中以静态数组 + 初始化函数一次性构造，
 //      并 GC_AddRoot 保护，与 VM 反序列化路径等价。

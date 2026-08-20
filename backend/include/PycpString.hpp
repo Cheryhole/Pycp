@@ -19,6 +19,9 @@ class String : public Object{
 
 		std::string get_value() const;
 
+		// 静态工厂：从 C 字符串构造 String（返回 Owned，refcount=1）。
+		static Object* FromCString(const char* value);
+
 		Object* __integer__();
 		Object* __string__();
 		Object* __addition__(Object*);

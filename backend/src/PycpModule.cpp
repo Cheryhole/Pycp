@@ -1,18 +1,28 @@
 #include "PycpModule.hpp"
 #include "PycpException.hpp"
+#include "PycpGC.hpp"
 
 namespace Pycp {
 
-ModuleObject::ModuleObject(const std::string& name)
-	: Object(Type::MODULE), name_(name) {}
+Module* Module::New(const std::string& name) {
+	return Pycp::New<Module>(name);
+}
 
-ModuleObject::~ModuleObject() {
+Module::Module(const std::string& name)
+	: Object(name), name_(name) {}
+
+Module::~Module() {
 	// 命名空间内对象的引用计数由模块执行环境负责管理；
 	// 此处仅释放自身，namespace_ 中的值在 VM / AOT 收尾时统一 Decref。
 	namespace_.clear();
 }
 
-Object* ModuleObject::__getattr__(const std::string& name) {
+Object* Module::GetAttr(Module* mod, const std::string& name) {
+	if (mod == nullptr) throw AttributeError("cannot get attribute from null module.");
+	return mod->__getattr__(name);
+}
+
+Object* Module::__getattr__(const std::string& name) {
 	auto it = namespace_.find(name);
 	if (it == namespace_.end()) {
 		throw AttributeError("module '" + name_ + "' has no attribute '" + name + "'");
@@ -25,6 +35,12 @@ Object* ModuleObject::__getattr__(const std::string& name) {
 		                     "' is private");
 	}
 	return it->second;
+}
+
+void Module::foreach_ref(const std::function<void(Object*)>& visit) {
+	for (auto& kv : namespace_) {
+		if (kv.second != nullptr) visit(kv.second);
+	}
 }
 
 } // namespace Pycp

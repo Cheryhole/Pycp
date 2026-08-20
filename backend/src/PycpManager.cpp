@@ -30,14 +30,17 @@ void Initialize(){
 void Finalize(){
 	if (!g_initialized.exchange(false)) return;
 
+	// 注意顺序：必须先回收对象再关闭原生扩展。原生扩展（io/Pycp.so）里的
+	// 对象（File 等）其方法实现位于动态库，若先 dlclose 再 GC_Collect，
+	// mark 阶段调用这些对象的虚函数（foreach_ref 等）会跳转到已卸载地址
+	// 导致段错误。故先 GC_Collect（回收常驻 root 之外的对象），后关闭扩展。
+	GC_Collect();
+
 	NativeExt_Finalize();    // 关闭所有已加载的原生扩展句柄
 	Function::Finalize();
 	String::Finalize();
 	Integer::Finalize();
 	None::Finalize();
-
-	// 兜底：回收任何遗留的不可达对象
-	GC_Collect();
 }
 
 } // namespace Pycp

@@ -23,6 +23,9 @@ class Integer : public Object{
 
 		int64_t get_value() const;
 
+		// 静态工厂：从 long long 构造 Integer（返回 Owned，refcount=1）。
+		static Object* FromLong(long long value);
+
 		Object* __integer__() override;
 		Object* __string__() override;
 		Object* __negation__() override;

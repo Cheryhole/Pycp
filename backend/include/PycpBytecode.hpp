@@ -75,9 +75,14 @@ enum class Op : uint8_t {
 	GET_ATTR    = 0x51,  // 操作数: name_idx    -> 从栈顶对象取属性
 
 	// ---- 类与实例 ----
-	MAKE_CLASS  = 0x52,  // 操作数: class_idx   -> 创建 ClassObject 压栈
+	MAKE_CLASS  = 0x52,  // 操作数: class_idx   -> 创建 Class 压栈
 	LOAD_ATTR   = 0x53,  // 操作数: name_idx    -> 从栈顶对象取属性（实例/类/模块/文件通用）
 	STORE_ATTR  = 0x54,  // 操作数: name_idx    -> 弹栈顶值写入栈顶对象的属性
+
+	// ---- list 与下标运算 ----
+	BUILD_LIST  = 0x55,  // 操作数: 元素个数    -> 弹栈顶 n 个元素构造 List 压栈
+	GET_ITEM    = 0x56,  // 无操作数           -> obj key -> obj[key]（转调 GetItem）
+	SET_ITEM    = 0x57,  // 无操作数           -> obj key value -> obj[key]=value（转调 SetItem）
 
 	// ---- 其他 ----
 	HALT          = 0x00, // 模块执行结束
@@ -184,7 +189,7 @@ std::vector<uint8_t> Serialize(const Module& module);
 
 // 从 .cpycp 字节流反序列化出 Module。
 //   校验魔数与版本，不匹配时抛出 Pycp::Exception。
-//   runtime_consts 会被重建为 Object*（经 Integer_FromLong/String_FromString/None），
+//   runtime_consts 会被重建为 Object*（经 Integer::FromLong/String::FromCString/None），
 //   调用方负责对其 AddRoot（或由 VM 统一管理）。
 Module Deserialize(const uint8_t* data, std::size_t size);
 

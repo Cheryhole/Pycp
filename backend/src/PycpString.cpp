@@ -9,13 +9,13 @@ namespace Pycp {
 
 String::String() : String(""){}
 
-String::String(const std::string& value) : Object(Type::STRING){
+String::String(const std::string& value) : Object("String"){
 	this->_value = value;
 }
 
 String::String(String* value) : String(value->get_value()){}
 
-String::String(Object* obj) : Object(Type::STRING){
+String::String(Object* obj) : Object("String"){
 	if (obj == nullptr){
 		throw TypeError("Cannot construct String from null object.");
 	}
@@ -27,6 +27,10 @@ String::~String(){}
 
 std::string String::get_value() const{
 	return this->_value;
+}
+
+Object* String::FromCString(const char* value){
+	return New<String>(std::string(value));
 }
 
 Object* String::__integer__(){
@@ -45,7 +49,7 @@ Object* String::__string__(){
 }
 
 Object* String::__addition__(Object* other){
-	if (other == nullptr || other->type != Type::STRING){
+	if (other == nullptr || !other->is_type("String")){
 		throw TypeError("Unsupported to add.");
 	}
 	String* s = static_cast<String*>(other);
@@ -54,7 +58,7 @@ Object* String::__addition__(Object* other){
 
 Object* String::__multiplication__(Object* other){
 	if (other == nullptr) throw TypeError("Unsupported to multiply.");
-	if (other->type != Type::INTEGER){
+	if (!other->is_type("Integer")){
 		throw TypeError("Unsupported to multiply.");
 	}
 	Integer* i = static_cast<Integer*>(other);
@@ -71,7 +75,7 @@ std::string AsString(Object* obj){
 		throw TypeError("Cannot convert null object to string.");
 	}
 	Object* sobj = obj->__string__();
-	if (sobj == nullptr || sobj->type != Type::STRING){
+	if (sobj == nullptr || !sobj->is_type("String")){
 		throw TypeError("__string__ did not return a String object.");
 	}
 	String* s = static_cast<String*>(sobj);

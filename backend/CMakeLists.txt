@@ -55,6 +55,7 @@ set(PYCP_HEADERS
     ${PYCP_INCLUDE_DIR}/PycpNone.hpp
     ${PYCP_INCLUDE_DIR}/PycpInteger.hpp
     ${PYCP_INCLUDE_DIR}/PycpString.hpp
+    ${PYCP_INCLUDE_DIR}/PycpList.hpp
     ${PYCP_INCLUDE_DIR}/PycpException.hpp
     ${PYCP_INCLUDE_DIR}/PycpFunction.hpp
     ${PYCP_INCLUDE_DIR}/PycpManager.hpp
@@ -77,6 +78,7 @@ set(PYCP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpModule.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpClass.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpList.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpABI.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpBytecode.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpBytecodeVM.cpp

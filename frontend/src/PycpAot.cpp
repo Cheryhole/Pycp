@@ -3,6 +3,7 @@
 
 #include <cstdio>
 #include <fstream>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 
@@ -19,10 +20,10 @@ namespace Pycp::AOT {
 //   - 每个模块生成一个 .cpp，模块私有符号（pycp_fn_N / g_c / g_globals）
 //     均为 static，避免跨文件符号冲突。
 //   - 每个模块导出一个【非 static】初始化函数 pycp_module_<hash>(void)，
-//     返回该模块的 ModuleObject*（懒执行，首次调用才运行顶层）。
+//     返回该模块的 Module*（懒执行，首次调用才运行顶层）。
 //   - 入口模块的 .cpp 额外生成 main()，并在其 LOAD_MODULE 处调用被导入
 //     模块的 pycp_module_<hash>()。
-//   - 模块顶层变量写入 ModuleObject 的命名空间（经 g_mod_ns 指针），
+//   - 模块顶层变量写入 Module 的命名空间（经 g_mod_ns 指针），
 //     与 VM 的模块隔离语义一致。
 // =============================================================
 
@@ -116,7 +117,24 @@ std::size_t estimate_stack_depth(const Pycp::BC::CodeObject& co) {
 				if (depth > 0) --depth;
 				break;
 			case Pycp::BC::Op::MAKE_CLASS:
+				// 弹出 decorator_count 个装饰器后压入类对象。
+				// 注：decorator_count 在 ins 的操作数之外的 ClassDef 中，
+				// 这里无法精确获知；保守取 depth + 1（类对象压栈净增，
+				// 装饰器弹栈在保守估计下忽略，以保证 reserve 充足）。
 				++depth;
+				break;
+			case Pycp::BC::Op::BUILD_LIST: {
+				std::size_t n = static_cast<std::size_t>(ins.operand);
+				depth = (depth > n) ? (depth - n) + 1 : 1;
+				break;
+			}
+			case Pycp::BC::Op::GET_ITEM:
+				// 弹 obj + key 压 1，净 -1。
+				if (depth > 0) --depth;
+				break;
+			case Pycp::BC::Op::SET_ITEM:
+				// 弹 obj + key + value，不压。
+				depth = (depth >= 3) ? (depth - 3) : 0;
 				break;
 			case Pycp::BC::Op::JUMP:
 			case Pycp::BC::Op::RETURN_NONE:
@@ -132,8 +150,11 @@ std::size_t estimate_stack_depth(const Pycp::BC::CodeObject& co) {
 
 // 单个 CodeObject 翻译为一个 native 函数体。
 //   self == nullptr 时 env->globals 指向 g_mod_ns（模块命名空间）。
+//   all_deps : 全部 .pycp 依赖模块名集合，用于区分「内建库导入」与
+//              「.pycp 依赖模块导入」（LOAD_MODULE 生成不同的加载代码）。
 void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
-                   const Pycp::BC::CodeObject& co, std::size_t co_idx) {
+                   const Pycp::BC::CodeObject& co, std::size_t co_idx,
+                   const std::set<std::string>& deps) {
 	std::size_t nlocals = co.nlocals;
 	std::size_t max_depth = estimate_stack_depth(co);
 	std::size_t nparams = co.nparams;
@@ -146,8 +167,8 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 	os << "    std::shared_ptr<Pycp::BC::Environment> env = "
 	   << "std::make_shared<Pycp::BC::Environment>();\n";
 	os << "    if (self != nullptr) {\n";
-	os << "        Pycp::Closure* cl = static_cast<Pycp::Closure*>(self);\n";
-	os << "        env->captured = cl->get_captured();\n";
+	os << "        Pycp::BytecodeFunction* bfn = static_cast<Pycp::BytecodeFunction*>(self);\n";
+	os << "        env->captured = bfn->get_captured();\n";
 	os << "    }\n";
 	os << "    env->globals = g_mod_ns;\n";
 
@@ -214,20 +235,56 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 			case Pycp::BC::Op::LOAD_MODULE: {
 				std::size_t idx = static_cast<std::size_t>(ins.operand);
 				const std::string& dep = module.imports[idx];
-				os << "    { Pycp::ModuleObject* m = "
-				   << module_init_symbol(dep) << "();\n";
-				os << "      Pycp::Incref(m); st.push_back(m); }\n";
+				if (deps.count(dep) > 0) {
+					// .pycp 依赖模块：调用其生成的初始化函数（跨文件链接）。
+					os << "    { Pycp::Module* m = "
+					   << module_init_symbol(dep) << "();\n";
+					os << "      Pycp::Incref(m); st.push_back(m); }\n";
+				} else {
+					// 内建库（io/Pycp/classtools 等）：经 LoadNativeModule 加载并缓存。
+					os << "    { Pycp::Module* m = pycp_load_native("
+					   << cpp_string_literal(dep) << ");\n";
+					os << "      Pycp::Incref(m); st.push_back(m); }\n";
+				}
 				break;
 			}
 			case Pycp::BC::Op::GET_ATTR: {
 				std::size_t idx = static_cast<std::size_t>(ins.operand);
 				const std::string& attr = module.symtab[idx];
 				os << "    { Pycp::Object* obj = st.back(); st.pop_back();\n";
-				os << "      Pycp::Object* v = Pycp::Module_GetAttr("
-				   << "static_cast<Pycp::ModuleObject*>(obj), "
+				os << "      Pycp::Object* v = Pycp::Module::GetAttr("
+				   << "static_cast<Pycp::Module*>(obj), "
 				   << cpp_string_literal(attr) << ");\n";
 				os << "      Pycp::Decref(obj);\n";
 				os << "      st.push_back(v); Pycp::Incref(v); }\n";
+				break;
+			}
+
+			case Pycp::BC::Op::LOAD_ATTR: {
+				std::size_t idx = static_cast<std::size_t>(ins.operand);
+				const std::string& attr = module.symtab[idx];
+				// 通用属性访问（实例/类/模块/文件/list 等）。Pycp::GetAttr 返回
+				// Owned（实例方法返回 BoundMethod、list 的 length 包装绑定等），
+				// 栈接管这 1 份引用，不额外 Incref/Decref。
+				os << "    { Pycp::Object* obj = st.back(); st.pop_back();\n";
+				os << "      Pycp::Object* v = Pycp::GetAttr(obj, "
+				   << cpp_string_literal(attr) << ");\n";
+				os << "      Pycp::Decref(obj);\n";
+				os << "      st.push_back(v); }\n";
+				break;
+			}
+			case Pycp::BC::Op::STORE_ATTR: {
+				std::size_t idx = static_cast<std::size_t>(ins.operand);
+				const std::string& attr = module.symtab[idx];
+				// 弹值 + 对象；SetAttr -> __setattr__ 内部按需 Incref 存入，
+				// 此处释放 value 从栈 pop 带来的引用（与 VM STORE_ATTR 一致，
+				// 避免字段持有后栈引用泄漏）。
+				os << "    { Pycp::Object* value = st.back(); st.pop_back();\n";
+				os << "      Pycp::Object* obj = st.back(); st.pop_back();\n";
+				os << "      Pycp::SetAttr(obj, " << cpp_string_literal(attr)
+				   << ", value);\n";
+				os << "      Pycp::Decref(value);\n";
+				os << "      Pycp::Decref(obj); }\n";
 				break;
 			}
 
@@ -291,9 +348,52 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 				break;
 			}
 
+			case Pycp::BC::Op::BUILD_LIST: {
+				std::size_t n = static_cast<std::size_t>(ins.operand);
+				// 从栈顶依次弹出 n 个元素（栈序逆序），再按源码顺序 append
+				// 构造 List（与 VM 语义一致：elems[n-1-i] = pop()）。
+				// 弹栈后每份栈引用 Decref；新建 List 为 Owned（refcount=1），
+				// 由栈接管（push 后栈持有这 1 份）。
+				if (n > 0) {
+					os << "    { Pycp::Object* elems[" << n << "];\n";
+					for (std::size_t i = 0; i < n; ++i) {
+						os << "      elems[" << (n - 1 - i) << "] = st.back(); st.pop_back();\n";
+					}
+					os << "      Pycp::List* l = Pycp::List::New();\n";
+					for (std::size_t i = 0; i < n; ++i) {
+						os << "      l->append(elems[" << i << "]); Pycp::Decref(elems[" << i << "]);\n";
+					}
+					os << "      st.push_back(l); }\n";
+				} else {
+					os << "    { Pycp::List* l = Pycp::List::New();\n";
+					os << "      st.push_back(l); }\n";
+				}
+				break;
+			}
+			case Pycp::BC::Op::GET_ITEM: {
+				// 弹 key + obj；GetItem 返回 Borrowed（元素由 list 持有），
+				// push(res) 使栈持有 1 份引用，故不 Decref(res)。
+				os << "    { Pycp::Object* key = st.back(); st.pop_back();\n";
+				os << "      Pycp::Object* obj = st.back(); st.pop_back();\n";
+				os << "      Pycp::Object* res = Pycp::GetItem(obj, key);\n";
+				os << "      Pycp::Decref(obj); Pycp::Decref(key);\n";
+				os << "      st.push_back(res); }\n";
+				break;
+			}
+			case Pycp::BC::Op::SET_ITEM: {
+				// 弹 value + key + obj；SetItem 返回 Owned（None），不压栈。
+				os << "    { Pycp::Object* value = st.back(); st.pop_back();\n";
+				os << "      Pycp::Object* key = st.back(); st.pop_back();\n";
+				os << "      Pycp::Object* obj = st.back(); st.pop_back();\n";
+				os << "      Pycp::Object* res = Pycp::SetItem(obj, key, value);\n";
+				os << "      Pycp::Decref(obj); Pycp::Decref(key); Pycp::Decref(value);\n";
+				os << "      if (res) Pycp::Decref(res); }\n";
+				break;
+			}
+
 			case Pycp::BC::Op::MAKE_FUNCTION: {
 				std::size_t fidx = static_cast<std::size_t>(ins.operand);
-				os << "    { Pycp::Closure* fn = new Pycp::Closure("
+				os << "    { Pycp::BytecodeFunction* fn = new Pycp::BytecodeFunction("
 				   << cpp_string_literal(module.code_objects[fidx].name)
 				   << ", " << Pycp::AOT_FN_PREFIX << fidx << ", env);\n";
 				os << "      Pycp::GC_Track(fn);\n";
@@ -306,12 +406,131 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 				os << "      for (std::size_t i = 0; i < " << nargs << "; ++i) "
 				   << "{ args[" << nargs << " - 1 - i] = st.back(); st.pop_back(); }\n";
 				os << "      Pycp::Object* callee = st.back(); st.pop_back();\n";
-				os << "      Pycp::Object* ret = Pycp::Call(callee, args, "
+				// 统一调用：Class 走 instantiate（类实例化），其余走 Call（可调用对象）。
+				os << "      Pycp::Object* ret;\n";
+				os << "      if (dynamic_cast<Pycp::Class*>(callee) != nullptr) {\n";
+				os << "        ret = static_cast<Pycp::Class*>(callee)->instantiate(args, "
 				   << nargs << ");\n";
+				os << "      } else {\n";
+				os << "        ret = Pycp::Call(callee, args, " << nargs << ");\n";
+				os << "      }\n";
 				os << "      for (std::size_t i = 0; i < " << nargs
 				   << "; ++i) Pycp::Decref(args[i]);\n";
 				os << "      Pycp::Decref(callee);\n";
 				os << "      st.push_back(ret); }\n";
+				break;
+			}
+
+			case Pycp::BC::Op::MAKE_CLASS: {
+				std::size_t cidx = static_cast<std::size_t>(ins.operand);
+				if (cidx >= module.classes.size()) {
+					throw std::runtime_error("AOT: class index out of range.");
+				}
+				const auto& cdef = module.classes[cidx];
+				const std::string& file = module.source_path;
+				int lineno = (pc < co.linenos.size()) ? co.linenos[pc] : -1;
+
+				// 1) 构造类对象。
+				os << "    { Pycp::Class* cls = Pycp::Class::New("
+				   << cpp_string_literal(cdef.name) << ");\n";
+
+				// 2) 继承：父类引用（单标识符或模块.类路径），复制父类成员与方法。
+				if (!cdef.parent_name.empty()) {
+					os << "      Pycp::Object* parent_obj = nullptr;\n";
+					std::size_t dot = cdef.parent_name.find('.');
+					if (dot == std::string::npos) {
+						os << "      parent_obj = Pycp::Environment_Lookup(env.get(), "
+						   << cpp_string_literal(cdef.parent_name) << ");\n";
+					} else {
+						std::string mod_name = cdef.parent_name.substr(0, dot);
+						std::string attr_name = cdef.parent_name.substr(dot + 1);
+						os << "      { Pycp::Object* mobj = Pycp::Environment_Lookup(env.get(), "
+						   << cpp_string_literal(mod_name) << ");\n";
+						os << "        if (mobj != nullptr && dynamic_cast<Pycp::Module*>(mobj) != nullptr) {\n";
+						os << "          Pycp::Module* mo = static_cast<Pycp::Module*>(mobj);\n";
+						os << "          parent_obj = mo->__getattr__("
+						   << cpp_string_literal(attr_name) << ");\n";
+						os << "        }\n";
+						os << "      }\n";
+					}
+					os << "      if (parent_obj == nullptr || dynamic_cast<Pycp::Class*>(parent_obj) == nullptr) {\n";
+					os << "        Pycp::Decref(cls);\n";
+					os << "        throw Pycp::NameError(" << cpp_string_literal(file) << ", "
+					   << lineno << ", \"parent class '" << cdef.parent_name
+					   << "' is not defined\");\n";
+					os << "      }\n";
+					os << "      Pycp::Class* parent = static_cast<Pycp::Class*>(parent_obj);\n";
+					os << "      cls->set_parent(parent);\n";
+					os << "      for (const auto& mn : parent->get_member_names())\n";
+					os << "        cls->add_member_name(mn, parent->member_is_private(mn));\n";
+					os << "      for (const auto& mname : parent->method_names()) {\n";
+					os << "        Pycp::Function* pfn = parent->find_method(mname);\n";
+					os << "        if (pfn != nullptr) cls->add_method(mname, pfn, parent->method_is_private(mname));\n";
+					os << "      }\n";
+				}
+
+				// 3) 装饰器栈区基址：装饰器对象位于 MAKE_CLASS 前栈顶。
+				os << "      std::size_t deco_base = st.size() - "
+				   << cdef.decorator_count << ";\n";
+
+				// 4) 成员变量（声明顺序）：带装饰器的成员经占位对象确定可见性。
+				for (std::size_t i = 0; i < cdef.member_names.size(); ++i) {
+					bool has_deco = i < cdef.member_decorators.size() &&
+					                cdef.member_decorators[i] != UINT32_MAX;
+					if (has_deco) {
+						os << "      bool priv" << i << " = Pycp::ApplyDecoratorVisibility(st[deco_base + "
+						   << cdef.member_decorators[i] << "], " << cpp_string_literal(file)
+						   << ", " << lineno << ");\n";
+						os << "      cls->add_member_name(" << cpp_string_literal(cdef.member_names[i])
+						   << ", priv" << i << ");\n";
+					} else {
+						os << "      cls->add_member_name(" << cpp_string_literal(cdef.member_names[i])
+						   << ", false);\n";
+					}
+				}
+
+				// 5) 方法：构造 native 模式 BytecodeFunction（指向生成的函数），
+				//    带装饰器则经装饰器替换，最后 add_method（含可见性）。
+				for (std::size_t i = 0; i < cdef.methods.size(); ++i) {
+					std::size_t co_idx = static_cast<std::size_t>(cdef.methods[i].second);
+					const std::string& mname = cdef.methods[i].first;
+					bool has_deco = i < cdef.method_decorators.size() &&
+					                cdef.method_decorators[i] != UINT32_MAX;
+					if (has_deco) {
+						os << "      Pycp::BytecodeFunction* mfn" << i << " = new Pycp::BytecodeFunction("
+						   << cpp_string_literal(module.code_objects[co_idx].name)
+						   << ", " << Pycp::AOT_FN_PREFIX << co_idx << ", env);\n";
+						os << "      Pycp::GC_Track(mfn" << i << ");\n";
+						os << "      Pycp::Object* dm" << i << " = Pycp::ApplyDecorator(st[deco_base + "
+						   << cdef.method_decorators[i] << "], mfn" << i << ", " << cpp_string_literal(file)
+						   << ", " << lineno << ");\n";
+						os << "      if (dm" << i << " == nullptr || !dm" << i << "->is_type(\"Function\")) {\n";
+						os << "        Pycp::Decref(mfn" << i << "); if (dm" << i << ") Pycp::Decref(dm" << i << "); Pycp::Decref(cls);\n";
+						os << "        throw Pycp::TypeError(" << cpp_string_literal(file) << ", "
+						   << lineno << ", \"decorator must return a function.\");\n";
+						os << "      }\n";
+						os << "      Pycp::Decref(mfn" << i << ");\n";
+						os << "      Pycp::BytecodeFunction* mfn2_" << i << " = static_cast<Pycp::BytecodeFunction*>(dm" << i << ");\n";
+						os << "      cls->add_method(" << cpp_string_literal(mname)
+						   << ", mfn2_" << i << ", mfn2_" << i << "->is_private());\n";
+						os << "      Pycp::Decref(mfn2_" << i << ");\n";
+					} else {
+						os << "      Pycp::BytecodeFunction* mfn" << i << " = new Pycp::BytecodeFunction("
+						   << cpp_string_literal(module.code_objects[co_idx].name)
+						   << ", " << Pycp::AOT_FN_PREFIX << co_idx << ", env);\n";
+						os << "      Pycp::GC_Track(mfn" << i << ");\n";
+						os << "      cls->add_method(" << cpp_string_literal(mname)
+						   << ", mfn" << i << ", mfn" << i << "->is_private());\n";
+						os << "      Pycp::Decref(mfn" << i << ");\n";
+					}
+				}
+
+				// 6) 弹出装饰器对象（每份栈引用 Decref）。
+				os << "      for (std::size_t d = 0; d < " << cdef.decorator_count
+				   << "; ++d) { Pycp::Object* deco = st.back(); st.pop_back(); if (deco) Pycp::Decref(deco); }\n";
+
+				// 7) 压入类对象（新建 Class 为 Owned，由栈接管这 1 份引用）。
+				os << "      st.push_back(cls); }\n";
 				break;
 			}
 
@@ -376,6 +595,10 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	os << "#include \"PycpInteger.hpp\"\n";
 	os << "#include \"PycpString.hpp\"\n";
 	os << "#include \"PycpModule.hpp\"\n";
+	os << "#include \"PycpClass.hpp\"\n";
+	os << "#include \"PycpList.hpp\"\n";
+	os << "#include \"PycpBytecodeVM.hpp\"\n";
+	os << "#include \"PycpNativeExt.hpp\"\n";
 	os << "#include \"PycpException.hpp\"\n";
 	os << "#include <vector>\n";
 	os << "#include <string>\n";
@@ -387,7 +610,7 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	// ---- 被导入模块初始化函数的 extern 声明（仅入口模块需要跨文件链接）----
 	if (is_entry) {
 		for (const std::string& dep : all_deps) {
-			os << "Pycp::ModuleObject* " << module_init_symbol(dep) << "();\n";
+			os << "Pycp::Module* " << module_init_symbol(dep) << "();\n";
 		}
 		if (!all_deps.empty()) os << "\n";
 	}
@@ -397,8 +620,21 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	os << "static Pycp::Object* g_c[" << (module.const_pool.empty() ? 1 : module.const_pool.size()) << "];\n\n";
 	os << "// 全局变量表（冗余保留；顶层变量实际写入 g_mod_ns 指向的模块命名空间）\n";
 	os << "static std::unordered_map<std::string, Pycp::Object*> g_globals;\n\n";
-	os << "// 模块命名空间指针（指向本模块 ModuleObject 的 namespace）\n";
+	os << "// 模块命名空间指针（指向本模块 Module 的 namespace）\n";
 	os << "static std::unordered_map<std::string, Pycp::Object*>* g_mod_ns = nullptr;\n\n";
+
+	// ---- 内建库加载辅助（LOAD_MODULE 遇到非 .pycp 依赖时调用）----
+	os << "// 加载内建库/动态库模块（io/Pycp/classtools 等），带缓存。\n";
+	os << "static std::unordered_map<std::string, Pycp::Module*> g_native_mods;\n";
+	os << "static Pycp::Module* pycp_load_native(const std::string& name) {\n";
+	os << "    auto it = g_native_mods.find(name);\n";
+	os << "    if (it != g_native_mods.end()) return it->second;\n";
+	os << "    Pycp::Module* m = Pycp::LoadNativeModule(name, \".\");\n";
+	os << "    if (m == nullptr) throw Pycp::ImportError(\"native module '\" + name + \"' not found\");\n";
+	os << "    Pycp::GC_AddRoot(m);\n";
+	os << "    g_native_mods[name] = m;\n";
+	os << "    return m;\n";
+	os << "}\n\n";
 
 	// ---- 辅助函数：环境/栈清理 ----
 	os << "static void pycp_cleanup_env(std::shared_ptr<Pycp::BC::Environment>& env, std::vector<Pycp::Object*>& st) {\n";
@@ -416,10 +652,11 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	os << "\n";
 
 	// ---- 各代码对象翻译 ----
+	std::set<std::string> deps(all_deps.begin(), all_deps.end());
 	for (std::size_t i = 1; i < module.code_objects.size(); ++i) {
-		emit_function(os, module, module.code_objects[i], i);
+		emit_function(os, module, module.code_objects[i], i, deps);
 	}
-	emit_function(os, module, module.code_objects[0], 0);
+	emit_function(os, module, module.code_objects[0], 0, deps);
 
 	// ---- 常量池预构造 ----
 	os << "static void pycp_init_consts() {\n";
@@ -427,11 +664,11 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 		const auto& c = module.const_pool[i];
 		switch (c.kind) {
 			case Pycp::BC::ConstKind::INTEGER:
-				os << "    g_c[" << i << "] = Pycp::Integer_FromLong("
+				os << "    g_c[" << i << "] = Pycp::Integer::FromLong("
 				   << c.int_value << "LL);\n";
 				break;
 			case Pycp::BC::ConstKind::STRING:
-				os << "    g_c[" << i << "] = Pycp::String_FromString("
+				os << "    g_c[" << i << "] = Pycp::String::FromCString("
 				   << cpp_string_literal(c.str_value) << ");\n";
 				break;
 			case Pycp::BC::ConstKind::NONE:
@@ -456,13 +693,13 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	os << "}\n\n";
 
 	// ---- 模块初始化函数（非 static，供跨模块调用）----
-	os << "// 初始化并返回本模块的 ModuleObject（懒执行，首次调用运行顶层）。\n";
-	os << "Pycp::ModuleObject* " << module_init_symbol(modname) << "() {\n";
-	os << "    static Pycp::ModuleObject* mod = nullptr;\n";
+	os << "// 初始化并返回本模块的 Module（懒执行，首次调用运行顶层）。\n";
+	os << "Pycp::Module* " << module_init_symbol(modname) << "() {\n";
+	os << "    static Pycp::Module* mod = nullptr;\n";
 	os << "    static bool done = false;\n";
 	os << "    if (!done) {\n";
 	os << "        pycp_init_consts();\n";
-	os << "        mod = Pycp::Module_New(" << cpp_string_literal(modname) << ");\n";
+	os << "        mod = Pycp::Module::New(" << cpp_string_literal(modname) << ");\n";
 	os << "        Pycp::GC_AddRoot(mod);\n";
 	os << "        g_mod_ns = mod->get_namespace();\n";
 	os << "        Pycp::Object* r = " << Pycp::AOT_FN_PREFIX << "0(nullptr, nullptr, 0);\n";

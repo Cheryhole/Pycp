@@ -728,6 +728,13 @@ primary_expression: LT_INTEGER {
 		| OP_LPARENTHESES expression OP_RPARENTHESES {
 			$$ = $2;
 		}
+		| OP_LBRACKET arguments OP_RBRACKET {
+			// 列表字面量：[a, b, c] 或空 []
+			$$ = new ListLiteral(
+				static_cast<std::vector<Expression*>*>($2),
+				Pycplineno
+			);
+		}
 		| IDENTIFIER {
 			$$ = new IdentifierExpression($1, Pycplineno);
 		}
@@ -749,6 +756,14 @@ primary_expression: LT_INTEGER {
 			$$ = new AttributeExpression(
 				static_cast<Expression*>($1),
 				$3,
+				Pycplineno
+			);
+		}
+		| primary_expression OP_LBRACKET expression OP_RBRACKET {
+			// 下标访问：obj[key]
+			$$ = new IndexExpression(
+				static_cast<Expression*>($1),
+				static_cast<Expression*>($3),
 				Pycplineno
 			);
 		}

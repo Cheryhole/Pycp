@@ -9,44 +9,11 @@
 #include "PycpConfig.hpp"
 #include "PycpClass.hpp"
 #include "PycpNativeExt.hpp"
+#include "PycpList.hpp"
 
 #include <vector>
 
 namespace Pycp::BC {
-
-// =============================================================
-// 装饰器通用化辅助
-// =============================================================
-// 装饰器作为通用语法糖：把被装饰对象作为参数调用装饰器函数，用返回
-// 值替换原对象。装饰器对象必须是可调用的 Function，否则抛 TypeError。
-// =============================================================
-static Object* apply_decorator(Object* deco, Object* target,
-                               const std::string& file, int line) {
-	if (deco == nullptr) {
-		throw TypeError(file, line, "decorator object is null");
-	}
-	if (deco->type != Type::FUNCTION) {
-		throw TypeError(file, line, "decorator is not callable");
-	}
-	Object* argv[1] = { target };
-	Function* fn = static_cast<Function*>(deco);
-	// 装饰器返回 Owned；调用方负责接管或释放。
-	return fn->invoke(argv, 1);
-}
-
-// 成员变量装饰器：无独立值对象，用临时占位对象调用装饰器以确定可见性。
-static bool apply_decorator_visibility(Object* deco,
-                                       const std::string& file, int line) {
-	Object* placeholder = New<Object>();
-	Object* result = apply_decorator(deco, placeholder, file, line);
-	Decref(placeholder);
-	if (result == nullptr) {
-		throw TypeError(file, line, "decorator returned null");
-	}
-	bool priv = result->is_private();
-	Decref(result);
-	return priv;
-}
 
 // =============================================================
 // VM 构造 / 析构
@@ -57,11 +24,11 @@ VM::VM(Module* module, std::map<std::string, Module*>* registry,
 	: module_(module), registry_(registry) {
 	global_env_ = std::make_shared<Environment>();
 
-	// 入口模块占坑：创建其 ModuleObject 并放入缓存，其命名空间即入口顶层
+	// 入口模块占坑：创建其 Pycp::Module 并放入缓存，其命名空间即入口顶层
 	// globals。这样循环导入时被依赖模块反向 import 入口模块会命中缓存，
 	// 拿到「部分初始化」的入口模块，而非重新执行（避免无限递归）。
 	if (module_ != nullptr) {
-		entry_mod_ = Module_New(entry_name.empty() ? Pycp::MODULE_ENTRY_NAME : entry_name);
+		entry_mod_ = Pycp::Module::New(entry_name.empty() ? Pycp::MODULE_ENTRY_NAME : entry_name);
 		GC_AddRoot(entry_mod_);
 		module_cache_[entry_name] = entry_mod_;
 		global_env_->globals = entry_mod_->get_namespace();
@@ -78,10 +45,10 @@ VM::VM(Module* module, std::map<std::string, Module*>* registry,
 		for (const auto& c : module_->const_pool) {
 			switch (c.kind) {
 				case ConstKind::INTEGER:
-					module_->runtime_consts.push_back(Integer_FromLong(c.int_value));
+					module_->runtime_consts.push_back(Integer::FromLong(c.int_value));
 					break;
 				case ConstKind::STRING:
-					module_->runtime_consts.push_back(String_FromString(c.str_value.c_str()));
+					module_->runtime_consts.push_back(String::FromCString(c.str_value.c_str()));
 					break;
 				case ConstKind::NONE:
 					module_->runtime_consts.push_back(None::instance);
@@ -89,16 +56,16 @@ VM::VM(Module* module, std::map<std::string, Module*>* registry,
 					break;
 				default:
 					throw VMError("unknown constant kind.");
-			}
-			GC_AddRoot(module_->runtime_consts.back());
-		}
-	}
+				}
+				GC_AddRoot(module_->runtime_consts.back());
+				}
+				}
 }
 
 VM::~VM() {
 	// 第一步：显式断开所有模块命名空间的引用（清空 map 并 Decref 值），
 	// 打破模块间可能形成的循环引用（A import B 且 B import A），避免
-	// 后续 Decref ModuleObject 时因环导致连锁析构 / 双重释放。
+	// 后续 Decref Module 时因环导致连锁析构 / 双重释放。
 	for (auto& kv : module_cache_) {
 		if (kv.second == nullptr) continue;
 		auto* ns = kv.second->get_namespace();
@@ -119,7 +86,7 @@ VM::~VM() {
 	}
 	module_cache_.clear();
 
-	// 仅当入口 ModuleObject 未接管 globals（entry_mod_ 为空）时，
+	// 仅当入口 Module 未接管 globals（entry_mod_ 为空）时，
 	// global_env_->globals 才是独立 new 出的 map，需要此处释放。
 	if (global_env_ && global_env_->globals && entry_mod_ == nullptr) {
 		for (auto& kv : *global_env_->globals) {
@@ -163,7 +130,7 @@ Object* VM::run() {
 	return execute(top, env, nullptr, 0);
 }
 
-ModuleObject* VM::load_module(const std::string& name) {
+Pycp::Module* VM::load_module(const std::string& name) {
 	// 命中缓存直接返回
 	auto it = module_cache_.find(name);
 	if (it != module_cache_.end()) {
@@ -179,7 +146,7 @@ ModuleObject* VM::load_module(const std::string& name) {
 			if (slash != std::string::npos)
 				search_dir = module_->source_path.substr(0, slash);
 		}
-		ModuleObject* extmod = LoadNativeModule(name, search_dir);
+		Pycp::Module* extmod = LoadNativeModule(name, search_dir);
 		if (extmod != nullptr) {
 			GC_AddRoot(extmod);
 			module_cache_[name] = extmod;
@@ -197,13 +164,13 @@ ModuleObject* VM::load_module(const std::string& name) {
 	}
 	Module* sub_module = mit->second;
 
-	// 先占坑：创建 ModuleObject 并放入缓存（支持循环导入——执行子模块时
+	// 先占坑：创建 Pycp::Module 并放入缓存（支持循环导入——执行子模块时
 	// 若其反向 import 本模块名，会命中这个未填充完的对象而非无限递归）。
-	ModuleObject* modobj = Module_New(name);
+	Pycp::Module* modobj = Pycp::Module::New(name);
 	GC_AddRoot(modobj);
 	module_cache_[name] = modobj;
 
-	// 为子模块构造执行环境：其顶层 globals 指向 ModuleObject 的命名空间。
+	// 为子模块构造执行环境：其顶层 globals 指向 Module 的命名空间。
 	// 本版起不注入任何内建函数。
 	std::shared_ptr<Environment> sub_global = std::make_shared<Environment>();
 	sub_global->globals = modobj->get_namespace();
@@ -225,10 +192,10 @@ ModuleObject* VM::load_module(const std::string& name) {
 			for (const auto& c : sub_module->const_pool) {
 				switch (c.kind) {
 					case ConstKind::INTEGER:
-						sub_module->runtime_consts.push_back(Integer_FromLong(c.int_value));
+						sub_module->runtime_consts.push_back(Integer::FromLong(c.int_value));
 						break;
 					case ConstKind::STRING:
-						sub_module->runtime_consts.push_back(String_FromString(c.str_value.c_str()));
+						sub_module->runtime_consts.push_back(String::FromCString(c.str_value.c_str()));
 						break;
 					case ConstKind::NONE:
 						sub_module->runtime_consts.push_back(None::instance);
@@ -284,8 +251,8 @@ Object* VM::call(Module* m, size_t co_idx, Object** argv, std::size_t argc,
 	enter_internal_access();
 	bool pushed_self = false;
 	if (argc > 0 && argv != nullptr && argv[0] != nullptr &&
-	    argv[0]->type == Type::INSTANCE) {
-		push_current_self(static_cast<InstanceObject*>(argv[0]));
+	    dynamic_cast<Instance*>(argv[0]) != nullptr) {
+		push_current_self(static_cast<Instance*>(argv[0]));
 		pushed_self = true;
 	}
 	Object* ret = nullptr;
@@ -506,7 +473,7 @@ Object* VM::execute(CodeObject* co,
 					throw VMError(cur_file(), cur_line(), "class index out of range.");
 				const ClassDef& cdef = module_->classes[cidx];
 
-				ClassObject* cls = New<ClassObject>(cdef.name);
+				Class* cls = New<Class>(cdef.name);
 
 				// 继承：查找父类，复制其成员与方法（子类同名覆盖）。
 				if (!cdef.parent_name.empty()) {
@@ -520,17 +487,17 @@ Object* VM::execute(CodeObject* co,
 						std::string mod_name = cdef.parent_name.substr(0, dot);
 						std::string attr_name = cdef.parent_name.substr(dot + 1);
 						Object* mod_obj = Environment_Lookup(env.get(), mod_name);
-						if (mod_obj != nullptr && mod_obj->type == Type::MODULE) {
-							ModuleObject* mo = static_cast<ModuleObject*>(mod_obj);
+						if (mod_obj != nullptr && dynamic_cast<Pycp::Module*>(mod_obj) != nullptr) {
+							Pycp::Module* mo = static_cast<Pycp::Module*>(mod_obj);
 							parent_obj = mo->__getattr__(attr_name);
 						}
-					}
-					if (parent_obj == nullptr || parent_obj->type != Type::CLASS) {
+						}
+						if (parent_obj == nullptr || dynamic_cast<Class*>(parent_obj) == nullptr) {
 						Decref(cls);
 						throw NameError(cur_file(), cur_line(),
 						                "parent class '" + cdef.parent_name + "' is not defined");
-					}
-					ClassObject* parent = static_cast<ClassObject*>(parent_obj);
+						}
+						Class* parent = static_cast<Class*>(parent_obj);
 					cls->set_parent(parent);
 					// 复制父类成员（可见性一并复制）。
 					for (const auto& mn : parent->get_member_names()) {
@@ -566,7 +533,7 @@ Object* VM::execute(CodeObject* co,
 							throw VMError(cur_file(), cur_line(), "decorator stack index out of range.");
 						}
 						Object* deco = stack[didx];
-						priv = apply_decorator_visibility(deco, cur_file(), cur_line());
+						priv = Pycp::ApplyDecoratorVisibility(deco, cur_file(), cur_line());
 					}
 					cls->add_member_name(cdef.member_names[i], priv);
 				}
@@ -590,9 +557,9 @@ Object* VM::execute(CodeObject* co,
 						}
 						Object* deco = stack[didx];
 						// 装饰器作为函数：把方法对象传给它，用返回值替换。
-						Object* decorated = apply_decorator(deco, fn, cur_file(), cur_line());
+						Object* decorated = Pycp::ApplyDecorator(deco, fn, cur_file(), cur_line());
 						// 替换方法：释放原 fn，接管 decorated（须为 Function）。
-						if (decorated == nullptr || decorated->type != Type::FUNCTION) {
+						if (decorated == nullptr || !decorated->is_type("Function")) {
 							Decref(cls);
 							Decref(fn);
 							if (decorated != nullptr) Decref(decorated);
@@ -626,14 +593,14 @@ Object* VM::execute(CodeObject* co,
 				Object* callee = pop();
 
 				Object* ret = nullptr;
-				if (callee->type == Type::FUNCTION) {
+				if (callee->is_type("Function")) {
 					Function* fn = static_cast<Function*>(callee);
 					ret = fn->invoke(args.data(), nargs);
-				} else if (callee->type == Type::CLASS) {
-					// 实例构造：默认创建 InstanceObject（__init_defaults__ +
+				} else if (dynamic_cast<Class*>(callee) != nullptr) {
+					// 实例构造：默认创建 Instance（__init_defaults__ +
 					// __initialize__），内置类型类（BuiltinTypeClass）则直接
 					// 返回内置对象。具体行为由 instantiate 多态分派。
-					ClassObject* cls = static_cast<ClassObject*>(callee);
+					Class* cls = static_cast<Class*>(callee);
 					ret = cls->instantiate(args.data(), nargs);
 				} else {
 					for (Object* a : args) Decref(a);
@@ -667,7 +634,7 @@ Object* VM::execute(CodeObject* co,
 				if (idx >= module_->imports.size())
 					throw VMError(cur_file(), cur_line(), "import index out of range.");
 				const std::string& modname = module_->imports[idx];
-				ModuleObject* modobj = load_module(modname);
+				Pycp::Module* modobj = load_module(modname);
 				push(modobj);
 				break;
 			}
@@ -678,11 +645,11 @@ Object* VM::execute(CodeObject* co,
 					throw VMError(cur_file(), cur_line(), "symbol index out of range.");
 				const std::string& attr = module_->symtab[idx];
 				Object* obj = pop(); // 模块对象
-				if (obj == nullptr || obj->type != Type::MODULE) {
+				if (obj == nullptr || dynamic_cast<Pycp::Module*>(obj) == nullptr) {
 					if (obj != nullptr) Decref(obj);
 					throw TypeError(cur_file(), cur_line(), "attribute access on non-module object.");
 				}
-				Object* val = Module_GetAttr(static_cast<ModuleObject*>(obj), attr);
+				Object* val = Pycp::Module::GetAttr(static_cast<Pycp::Module*>(obj), attr);
 				Decref(obj);
 				push(val);
 				break;
@@ -708,11 +675,63 @@ Object* VM::execute(CodeObject* co,
 				if (idx >= module_->symtab.size())
 					throw VMError(cur_file(), cur_line(), "symbol index out of range.");
 				const std::string& attr = module_->symtab[idx];
-				Object* value = pop(); // 待写入的值（所有权）
+				Object* value = pop(); // 待写入的值（栈持有引用）
 				Object* obj = pop();   // 目标对象
-				// SetAttr 接管 value 所有权（内部按需 Incref）。
+				// SetAttr -> __setattr__ 内部按需 Incref 存入；此处释放
+				// value 从栈 pop 带来的引用（与 STORE_VAR 的 Environment_Store
+				// 接管语义一致，避免字段持有后栈引用泄漏）。
 				SetAttr(obj, attr, value);
+				Decref(value);
 				Decref(obj);
+				break;
+			}
+
+			// ---- list 字面量与下标运算 ----
+			case Op::BUILD_LIST: {
+				// 操作数 = 元素个数。从栈顶依次弹出 n 个元素（栈序逆序），
+				// 构造 List。
+				std::size_t n = static_cast<std::size_t>(ins.operand);
+				if (stack.size() < n)
+					throw VMError(cur_file(), cur_line(), "build list stack underflow.");
+				std::vector<Object*> elems(n);
+				for (std::size_t i = 0; i < n; ++i)
+					elems[n - 1 - i] = pop();
+				// 将元素所有权转交给 list（append 内部 Incref），随后释放
+				// 弹出的 n 份栈引用。
+				List* list = New<List>();
+				for (Object* e : elems) {
+					list->append(e);
+					Decref(e);
+				}
+				push(list);
+				Decref(list); // push 已 Incref
+				break;
+			}
+
+			case Op::GET_ITEM: {
+				Object* key = pop();
+				Object* obj = pop();
+				// GetItem 返回 Borrowed（list 元素由 list 持有）。
+				// push(res) 使栈持有 1 份引用（供后续 CALL 参数释放或 POP_TOP）；
+				// 故此处【不】Decref(res)，避免把 list 持有的引用也减掉。
+				Object* res = GetItem(obj, key);
+				Decref(obj);
+				Decref(key);
+				push(res);
+				break;
+			}
+
+			case Op::SET_ITEM: {
+				Object* value = pop();
+				Object* key = pop();
+				Object* obj = pop();
+				Object* res = SetItem(obj, key, value);
+				Decref(obj);
+				Decref(key);
+				Decref(value);
+				if (res != nullptr) {
+					Decref(res);
+				}
 				break;
 			}
 
@@ -763,7 +782,22 @@ BytecodeFunction::BytecodeFunction(BC::VM* vm_, BC::Module* module_,
 	}
 }
 
+// native 模式构造：AOT 产物使用，不依赖 VM。native_fn 指向生成的
+// pycp_fn_N（签名恰为 PycpNativeFunction），invoke 直接调用它。
+BytecodeFunction::BytecodeFunction(const std::string& name_,
+                                   PycpNativeFunction native_fn,
+                                   std::shared_ptr<BC::Environment> captured_)
+	: Function(""), vm(nullptr), module(nullptr), code_idx(0),
+	  captured(std::move(captured_)), native_fn_(native_fn) {
+	kind = FunctionKind::Bytecode;
+	name = name_.c_str();
+}
+
 Object* BytecodeFunction::invoke(Object** argv, std::size_t argc) {
+	if (native_fn_ != nullptr) {
+		// native 模式：self 传 this，使生成的 pycp_fn_N 能经 get_captured 取捕获环境。
+		return native_fn_(this, argv, argc);
+	}
 	return vm->call(module, code_idx, argv, argc, captured);
 }
 

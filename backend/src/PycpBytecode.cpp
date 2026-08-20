@@ -526,10 +526,10 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 	for (const auto& c : module.const_pool) {
 		switch (c.kind) {
 			case ConstKind::INTEGER:
-				module.runtime_consts.push_back(Integer_FromLong(c.int_value));
+				module.runtime_consts.push_back(Integer::FromLong(c.int_value));
 				break;
 			case ConstKind::STRING:
-				module.runtime_consts.push_back(String_FromString(c.str_value.c_str()));
+				module.runtime_consts.push_back(String::FromCString(c.str_value.c_str()));
 				break;
 			case ConstKind::NONE:
 				module.runtime_consts.push_back(None::instance);

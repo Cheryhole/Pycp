@@ -23,7 +23,7 @@ void None::Finalize(){
 	}
 }
 
-None::None() : Object(Type::NONE){
+None::None() : Object("None"){
 	none_str_ = New<String>("None");
 	Incref(none_str_);  // 子引用持有
 }
@@ -43,6 +43,10 @@ Object* None::__integer__(){
 
 Object* None::__string__(){
 	return none_str_;
+}
+
+void None::foreach_ref(const std::function<void(Object*)>& visit){
+	if (none_str_ != nullptr) visit(none_str_);
 }
 
 } // namespace Pycp

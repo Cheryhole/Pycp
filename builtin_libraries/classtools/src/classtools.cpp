@@ -1,5 +1,5 @@
 #include "classtools.hpp"
-#include "PycpModule.hpp"   // runtime 的 ModuleObject 完整定义
+#include "PycpModule.hpp"   // runtime 的 Module 完整定义
 #include "PycpFunction.hpp"
 #include "PycpGC.hpp"
 #include "PycpException.hpp"
@@ -11,18 +11,18 @@ namespace Pycp {
 
 namespace {
 
-// super()：返回当前类的父类 ClassObject（构造函数/类型本身，而非实例）。
+// super()：返回当前类的父类 Class（构造函数/类型本身，而非实例）。
 // 通过 thread_local 当前 self 上下文（push_current_self/current_self）取
 // 当前方法执行中的接收者实例，再取其所属类 → 父类。语义对齐 Python 的
 // super()。返回 Borrowed 引用经 Incref 转为 Owned。
 Object* _builtin_super(Object*, Object** argv, std::size_t argc) {
 	if (argc != 0) throw TypeError("super() expects 0 arguments.");
-	InstanceObject* self = current_self();
+	Instance* self = current_self();
 	if (self == nullptr) {
 		throw TypeError("super() used outside a method.");
 	}
-	ClassObject* cls = self->get_class();
-	ClassObject* parent = (cls != nullptr) ? cls->get_parent() : nullptr;
+	Class* cls = self->get_class();
+	Class* parent = (cls != nullptr) ? cls->get_parent() : nullptr;
 	if (parent == nullptr) {
 		throw TypeError("super(): class '" +
 		                std::string(cls ? cls->get_name() : "?") + "' has no parent.");
@@ -65,7 +65,7 @@ Object* _builtin_public(Object* self, Object** argv, std::size_t argc) {
 }
 
 // 将原生函数以指定名字放入模块命名空间。
-void set_func(ModuleObject* mod, const char* name, PycpNativeFunction fn) {
+void set_func(Module* mod, const char* name, PycpNativeFunction fn) {
 	auto* ns = mod->get_namespace();
 	Function* f = New<Function>(name, fn);
 	(*ns)[name] = f;
@@ -73,15 +73,15 @@ void set_func(ModuleObject* mod, const char* name, PycpNativeFunction fn) {
 	Decref(f); // namespace 持有
 }
 
-ModuleObject* make_classtools_module() {
-	ModuleObject* mod = Module_New(MODULE_NAME);
+Module* make_classtools_module() {
+	Module* mod = Module::New(MODULE_NAME);
 
 	// 可见性装饰器函数：@private / @public 作为普通函数被装饰器语法糖
 	// 调用，设置被装饰对象的可见性。
 	set_func(mod, "private", _builtin_private);
 	set_func(mod, "public",  _builtin_public);
 
-	// super：运行时函数，返回父类 ClassObject（thread_local self 上下文）。
+	// super：运行时函数，返回父类 Class（thread_local self 上下文）。
 	set_func(mod, "super", _builtin_super);
 
 	return mod;
@@ -91,7 +91,7 @@ ModuleObject* make_classtools_module() {
 
 // 动态库入口（统一符号名 PycpModuleInit，靠文件名区分模块）。
 // 由 VM::load_module 经 LoadNativeModule 的 dlsym("PycpModuleInit") 调用。
-extern "C" ModuleObject* PycpModuleInit() {
+extern "C" Module* PycpModuleInit() {
 	return make_classtools_module();
 }
 

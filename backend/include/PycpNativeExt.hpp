@@ -7,9 +7,9 @@
 // import 语句可导入 C++ 编写的动态库（Linux .so / Windows .dll /
 // macOS .dylib），扩展导出一个入口符号：
 //
-//   extern "C" Pycp::ModuleObject* PycpModuleInit_<name>();
+//   extern "C" Pycp::Module* PycpModuleInit_<name>();
 //
-// 返回一个已构建好的 ModuleObject（Owned，refcount=1），其命名空间
+// 返回一个已构建好的 Module（Owned，refcount=1），其命名空间
 // 内可放置 Function（复用 PycpNativeFunction 签名）等对象。
 //
 // 加载链：VM::load_module 在 FindBuiltinModule（静态内建）之后、
@@ -38,9 +38,9 @@ const std::string& GetStdlibDir();
 //   3) 当前工作目录
 //   - 文件不存在：返回 nullptr（由调用方回退 .pycp 加载）。
 //   - 文件存在但 dlopen / dlsym / 入口调用失败：抛 ImportError。
-// 命中返回 ModuleObject*（Owned，refcount=1，由调用方 GC_AddRoot 并缓存）。
-ModuleObject* LoadNativeModule(const std::string& name,
-                               const std::string& search_dir);
+// 命中返回 Module*（Owned，refcount=1，由调用方 GC_AddRoot 并缓存）。
+Module* LoadNativeModule(const std::string& name,
+                         const std::string& search_dir);
 
 // 统一关闭所有已加载的 dlopen 句柄并清空句柄缓存（进程退出前调用）。
 void NativeExt_Finalize();

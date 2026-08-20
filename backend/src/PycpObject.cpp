@@ -13,8 +13,8 @@ static std::string ptr_address(const void* p) {
 	return oss.str();
 }
 
-Object::Object(Type type){
-	this->type = type;
+Object::Object(const std::string& type_name)
+	: type_name_(type_name){
 	this->refcount = 0;
 	this->gc_flags = GCFlag::NONE;
 	this->private_ = false;
@@ -35,7 +35,7 @@ const char* Object::get_name() const {
 Object* Object::__string__(){
   // 默认表示："<name at 0xADDR>"（作为所有未显式定义 __string__ 的
   // 对象的兜底输出；匿名对象 name 为 @anonymous）。
-  return String_FromString(("<" + std::string(get_name()) +
+  return String::FromCString(("<" + std::string(get_name()) +
                             " at " + ptr_address(this) + ">").c_str());
 }
 
@@ -98,6 +98,23 @@ Object* Object::__greater_than__([[maybe_unused]] Object* other){
 
 Object* Object::__greater_equal__([[maybe_unused]] Object* other){
   throw TypeError("Unsupported to compare.");
+}
+
+Object* Object::__get_item__([[maybe_unused]] Object* key){
+  throw TypeError("Unsupported to get item.");
+}
+
+Object* Object::__set_item__([[maybe_unused]] Object* key,
+                             [[maybe_unused]] Object* value){
+  throw TypeError("Unsupported to set item.");
+}
+
+Object* Object::__list__(){
+  throw TypeError("Unsupported to convert to list.");
+}
+
+void Object::foreach_ref([[maybe_unused]] const std::function<void(Object*)>& visit){
+  // 默认无子引用。
 }
 
 }

@@ -12,11 +12,11 @@ Integer* Integer::instances[PYCP_INTEGER_INSTANCES] = {0};
 
 Integer::Integer() : Integer(INT64_C(0)){}
 
-Integer::Integer(int64_t value) : Object(Type::INTEGER){
+Integer::Integer(int64_t value) : Object("Integer"){
 	this->_value = value;
 }
 
-Integer::Integer(const std::string& value) : Object(Type::INTEGER){
+Integer::Integer(const std::string& value) : Object("Integer"){
 	try{
 		this->_value = std::stoll(value);  // 使用 64 位解析，避免 stoi 截断
 	} catch (const std::invalid_argument&){
@@ -28,7 +28,7 @@ Integer::Integer(const std::string& value) : Object(Type::INTEGER){
 
 Integer::Integer(Integer* value) : Integer(value->get_value()){}
 
-Integer::Integer(Object* obj) : Object(Type::INTEGER){
+Integer::Integer(Object* obj) : Object("Integer"){
 	if (obj == nullptr){
 		throw TypeError("Cannot construct Integer from null object.");
 	}
@@ -40,6 +40,10 @@ Integer::~Integer(){}
 
 int64_t Integer::get_value() const{
 	return this->_value;
+}
+
+Object* Integer::FromLong(long long value){
+	return New<Integer>(static_cast<int64_t>(value));
 }
 
 Object* Integer::__integer__(){
@@ -55,7 +59,7 @@ Object* Integer::__negation__(){
 }
 
 Object* Integer::__addition__(Object* other){
-	if (other == nullptr || other->type != Type::INTEGER){
+	if (other == nullptr || !other->is_type("Integer")){
 		throw TypeError("Unsupported to add.");
 	}
 	Integer* i = static_cast<Integer*>(other);
@@ -63,7 +67,7 @@ Object* Integer::__addition__(Object* other){
 }
 
 Object* Integer::__subtraction__(Object* other){
-	if (other == nullptr || other->type != Type::INTEGER){
+	if (other == nullptr || !other->is_type("Integer")){
 		throw TypeError("Unsupported to subtract.");
 	}
 	Integer* i = static_cast<Integer*>(other);
@@ -73,11 +77,11 @@ Object* Integer::__subtraction__(Object* other){
 Object* Integer::__multiplication__(Object* other){
 	if (other == nullptr) throw TypeError("Unsupported to multiply.");
 
-	if (other->type == Type::INTEGER){
+	if (other->is_type("Integer")){
 		Integer* i = static_cast<Integer*>(other);
 		return New<Integer>(this->_value * i->_value);
 	}
-	else if (other->type == Type::STRING){
+	else if (other->is_type("String")){
 		String* s = static_cast<String*>(other);
 		std::string str = s->get_value();
 		std::string res;
@@ -91,7 +95,7 @@ Object* Integer::__multiplication__(Object* other){
 }
 
 Object* Integer::__division__(Object* other){
-	if (other == nullptr || other->type != Type::INTEGER){
+	if (other == nullptr || !other->is_type("Integer")){
 		throw TypeError("Unsupported to divide.");
 	}
 	Integer* i = static_cast<Integer*>(other);
@@ -102,7 +106,7 @@ Object* Integer::__division__(Object* other){
 }
 
 Object* Integer::__power__(Object* other){
-	if (other == nullptr || other->type != Type::INTEGER){
+	if (other == nullptr || !other->is_type("Integer")){
 		throw TypeError("Unsupported to power.");
 	}
 	Integer* i = static_cast<Integer*>(other);

@@ -421,6 +421,49 @@ std::string AttributeExpression::to_string() const {
 }
 
 // ============================================================
+// ListLiteral 实现
+// ============================================================
+ListLiteral::ListLiteral(std::vector<Expression*>* elems, int line)
+	: elements(elems) {
+	lineno = line;
+}
+
+ListLiteral::~ListLiteral() {
+	if (elements != nullptr) {
+		for (Expression* e : *elements) delete e;
+		delete elements;
+	}
+}
+
+std::string ListLiteral::to_string() const {
+	std::string result = "[";
+	if (elements != nullptr) {
+		for (std::size_t i = 0; i < elements->size(); ++i) {
+			if (i > 0) result += ", ";
+			result += (*elements)[i]->to_string();
+		}
+	}
+	return result + "]";
+}
+
+// ============================================================
+// IndexExpression 实现
+// ============================================================
+IndexExpression::IndexExpression(Expression* t, Expression* idx, int line)
+	: target(t), index(idx) {
+	lineno = line;
+}
+
+IndexExpression::~IndexExpression() {
+	delete target;
+	delete index;
+}
+
+std::string IndexExpression::to_string() const {
+	return target->to_string() + "[" + index->to_string() + "]";
+}
+
+// ============================================================
 // ClassDefinition 实现
 // ============================================================
 ClassDefinition::ClassDefinition(std::string* n,

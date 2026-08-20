@@ -26,25 +26,22 @@ std::unordered_set<Object*> g_roots;
 // 标记阶段辅助：递归标记从 obj 出发可达的对象
 void mark_reachable(Object* obj){
 	if (obj == nullptr) return;
+	// 防御：对象必须仍被登记（未被 delete）。若不在 g_tracked 中则为悬空指针。
+	// 必须在解引用 obj（访问 _gc_flags / foreach_ref）之前检查。
+	if (g_tracked.find(obj) == g_tracked.end()) {
+		// 悬空指针（已被 delete）：跳过，避免访问已释放内存。
+		return;
+	}
 	if ((obj->_gc_flags() & GCFlag::MARKED) == GCFlag::MARKED) return;
 	if ((obj->_gc_flags() & GCFlag::PERMANENT) == GCFlag::PERMANENT) return;
 
 	obj->_set_gc_flags(obj->_gc_flags() | GCFlag::MARKED);
 
-	// 按对象类型枚举其持有的引用字段（当前仅 None/Function 持有子引用）
-	switch (obj->type){
-		case Type::NONE: {
-			None* n = static_cast<None*>(obj);
-			if (n->none_str() != nullptr) mark_reachable(n->none_str());
-			break;
-		}
-		case Type::FUNCTION: {
-			// Function 当前不持有除自身外的 PycpObject 引用
-			break;
-		}
-		default:
-			break;
-	}
+	// 经虚函数枚举子引用（各子类 override foreach_ref），替代旧 Type 枚举
+	// 的 switch 分发。递归标记可达对象。
+	obj->foreach_ref([&](Object* child) {
+		mark_reachable(child);
+	});
 }
 
 } // anonymous namespace
@@ -64,22 +61,12 @@ void Decref(Object* obj){
 	obj->_set_refcount(obj->_refcount() - 1);
 	if (obj->_refcount() > 0) return;
 
-	// refcount 归零：先递归 Decref 其持有的子引用，再释放
+	// refcount 归零：释放对象（其持有的子引用由各子类析构函数负责
+	// Decref，不在此处经 foreach_ref 重复释放，避免双重 Decref）。
 	if ((obj->_gc_flags() & GCFlag::PERMANENT) == GCFlag::PERMANENT){
 		// 常驻对象仅恢复引用计数，不释放
 		obj->_set_refcount(1);
 		return;
-	}
-
-	// 枚举子引用并 Decref（与 mark_reachable 保持同步）
-	switch (obj->type){
-		case Type::NONE: {
-			None* n = static_cast<None*>(obj);
-			if (n->none_str() != nullptr) Decref(n->none_str());
-			break;
-		}
-		default:
-			break;
 	}
 
 	GC_Untrack(obj);
