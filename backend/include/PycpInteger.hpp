@@ -9,7 +9,7 @@
 
 namespace Pycp{
 
-class Integer : public Object{
+class PYCP_API Integer : public Object{
 	private:
 		int64_t _value;
 

@@ -132,8 +132,11 @@ Module* LoadNativeModule(const std::string& name,
 	// 解析入口符号 PycpModuleInit（统一符号名）。
 	NativeModuleInitFn init = nullptr;
 #if defined(_WIN32)
+	// GetProcAddress 返回 FARPROC（通用函数指针），先转 void* 再转具体签名，
+	// 消除 -Wcast-function-type（Windows 下标准做法）。
 	init = reinterpret_cast<NativeModuleInitFn>(
-		GetProcAddress(static_cast<HMODULE>(handle), ENTRY_SYMBOL));
+		reinterpret_cast<void*>(
+			GetProcAddress(static_cast<HMODULE>(handle), ENTRY_SYMBOL)));
 #else
 	init = reinterpret_cast<NativeModuleInitFn>(dlsym(handle, ENTRY_SYMBOL));
 #endif

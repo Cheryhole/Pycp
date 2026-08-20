@@ -15,7 +15,7 @@ namespace {
 // 通过 thread_local 当前 self 上下文（push_current_self/current_self）取
 // 当前方法执行中的接收者实例，再取其所属类 → 父类。语义对齐 Python 的
 // super()。返回 Borrowed 引用经 Incref 转为 Owned。
-Object* _builtin_super(Object*, Object** argv, std::size_t argc) {
+Object* _builtin_super(Object*, Object** argv [[maybe_unused]], std::size_t argc) {
 	if (argc != 0) throw TypeError("super() expects 0 arguments.");
 	Instance* self = current_self();
 	if (self == nullptr) {

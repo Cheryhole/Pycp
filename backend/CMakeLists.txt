@@ -138,6 +138,10 @@ if(BUILD_RUNTIME_SHARED)
         target_compile_options(PycpRuntime_obj_shared PRIVATE /W4 /EHsc /utf-8)
     else()
         target_compile_options(PycpRuntime_obj_shared PRIVATE -Wall -Wextra -O2)
+        # MinGW 下导出 DLL 的全部符号（__declspec 未逐符号标注的也一并导出），
+        # 保证主程序与内置扩展 DLL 跨 DLL 解析所有运行时 C++ 符号
+        # （如 Pycp::BC::VM、Pycp::BC::Module 等字节码符号）。
+        target_link_options(PycpRuntime_shared PRIVATE -Wl,--export-all-symbols)
     endif()
 endif()
 

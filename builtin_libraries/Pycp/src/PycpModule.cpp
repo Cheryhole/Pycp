@@ -105,7 +105,7 @@ Object* _object_init(Object*, Object** argv, std::size_t argc) {
 }
 
 // 将普通类对象放入命名空间（用于 Pycp.Object 基类）。
-void set_plain_class(Module* mod, const char* name) {
+[[maybe_unused]] void set_plain_class(Module* mod, const char* name) {
 	auto* ns = mod->get_namespace();
 	Class* cls = New<Class>(name);
 	(*ns)[name] = cls;

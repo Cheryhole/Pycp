@@ -6,10 +6,13 @@
 //   初始化顺序：Core -> GC -> None -> Integer -> String -> Function -> Builtin
 //   具备幂等保护：重复 Initialize 不会重复初始化
 
+#include "PycpConfig.hpp"
+
 namespace Pycp {
 
-void Initialize();
-void Finalize();
+// 标记 PYCP_API：Windows 下构建 shared 运行时时导出，供 pycp.exe 跨 DLL 调用。
+PYCP_API void Initialize();
+PYCP_API void Finalize();
 
 } // namespace Pycp
 

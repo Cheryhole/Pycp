@@ -31,9 +31,25 @@ endif()
 
 # =====================================================================
 # Flex & Bison
+# ---------------------------------------------------------------------
+# Windows 下系统通常不自带 bison/flex，需安装 win_flex_bison
+# （https://sourceforge.net/projects/winflexbison/）并将其 bin 目录加入 PATH，
+# 或显式指定 -DBISON_EXECUTABLE=... -DFLEX_EXECUTABLE=...。
+# 找不到时给出明确提示而非晦涩的 fatal。
 # =====================================================================
-find_package(BISON REQUIRED)
-find_package(FLEX REQUIRED)
+find_package(BISON)
+find_package(FLEX)
+if(NOT BISON_FOUND OR NOT FLEX_FOUND)
+    if(WIN32)
+        message(FATAL_ERROR
+            "在 Windows 下未找到 Bison/Flex。请安装 win_flex_bison 并将其 bin 目录加入 PATH，"
+            "或显式指定：\n"
+            "  cmake -S . -B build -DBISON_EXECUTABLE=<path>/win_bison.exe "
+            "-DFLEX_EXECUTABLE=<path>/win_flex.exe")
+    else()
+        message(FATAL_ERROR "未找到 Bison/Flex，请先安装（如 apt install bison flex）。")
+    endif()
+endif()
 
 message(STATUS "Bison : ${BISON_EXECUTABLE}")
 message(STATUS "Flex  : ${FLEX_EXECUTABLE}")
@@ -47,7 +63,15 @@ message(STATUS "Flex  : ${FLEX_EXECUTABLE}")
 # 产物统一输出到 backend/bin/；关闭非必需的 Python 绑定 / 测试目标。
 # =====================================================================
 set(BUILD_RUNTIME_STATIC ON CACHE BOOL "Build static PycpRuntime library")
-set(BUILD_RUNTIME_SHARED OFF CACHE BOOL "Build shared PycpRuntime library")
+# Windows 下默认构建 shared 运行时：内置扩展 DLL（io/Pycp/classtools）需解析
+# 运行时 C++ 符号，而 Windows 不导出可执行文件符号。统一链接 PycpRuntime_shared
+# 可让这些符号由 DLL 导出，避开静态模式下 exe 符号不可见的难题。
+# 非 Windows（POSIX）保持默认静态（靠 -rdynamic 导出符号）。
+if(WIN32)
+    set(BUILD_RUNTIME_SHARED ON CACHE BOOL "Build shared PycpRuntime library")
+else()
+    set(BUILD_RUNTIME_SHARED OFF CACHE BOOL "Build shared PycpRuntime library")
+endif()
 set(BUILD_PYTHON_BINDING OFF CACHE BOOL "" FORCE)
 set(BUILD_TEST OFF CACHE BOOL "" FORCE)
 
@@ -222,10 +246,22 @@ endif()
 # 不再静态链接进 pycp。pycp 仅链接 PycpRuntime。
 target_link_libraries(pycp PRIVATE ${PYCP_RUNTIME_TARGET})
 
-# 原生扩展（dlopen 加载的 .so）需解析主程序的 C++ 符号（Module::New/New 等），
-# 因此以 -rdynamic 导出全局符号（POSIX）。Windows 下静态链接需 --export-all-symbols。
+# 原生扩展（dlopen/LoadLibrary 加载的 .so/.dll）需解析运行时 C++ 符号
+# （Module::New/New 等）。POSIX 下以 -rdynamic 导出全局符号；Windows 下
+# 采用 shared 运行时（PycpRuntime_shared.dll），由 DLL 自身导出符号，
+# 主程序无需导出，因此不添加 -rdynamic（MSVC 亦无此选项）。
 if(UNIX AND NOT APPLE)
     target_link_options(pycp PRIVATE -rdynamic)
+endif()
+
+# Windows 下动态链接运行时时，将 PycpRuntime_shared.dll 复制到可执行文件所在
+# 目录，保证 pycp.exe 启动即可定位该 DLL（stdlib 扩展 DLL 也链接同一份）。
+if(WIN32 AND BUILD_RUNTIME_SHARED)
+    add_custom_command(TARGET pycp POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:PycpRuntime_shared>"
+                "$<TARGET_FILE_DIR:pycp>/"
+    )
 endif()
 
 # 动态链接时设置 rpath：构建树内指向 backend/bin，安装后用 $ORIGIN

@@ -7,7 +7,7 @@
 
 namespace Pycp{
 
-class None : public Object{
+class PYCP_API None : public Object{
 	private:
 		String* none_str_;
 

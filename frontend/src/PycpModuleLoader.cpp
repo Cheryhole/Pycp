@@ -6,8 +6,9 @@
 
 #include <fstream>
 #include <sstream>
-#include <sys/stat.h>
 #include <vector>
+
+#include <filesystem>
 
 // 由 Flex/Bison 生成的解析器提供
 extern Pycp::Ast::Node* parsef(const std::string& path);
@@ -17,10 +18,10 @@ namespace Pycp {
 
 namespace {
 
-// 判断文件是否存在
+// 判断文件是否存在且为常规文件（跨平台：用 std::filesystem 替代 POSIX stat/S_ISREG）
 bool file_exists(const std::string& path) {
-	struct stat st;
-	return stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+	std::error_code ec;
+	return std::filesystem::is_regular_file(path, ec);
 }
 
 // 提取路径中的目录部分（不含文件名）；无 '/' 时返回 "."。

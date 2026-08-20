@@ -4,6 +4,8 @@
 #include <stdexcept>
 #include <string>
 
+#include "PycpConfig.hpp"
+
 namespace Pycp{
 
 class Object;
@@ -21,7 +23,9 @@ class Object;
 // 其中 <file> 为出错文件路径，<lineno> 为行号，<error> 为具体描述。
 // what() 仅返回错误描述（不带任何前缀），format() 负责拼装两行格式。
 // =============================================================
-class Exception : public std::runtime_error{
+// 标记 PYCP_API：Windows shared 运行时下导出，保证跨 DLL 抛出/捕获异常时
+// RTTI 一致（MSVC 跨 DLL catch 自定义异常类型须该类导出）。
+class PYCP_API Exception : public std::runtime_error{
 	public:
 		std::string file;   // 出错文件路径（空表示无位置信息）
 		int lineno = -1;    // 出错行号（-1 表示未知）

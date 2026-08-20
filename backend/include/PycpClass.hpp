@@ -27,7 +27,7 @@
 
 namespace Pycp {
 
-class Class : public Object {
+class PYCP_API Class : public Object {
 private:
 	std::string name_;
 	// 父类（单继承，无父类时为 nullptr）。
@@ -103,7 +103,7 @@ public:
 // 参数传给原生构造回调，直接返回内置对象（String / Integer），
 // 而非 Instance。语义对齐 Python 的 str(x) / int(x)。
 // =============================================================
-class BuiltinTypeClass : public Class {
+class PYCP_API BuiltinTypeClass : public Class {
 private:
 	// 原生构造回调：接收 argv/argc，返回 Owned 内置对象。
 	PycpNativeFunction ctor_;
@@ -115,7 +115,7 @@ public:
 	Object* instantiate(Object** argv, std::size_t argc) override;
 };
 
-class Instance : public Object {
+class PYCP_API Instance : public Object {
 private:
 	Class* cls_;
 	// 实例字段表：字段名 -> Object*。实例拥有其引用。
@@ -189,9 +189,10 @@ void leave_internal_access();
 // 方法体执行期间压入当前接收者实例（self），供 super() 原生函数读取
 // 当前实例 → 所属类 → 父类。与 internal_access_depth 配套使用。
 // =============================================================
-void push_current_self(Instance* self);
-void pop_current_self();
-Instance* current_self();
+// 标记 PYCP_API：Windows shared 运行时导出，供扩展 DLL 与 VM 跨 DLL 解析。
+PYCP_API void push_current_self(Instance* self);
+PYCP_API void pop_current_self();
+PYCP_API Instance* current_self();
 
 // =============================================================
 // BoundMethod：绑定到接收者对象的方法对象
@@ -200,7 +201,7 @@ Instance* current_self();
 // invoke 会将接收者作为 self（argv[0]）传入底层方法，实现 self 的
 // 自动绑定。接收者为任意 Object*（Instance / File 等）。
 // =============================================================
-class BoundMethod : public Function {
+class PYCP_API BoundMethod : public Function {
 private:
 	Object* instance_;   // 绑定接收者（持有引用）
 	Function* method_;   // 底层方法（持有引用）

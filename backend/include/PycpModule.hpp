@@ -18,7 +18,7 @@
 
 namespace Pycp {
 
-class Module : public Object {
+class PYCP_API Module : public Object {
 private:
 	std::string name_;   // 模块名（不含 .pycp 后缀）
 	// 模块命名空间：该模块顶层定义的名称（含函数、变量等）。

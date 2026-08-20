@@ -24,7 +24,7 @@ using PycpNativeFunction = Object* (*)(Object* self, Object** argv, std::size_t 
 Object* _builtin_print(Object* self, Object** argv, std::size_t argc);
 struct BuiltinFunction;
 
-class Function : public Object{
+class PYCP_API Function : public Object{
 	protected:
 		FunctionKind kind;
 		const char* name;

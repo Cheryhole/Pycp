@@ -43,6 +43,10 @@
 
 #include <map>
 
+#if defined(_WIN32)
+#include <windows.h>   // SetConsoleOutputCP（仅 Windows 下设置 UTF-8 控制台代码页）
+#endif
+
 // 由 Flex/Bison 生成的解析器提供
 extern Pycp::Ast::Node* parsef(const std::string& path);
 extern int Pycp_parse_error_count;
@@ -65,7 +69,7 @@ struct Options {
 
 void print_help(const char* prog) {
 	std::cout
-		<< "Pycp — Python-like language compiler & interpreter\n\n"
+		<< "Pycp - Python-like language compiler & interpreter\n\n"
 		<< "Usage:\n"
 		<< "  " << prog << " [options] <input_file>\n\n"
 		<< "Options:\n"
@@ -375,6 +379,11 @@ void dump_module(const Pycp::BC::Module& module) {
 } // anonymous namespace
 
 int main(int argc, char** argv) {
+#if defined(_WIN32)
+	// 将控制台输出代码页设为 UTF-8，保证后续输出（含中文报错信息）在
+	// UTF-8 终端正确显示；必须与终端代码页（如 chcp 65001）配合。
+	SetConsoleOutputCP(CP_UTF8);
+#endif
 	Options opt;
 	if (!parse_args(argc, argv, opt)) {
 		print_help(argv[0]);

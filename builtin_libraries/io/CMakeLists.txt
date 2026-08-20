@@ -39,8 +39,14 @@ set_target_properties(PycpBuiltin_io_shared PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/stdlib
 )
 
-# 依赖 PycpRuntime（头文件与链接接口均来自 runtime）
-target_link_libraries(PycpBuiltin_io_shared PUBLIC PycpRuntime_static)
+# 依赖 PycpRuntime（头文件与链接接口均来自 runtime）。
+# Windows 下采用 shared 运行时（PycpRuntime_shared.dll），使扩展 DLL 可解析
+# 运行时导出的 C++ 符号；非 Windows 维持静态链接（靠主程序 -rdynamic 导出符号）。
+if(WIN32 AND BUILD_RUNTIME_SHARED)
+    target_link_libraries(PycpBuiltin_io_shared PUBLIC PycpRuntime_shared)
+else()
+    target_link_libraries(PycpBuiltin_io_shared PUBLIC PycpRuntime_static)
+endif()
 
 if(MSVC)
     target_compile_options(PycpBuiltin_io_obj PRIVATE /W4 /EHsc /utf-8)

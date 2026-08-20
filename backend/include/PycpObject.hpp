@@ -38,7 +38,9 @@ inline bool operator!=(GCFlag a, GCFlag b){
 //   - refcount : 引用计数（RC 为主回收依据）
 //   - gc_flags : 标记-清除所需标记位，并预留 PERMANENT 常驻位
 // 业务代码禁止直接 delete，统一经 Incref/Decref（C-ABI 别名 PYCP_Incref/PYCP_Decref）。
-class Object{
+// 标记 PYCP_API：Windows 下构建 shared 运行时时整体导出 public 成员，
+// 供内置扩展 DLL（io/Pycp/classtools）解析 Pycp::Object 的方法。
+class PYCP_API Object{
 	private:
 		uint32_t refcount;
 		GCFlag gc_flags;

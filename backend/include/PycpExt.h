@@ -32,7 +32,8 @@
 //
 // 注意：
 //   - 扩展与主程序必须使用相同编译器、相同 C++ 标准（C++17）、相同 ABI。
-//   - 主程序以 -rdynamic（POSIX）导出符号，供扩展解析运行时 C++ 符号。
+//   - Windows 下主程序与扩展均链接 PycpRuntime_shared(DLL)，由 DLL 导出
+//     运行时 C++ 符号供扩展解析；POSIX 下主程序以 -rdynamic 导出符号。
 // =============================================================
 
 #include "Pycp.hpp"
@@ -44,8 +45,15 @@
 // 导出模块入口函数签名（extern "C"，避免 name mangling）。
 // 统一符号名 PycpModuleInit（靠文件名区分模块），name 参数仅用于
 // 模块对象命名，不再拼入符号名。
-#define PYCP_EXPORT_MODULE(name) \
+// Windows 下需显式 __declspec(dllexport) 才能让扩展 DLL 导出该符号，
+// 否则 GetProcAddress 找不到 PycpModuleInit。
+#ifdef _WIN32
+  #define PYCP_EXPORT_MODULE(name) \
+	extern "C" __declspec(dllexport) Pycp::Module* PycpModuleInit()
+#else
+  #define PYCP_EXPORT_MODULE(name) \
 	extern "C" Pycp::Module* PycpModuleInit()
+#endif
 
 // 将函数 fn 以名字 fname 放入模块命名空间 ns。
 //   构造 Function（Owned）-> 写入 map（Incref）-> 释放本地 Owned。

@@ -6,7 +6,7 @@
 
 namespace Pycp{
 
-class String : public Object{
+class PYCP_API String : public Object{
 	private:
 		std::string _value;
 

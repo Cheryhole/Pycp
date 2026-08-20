@@ -12,7 +12,7 @@ namespace {
 
 // write 方法的原生实现：仅接受字符串，写入后返回 None。
 // 接收者（File）经 BoundMethod 作为 argv[0] 传入（self 为方法对象）。
-Object* _file_write(Object* self, Object** argv, std::size_t argc) {
+Object* _file_write(Object* self [[maybe_unused]], Object** argv, std::size_t argc) {
 	File* f = static_cast<File*>(argv[0]);
 	if (argc != 2) {
 		throw TypeError("write() expects exactly 1 argument.");
@@ -21,7 +21,7 @@ Object* _file_write(Object* self, Object** argv, std::size_t argc) {
 }
 
 // readline 方法的原生实现：读取一行，返回 String。
-Object* _file_readline(Object* self, Object** argv, std::size_t argc) {
+Object* _file_readline(Object* self [[maybe_unused]], Object** argv, std::size_t argc) {
 	File* f = static_cast<File*>(argv[0]);
 	if (argc != 1) {
 		throw TypeError("readline() expects no arguments.");
