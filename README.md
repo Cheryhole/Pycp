@@ -188,13 +188,13 @@ pycp [options] <input_file>
 生成的 `.cpp` 包含 `main()`，内部将字节码翻译为 `Pycp::Add`/`Sub`/`Call` 等
 ABI 调用序列（常量内联为 `g_c[]`，控制流翻译为 `goto`，函数翻译为
 `pycp_fn_N`）。它不依赖解释器循环，但编译时仍需链接 `PycpRuntime` 库
-（静态 `libPycpRuntime.a` 或动态 `libPycpRuntime.so`）。
+（静态 `libPycpRuntime.a`，或动态 `libPycpRuntime.dll` + 导入库 `libPycpRuntime.dll.a`；Linux/macOS 下为 `libPycpRuntime.so`）。
 
 > 说明：AOT 已实现完整的指令翻译（含类定义 `MAKE_CLASS`、属性
 > `LOAD_ATTR`/`STORE_ATTR`、列表字面量与下标 `BUILD_LIST`/`GET_ITEM`/`SET_ITEM`、
 > 函数调用等）。闭包通过 `BytecodeFunction` 的 native 模式落地，匿名函数捕获
 > 外层局部变量后翻译出的 C++ 与原生函数一致。生成的代码需链接 `PycpRuntime`
-> 库（静态 `libPycpRuntime.a` 或动态 `libPycpRuntime.so`）。
+> 库（静态 `libPycpRuntime.a`，或动态 `libPycpRuntime.dll` + 导入库 `libPycpRuntime.dll.a`；Linux/macOS 下为 `libPycpRuntime.so`）。
 
 **5. 一个最小示例**
 

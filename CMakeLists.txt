@@ -344,6 +344,12 @@ if(BUILD_RUNTIME_SHARED)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "$<TARGET_FILE:PycpRuntime_shared>" "${PYCP_SDK_DIR}/"
     )
+    # 复制 DLL 导入库（MinGW: libPycpRuntime.dll.a；MSVC: PycpRuntime.lib），
+    # 否则 g++ -lPycpRuntime 会回退选中静态库 .a，导致 __imp_ 符号 undefined reference。
+    add_custom_command(TARGET pycp POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_LINKER_FILE:PycpRuntime_shared>" "${PYCP_SDK_DIR}/"
+    )
 endif()
 
 foreach(hdr IN LISTS PYCP_AOT_HEADERS)
