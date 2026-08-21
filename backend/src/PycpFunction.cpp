@@ -1,9 +1,4 @@
 #include "PycpFunction.hpp"
-#include "PycpGC.hpp"
-#include "PycpConfig.hpp"
-#include "PycpABI.hpp"
-
-#include <sstream>
 
 namespace Pycp {
 

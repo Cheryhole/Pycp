@@ -5,9 +5,14 @@
 #include "PycpNone.hpp"
 #include "PycpString.hpp"
 #include "PycpEnvironment.hpp"
+#include "PycpGC.hpp"
+#include "PycpConfig.hpp"
+#include "PycpABI.hpp"
+
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <sstream>
 
 namespace Pycp {
 

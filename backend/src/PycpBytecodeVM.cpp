@@ -1,17 +1,4 @@
 #include "PycpBytecodeVM.hpp"
-#include "PycpABI.hpp"
-#include "PycpGC.hpp"
-#include "PycpInteger.hpp"
-#include "PycpString.hpp"
-#include "PycpNone.hpp"
-#include "PycpFunction.hpp"
-#include "PycpException.hpp"
-#include "PycpConfig.hpp"
-#include "PycpClass.hpp"
-#include "PycpNativeExt.hpp"
-#include "PycpList.hpp"
-
-#include <vector>
 
 namespace Pycp::BC {
 
@@ -424,6 +411,69 @@ Object* VM::execute(CodeObject* co,
 				break;
 			}
 
+			// ---- 类型断言 ----
+			case Op::CHECK_INT: {
+				// 校验栈顶是否为 Integer；仅校验不弹栈，保证栈平衡。
+				if (stack.empty())
+					throw VMError(cur_file(), cur_line(), "stack underflow.");
+				Object* v = stack.back();
+				if (v == nullptr || !v->is_type("Integer"))
+					throw TypeError(cur_file(), cur_line(),
+						"repeat range value must be an integer.");
+				break;
+			}
+			case Op::CHECK_RANGE_DIRECTION: {
+				// 校验 repeat 范围方向与步长符号不矛盾。
+				// 栈布局: a b s（依次弹出）。矛盾条件（对称）：
+				//   (a < b 且 s < 0) || (a > b 且 s > 0)；a == b 永不矛盾。
+				Object* s = pop();
+				Object* b = pop();
+				Object* a = pop();
+				if (a == nullptr || b == nullptr || s == nullptr ||
+				    !a->is_type("Integer") || !b->is_type("Integer") ||
+				    !s->is_type("Integer")) {
+					Decref(s); Decref(b); Decref(a);
+					throw TypeError(cur_file(), cur_line(),
+						"repeat range value must be an integer.");
+				}
+				int64_t av = static_cast<Integer*>(a)->get_value();
+				int64_t bv = static_cast<Integer*>(b)->get_value();
+				int64_t sv = static_cast<Integer*>(s)->get_value();
+				Decref(s); Decref(b); Decref(a);
+				if ((av < bv && sv < 0) || (av > bv && sv > 0))
+					throw ValueError(cur_file(), cur_line(),
+						"repeat range step contradicts endpoints direction.");
+				break;
+			}
+
+			// ---- 迭代 ----
+			case Op::GET_ITER: {
+				// obj -> obj.__iterator__()（返回全新迭代器，Owned）。
+				// 不可迭代时 __iterator__ 抛 TypeError。
+				Object* obj = pop();
+				Object* it = obj->__iterator__();
+				Decref(obj);
+				push(it); Decref(it);
+				break;
+			}
+			case Op::FOR_ITER: {
+				// it -> it.__next__()：成功压入下一元素；StopIteration 则按
+				// 操作数相对跳转（同 JUMP，operand = target - ins_idx）。
+				// 仅本指令捕捉 StopIteration（foreach 默认），其他异常向外传播。
+				Object* it = pop();
+				try {
+					Object* elem = it->__next__();
+					Decref(it);
+					push(elem); Decref(elem);
+				} catch (const StopIteration&) {
+					Decref(it);
+					pc = pc + static_cast<std::size_t>(ins.operand) - 1;
+					if (pc >= pc_end)
+						throw VMError(cur_file(), cur_line(), "jump out of range.");
+				}
+				break;
+			}
+
 			// ---- 控制流 ----
 			case Op::JUMP: {
 				pc = pc + static_cast<std::size_t>(ins.operand) - 1;
@@ -451,6 +501,14 @@ Object* VM::execute(CodeObject* co,
 					if (pc >= pc_end)
 						throw VMError(cur_file(), cur_line(), "jump out of range.");
 				}
+				break;
+			}
+			case Op::BREAK: {
+				// 由 Codegen 回填为当前最内层循环 end，语义同 JUMP，
+				// 天然仅退出一层循环（无需 VM 维护循环栈）。
+				pc = pc + static_cast<std::size_t>(ins.operand) - 1;
+				if (pc >= pc_end)
+					throw VMError(cur_file(), cur_line(), "jump out of range.");
 				break;
 			}
 
@@ -489,7 +547,7 @@ Object* VM::execute(CodeObject* co,
 						Object* mod_obj = Environment_Lookup(env.get(), mod_name);
 						if (mod_obj != nullptr && dynamic_cast<Pycp::Module*>(mod_obj) != nullptr) {
 							Pycp::Module* mo = static_cast<Pycp::Module*>(mod_obj);
-							parent_obj = mo->__getattr__(attr_name);
+							parent_obj = mo->__get_attribute__(attr_name);
 						}
 						}
 						if (parent_obj == nullptr || dynamic_cast<Class*>(parent_obj) == nullptr) {
@@ -677,7 +735,7 @@ Object* VM::execute(CodeObject* co,
 				const std::string& attr = module_->symtab[idx];
 				Object* value = pop(); // 待写入的值（栈持有引用）
 				Object* obj = pop();   // 目标对象
-				// SetAttr -> __setattr__ 内部按需 Incref 存入；此处释放
+				// SetAttr -> __set_attribute__ 内部按需 Incref 存入；此处释放
 				// value 从栈 pop 带来的引用（与 STORE_VAR 的 Environment_Store
 				// 接管语义一致，避免字段持有后栈引用泄漏）。
 				SetAttr(obj, attr, value);

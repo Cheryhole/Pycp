@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <unordered_map>
 
 namespace Pycp{
 
@@ -53,6 +54,11 @@ class PYCP_API Object{
 		//   - 模块顶层符号：控制其他文件 import 时是否可访问。
 		bool private_;
 
+	protected:
+		// 成员字典：name -> Object*（类似 Python 的 __dict__）。
+		// 供 __get_attribute__ / __set_attribute__ / __members__ 使用。
+		std::unordered_map<std::string, Object*> members_;
+
 	public:
 		Object(const std::string& type_name);
 		virtual ~Object();
@@ -89,8 +95,8 @@ class PYCP_API Object{
 		virtual Object* __integer__();
 		virtual Object* __string__();
 		virtual Object* __negation__();
-		virtual Object* __getattr__(const std::string& name);
-		virtual void __setattr__(const std::string& name, Object* value);
+		virtual Object* __get_attribute__(const std::string& name);
+		virtual void __set_attribute__(const std::string& name, Object* value);
 		virtual Object* __call__(Object*);
 		virtual Object* __addition__(Object*);
 		virtual Object* __subtraction__(Object*);
@@ -116,6 +122,18 @@ class PYCP_API Object{
 	// list 转换（Pycp.List(obj)）。
 	// 默认抛 TypeError；List 返回自身（幂等）。
 	virtual Object* __list__();
+
+	// 迭代协议。
+	// __iterator__()：返回一个全新的迭代器（默认不可迭代，抛 TypeError）。
+	//   List/String 可迭代，每次调用返回新的独立迭代器实例。
+	// __next__()：迭代器推进，返回下一元素（Owned）；耗尽后抛 StopIteration。
+	//   默认抛 TypeError（仅迭代器子类有意义）。
+	virtual Object* __iterator__();
+	virtual Object* __next__();
+
+	// 属性名枚举（Pycp.get_members(obj)）：返回本对象所有成员名称的
+	// List。默认返回 members_ 的 key；子类可 override 添加额外成员名。
+	virtual Object* __members__();
 
 	// GC 子引用遍历：枚举本对象持有的 Object* 子引用，供标记-清除与
 	// Decref 递归释放统一使用（替代旧 Type 枚举的 switch 分发）。

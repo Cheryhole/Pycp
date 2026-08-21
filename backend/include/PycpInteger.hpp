@@ -35,6 +35,15 @@ class PYCP_API Integer : public Object{
 		Object* __division__(Object*) override;
 		Object* __power__(Object*) override;
 
+		// 比较运算符：仅支持同类型 Integer，返回小整数池 Integer 0/1（PERMANENT）。
+		Object* __less_than__(Object*) override;
+		Object* __less_equal__(Object*) override;
+		Object* __equal__(Object*) override;
+		Object* __not_equal__(Object*) override;
+		Object* __greater_than__(Object*) override;
+		Object* __greater_equal__(Object*) override;
+		Object* __members__() override;
+
 		static void Initialize();
 		static void Finalize();
 		// default constructed for commonly used integers, count from 0, [0] -> 0, [1] -> 1, [2] -> 2, ...

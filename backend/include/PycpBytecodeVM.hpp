@@ -22,6 +22,17 @@
 #include "PycpFunction.hpp"
 #include "PycpEnvironment.hpp"
 #include "PycpModule.hpp"
+#include "PycpABI.hpp"
+#include "PycpGC.hpp"
+#include "PycpInteger.hpp"
+#include "PycpString.hpp"
+#include "PycpNone.hpp"
+#include "PycpFunction.hpp"
+#include "PycpException.hpp"
+#include "PycpConfig.hpp"
+#include "PycpClass.hpp"
+#include "PycpNativeExt.hpp"
+#include "PycpList.hpp"
 
 #include <map>
 #include <memory>

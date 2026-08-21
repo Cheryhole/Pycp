@@ -1,7 +1,9 @@
 #include "PycpInteger.hpp"
 #include "PycpString.hpp"
+#include "PycpList.hpp"
 #include "PycpException.hpp"
 #include "PycpGC.hpp"
+#include "PycpMagic.hpp"
 
 #include <cmath>
 #include <stdexcept>
@@ -115,6 +117,81 @@ Object* Integer::__power__(Object* other){
 	}
 	return New<Integer>(static_cast<int64_t>(
 		std::pow(static_cast<double>(this->_value), static_cast<double>(i->_value))));
+}
+
+// 比较运算符：仅支持同类型 Integer。返回小整数池 Integer 0/1（PERMANENT，
+// 由 ABI Compare 返回给 VM，栈持有引用但无需额外 Decref——池对象常驻）。
+Object* Integer::__less_than__(Object* other){
+	if (other == nullptr || !other->is_type("Integer")){
+		throw TypeError("Unsupported to compare.");
+	}
+	return this->_value < static_cast<Integer*>(other)->_value
+		? instances[1] : instances[0];
+}
+
+Object* Integer::__less_equal__(Object* other){
+	if (other == nullptr || !other->is_type("Integer")){
+		throw TypeError("Unsupported to compare.");
+	}
+	return this->_value <= static_cast<Integer*>(other)->_value
+		? instances[1] : instances[0];
+}
+
+Object* Integer::__equal__(Object* other){
+	if (other == nullptr || !other->is_type("Integer")){
+		throw TypeError("Unsupported to compare.");
+	}
+	return this->_value == static_cast<Integer*>(other)->_value
+		? instances[1] : instances[0];
+}
+
+Object* Integer::__not_equal__(Object* other){
+	if (other == nullptr || !other->is_type("Integer")){
+		throw TypeError("Unsupported to compare.");
+	}
+	return this->_value != static_cast<Integer*>(other)->_value
+		? instances[1] : instances[0];
+}
+
+Object* Integer::__greater_than__(Object* other){
+	if (other == nullptr || !other->is_type("Integer")){
+		throw TypeError("Unsupported to compare.");
+	}
+	return this->_value > static_cast<Integer*>(other)->_value
+		? instances[1] : instances[0];
+}
+
+Object* Integer::__greater_equal__(Object* other){
+	if (other == nullptr || !other->is_type("Integer")){
+		throw TypeError("Unsupported to compare.");
+	}
+	return this->_value >= static_cast<Integer*>(other)->_value
+		? instances[1] : instances[0];
+}
+
+Object* Integer::__members__() {
+	// 先收集基类 members_ 中的 key，再添加 integer 特有的魔术方法名。
+	List* lst = static_cast<List*>(Object::__members__());
+	std::vector<std::string> extra = {
+		"__integer__", "__string__", "__negation__", "__addition__",
+		"__subtraction__", "__multiplication__", "__division__", "__power__",
+		"__less_than__", "__less_equal__", "__equal__", "__not_equal__",
+		"__greater_than__", "__greater_equal__",
+		"__get_attribute__", "__set_attribute__", "__members__",
+	};
+	for (const auto& n : extra) {
+		bool found = false;
+		for (std::size_t i = 0; i < lst->size(); ++i) {
+			Object* elem = lst->at(i);
+			if (elem != nullptr && elem->is_type("String") &&
+			    static_cast<String*>(elem)->get_value() == n) {
+				found = true;
+				break;
+			}
+		}
+		if (!found) lst->append(String::FromCString(n.c_str()));
+	}
+	return lst;
 }
 
 void Integer::Initialize(){

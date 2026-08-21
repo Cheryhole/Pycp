@@ -44,7 +44,7 @@ public:
 	std::unordered_map<std::string, Object*>* get_namespace() { return &namespace_; }
 
 	// 属性访问：namespace_ 中查 name，未找到抛 AttributeError。
-	Object* __getattr__(const std::string& name) override;
+	Object* __get_attribute__(const std::string& name) override;
 
 	// GC 子引用遍历：枚举命名空间（namespace_）中的值，供标记-清除从
 	// 模块 root 出发标记可达对象。仅遍历不 Decref（析构不释放值，由

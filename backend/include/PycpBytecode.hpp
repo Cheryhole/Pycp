@@ -18,7 +18,14 @@
 // =============================================================
 
 #include "PycpObject.hpp"
+#include "PycpException.hpp"
+#include "PycpABI.hpp"
+#include "PycpNone.hpp"
+#include "PycpGC.hpp"
+#include "PycpConfig.hpp"
 
+#include <cstring>
+#include <stdexcept>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -63,6 +70,11 @@ enum class Op : uint8_t {
 	JUMP          = 0x30, // 操作数: 相对偏移(有符号)
 	JUMP_IF_FALSE = 0x31, // 栈顶为假则跳转
 	JUMP_IF_TRUE  = 0x32, // 栈顶为真则跳转
+	BREAK         = 0x33, // 退出当前一层循环（回填至循环 end，语义同 JUMP）
+	CHECK_INT     = 0x34, // 校验栈顶为 Integer，否则抛 TypeError（不弹栈）
+	CHECK_RANGE_DIRECTION = 0x35, // a b s -> 校验 repeat 范围方向不矛盾，矛盾抛 ValueError（不压栈）
+	GET_ITER      = 0x36, // obj -> obj.__iterator__()（新迭代器；不可迭代抛 TypeError）
+	FOR_ITER      = 0x37, // it -> it.__next__()；StopIteration 则按操作数相对跳转（同 JUMP）
 
 	// ---- 函数与调用 ----
 	MAKE_FUNCTION = 0x40, // 操作数: code_idx  -> 创建 BytecodeFunction

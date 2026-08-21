@@ -46,6 +46,13 @@ Object* _builtin_list_ctor(Object*, Object** argv, std::size_t argc) {
 	return r;
 }
 
+// get_members(obj)：返回包含 obj 所有成员名称的 List。
+Object* _builtin_get_members(Object*, Object** argv, std::size_t argc) {
+	if (argc != 1) throw TypeError("get_members() expects exactly 1 argument.");
+	if (argv[0] == nullptr) throw TypeError("get_members() argument is null.");
+	return argv[0]->__members__();
+}
+
 // 将类对象以指定名字放入模块命名空间（构造 BuiltinTypeClass ->
 // Incref 进 map -> 释放 Owned）。
 void set_type_class(Module* mod, const char* name, PycpNativeFunction ctor) {
@@ -144,6 +151,9 @@ Module* make_pycp_module() {
 	// 可见性装饰器函数：@private / @public（与 classtools 库功能一致）。
 	set_func(mod, "private", _builtin_private);
 	set_func(mod, "public",  _builtin_public);
+
+	// get_members(obj)：返回对象所有成员名称的 List。
+	set_func(mod, "get_members", _builtin_get_members);
 
 	return mod;
 }

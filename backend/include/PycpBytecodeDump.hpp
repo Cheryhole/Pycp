@@ -14,7 +14,9 @@
 // =============================================================
 
 #include "PycpBytecode.hpp"  // Module / Op / CompareOp / Constant / FORMAT_VERSION_*
+#include "PycpBytecode.hpp"  // Op / CompareOp / Constant / Module / FORMAT_VERSION_*
 
+#include <string>
 #include <iostream>          // std::ostream / std::cout（默认输出流）
 #include <ostream>
 

@@ -27,8 +27,15 @@
 #include "PycpObject.hpp"
 #include "PycpGC.hpp"
 #include "PycpEnvironment.hpp"
+#include "PycpInteger.hpp"
+#include "PycpString.hpp"
+#include "PycpManager.hpp"
+#include "PycpModule.hpp"
+#include "PycpList.hpp"
 
 #include <string>
+#include <istream>
+#include <ostream>
 
 namespace Pycp {
 

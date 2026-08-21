@@ -7,11 +7,6 @@
 // =============================================================
 
 #include "PycpBytecodeDump.hpp"
-#include "PycpBytecode.hpp"  // Op / CompareOp / Constant / Module / FORMAT_VERSION_*
-
-#include <iostream>
-#include <ostream>
-#include <string>
 
 namespace Pycp::BC {
 
@@ -37,6 +32,11 @@ const char* op_name(Op op) {
 		case Op::JUMP:          return "JUMP";
 		case Op::JUMP_IF_FALSE: return "JUMP_IF_FALSE";
 		case Op::JUMP_IF_TRUE:  return "JUMP_IF_TRUE";
+		case Op::BREAK:         return "BREAK";
+		case Op::CHECK_INT:     return "CHECK_INT";
+		case Op::CHECK_RANGE_DIRECTION: return "CHECK_RANGE_DIRECTION";
+		case Op::GET_ITER:       return "GET_ITER";
+		case Op::FOR_ITER:       return "FOR_ITER";
 		case Op::MAKE_FUNCTION: return "MAKE_FUNCTION";
 		case Op::CALL:          return "CALL";
 		case Op::RETURN:        return "RETURN";

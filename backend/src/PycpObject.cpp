@@ -1,6 +1,8 @@
 #include "PycpObject.hpp"
 #include "PycpString.hpp"
+#include "PycpList.hpp"
 #include "PycpABI.hpp"
+#include "PycpMagic.hpp"
 
 #include <sstream>
 
@@ -21,7 +23,11 @@ Object::Object(const std::string& type_name)
 }
 
 Object::~Object(){
-  
+	// 释放成员字典中持有的引用。
+	for (auto& kv : members_) {
+		if (kv.second != nullptr) Decref(kv.second);
+	}
+	members_.clear();
 }
 
 Object* Object::__integer__(){
@@ -43,13 +49,30 @@ Object* Object::__negation__(){
   throw TypeError("Unsupported to negate.");
 }
 
-Object* Object::__getattr__([[maybe_unused]] const std::string& name){
+Object* Object::__get_attribute__(const std::string& name){
+  // 1) 先从成员字典中查找。
+  auto it = members_.find(name);
+  if (it != members_.end() && it->second != nullptr) {
+    Incref(it->second);
+    return it->second;
+  }
+  // 2) 魔术方法：回退到通用分派（可调用 C++ 虚方法）。非魔术方法名抛错。
+  if (Object* magic = GetMagicMethodFunction(name)) {
+    return magic;
+  }
   throw AttributeError("Unsupported attribute access.");
 }
 
-void Object::__setattr__([[maybe_unused]] const std::string& name,
-                         [[maybe_unused]] Object* value){
-  throw AttributeError("Unsupported attribute assignment.");
+void Object::__set_attribute__(const std::string& name, Object* value){
+  // 写入成员字典：若已存在则释放旧引用。
+  auto it = members_.find(name);
+  if (it != members_.end()) {
+    if (it->second != nullptr) Decref(it->second);
+    it->second = value;
+  } else {
+    members_[name] = value;
+  }
+  if (value != nullptr) Incref(value);
 }
 
 Object* Object::__call__([[maybe_unused]] Object* args){
@@ -113,8 +136,28 @@ Object* Object::__list__(){
   throw TypeError("Unsupported to convert to list.");
 }
 
+Object* Object::__iterator__(){
+  throw TypeError("object is not iterable");
+}
+
+Object* Object::__next__(){
+  throw TypeError("object is not an iterator");
+}
+
+Object* Object::__members__(){
+  // 默认返回成员字典中所有 key 的名称列表。
+  List* lst = Pycp::New<List>();
+  for (const auto& kv : members_) {
+    lst->append(String::FromCString(kv.first.c_str()));
+  }
+  return lst;
+}
+
 void Object::foreach_ref([[maybe_unused]] const std::function<void(Object*)>& visit){
-  // 默认无子引用。
+  // 默认遍历成员字典中的引用。
+  for (auto& kv : members_) {
+    if (kv.second != nullptr) visit(kv.second);
+  }
 }
 
 }

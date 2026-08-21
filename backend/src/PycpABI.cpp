@@ -1,15 +1,6 @@
 #include "PycpABI.hpp"
-#include "PycpInteger.hpp"
-#include "PycpString.hpp"
-#include "PycpFunction.hpp"
-#include "PycpGC.hpp"
-#include "PycpManager.hpp"
-#include "PycpModule.hpp"
 #include "PycpClass.hpp"
-#include "PycpList.hpp"
-
-#include <istream>
-#include <ostream>
+#include "PycpFunction.hpp"
 
 namespace Pycp {
 
@@ -22,8 +13,13 @@ Object* GetAttr(Object* obj, const std::string& name){
 	if (dynamic_cast<Instance*>(obj) != nullptr) {
 		Instance* inst = static_cast<Instance*>(obj);
 		// 字段优先；其次方法（绑定）。
-		Object* field = inst->__getattr__(name);
+		Object* field = inst->__get_attribute__(name);
 		if (field != nullptr) {
+			// 若字段是 Function（如魔术方法），包装为绑定方法使 self 自动绑定；
+			// 普通字段（非 Function）直接返回。
+			if (field->is_type("Function")) {
+				return New<BoundMethod>(obj, static_cast<Function*>(field));
+			}
 			Incref(field);
 			return field;
 		}
@@ -34,7 +30,7 @@ Object* GetAttr(Object* obj, const std::string& name){
 	}
 	// 文件对象的方法：绑定到文件对象（self 自动绑定）。
 	if (obj->is_type("File")) {
-		Object* v = obj->__getattr__(name);
+		Object* v = obj->__get_attribute__(name);
 		if (v == nullptr) {
 			throw AttributeError("file has no attribute '" + name + "'");
 		}
@@ -46,10 +42,22 @@ Object* GetAttr(Object* obj, const std::string& name){
 		Incref(v);
 		return v;
 	}
-	// 其他类型（模块/类/list 等）：__getattr__ 返回 Borrowed。
+	// 模块对象：命名空间里的函数（io.print/io.input 等）是普通函数、不带
+	// self，调用时实参直接对应形参。故【不】包装成 BoundMethod（否则会把
+	// 模块对象作为 self 插入 argv[0]，导致参数偏移/argc 多 1）。
+	// 非函数属性（io.stdout/io.stdin 等 File 对象）返回行为保持不变。
+	if (dynamic_cast<Pycp::Module*>(obj) != nullptr) {
+		Object* v = obj->__get_attribute__(name); // Borrowed
+		if (v == nullptr) {
+			throw AttributeError("module has no attribute '" + name + "'");
+		}
+		Incref(v); // Borrowed 转 Owned（调用方负责 Decref）
+		return v;
+	}
+	// 其他类型（类/list 等）：__get_attribute__ 返回 Borrowed。
 	// 若返回的是 Function（如 list 的 length 方法），包装为绑定方法，
 	// 使调用时 self 自动绑定到接收者对象（与 File 分支一致）。
-	Object* v = obj->__getattr__(name);
+	Object* v = obj->__get_attribute__(name);
 	if (v != nullptr && v->is_type("Function")) {
 		return New<BoundMethod>(obj, static_cast<Function*>(v));
 	}
@@ -62,7 +70,7 @@ void SetAttr(Object* obj, const std::string& name, Object* value){
 		if (value != nullptr) Decref(value);
 		throw AttributeError("cannot set attribute on null object.");
 	}
-	obj->__setattr__(name, value);
+	obj->__set_attribute__(name, value);
 }
 
 Object* GetItem(Object* obj, Object* key){

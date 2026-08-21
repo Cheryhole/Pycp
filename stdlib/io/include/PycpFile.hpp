@@ -42,7 +42,7 @@ public:
 	Object* write(Object* arg);
 	Object* readline();
 
-	Object* __getattr__(const std::string& name) override;
+	Object* __get_attribute__(const std::string& name) override;
 	Object* __string__() override;
 
 	// GC 子引用遍历：枚举 write_fn_ / readline_fn_。

@@ -5,6 +5,7 @@
 #include "PycpNone.hpp"
 #include "PycpInteger.hpp"
 #include "PycpABI.hpp"
+#include "PycpMagic.hpp"
 
 namespace Pycp {
 
@@ -86,7 +87,14 @@ Object* File::readline() {
 	return String::FromCString(line.c_str());
 }
 
-Object* File::__getattr__(const std::string& name) {
+Object* File::__get_attribute__(const std::string& name) {
+	// 1) 先从成员字典中查找（支持动态 set attribute）。
+	auto itm = members_.find(name);
+	if (itm != members_.end() && itm->second != nullptr) {
+		Incref(itm->second);
+		return itm->second;
+	}
+	// 2) 暴露方法（write / readline）。
 	if (name == "write") {
 		if (write_fn_ == nullptr) {
 			// New 返回 refcount=1，由成员 write_fn_ 持有（析构 Decref）。
@@ -99,6 +107,10 @@ Object* File::__getattr__(const std::string& name) {
 			readline_fn_ = New<Function>("readline", _file_readline);
 		}
 		return readline_fn_;
+	}
+	// 3) 魔术方法：回退到通用分派（可调用 C++ 虚方法）。
+	if (Object* magic = GetMagicMethodFunction(name)) {
+		return magic;
 	}
 	throw AttributeError("file '" + name_ + "' has no attribute '" + name + "'");
 }

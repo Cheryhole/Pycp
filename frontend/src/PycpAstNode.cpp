@@ -548,6 +548,76 @@ std::string MethodDefinition::to_string() const {
 }
 
 // ============================================================
+// RepeatStatement 实现
+// ============================================================
+RepeatStatement::RepeatStatement(RepeatMode m,
+                                 Expression* cnt, Expression* st,
+                                 Expression* en, Expression* step,
+                                 Expression* cond, std::string* var,
+                                 Program* b, int line)
+	: mode(m), count_expr(cnt), start_expr(st), end_expr(en),
+	  step_expr(step), cond_expr(cond), var_name(var), body(b) {
+	lineno = line;
+}
+
+RepeatStatement::~RepeatStatement() {
+	delete count_expr;
+	delete start_expr;
+	delete end_expr;
+	delete step_expr;
+	delete cond_expr;
+	delete var_name;
+	delete body;
+}
+
+std::string RepeatStatement::to_string() const {
+	const char* kind = "?";
+	switch (mode) {
+		case RepeatMode::INFINITE: kind = "infinite"; break;
+		case RepeatMode::WHILE:    kind = "while";    break;
+		case RepeatMode::COUNT:    kind = "count";    break;
+		case RepeatMode::RANGE:    kind = "range";    break;
+	}
+	std::string var = (var_name != nullptr) ? (" as " + *var_name) : "";
+	return "<Repeat " + std::string(kind) + var + ">";
+}
+
+// ============================================================
+// BreakStatement 实现
+// ============================================================
+BreakStatement::BreakStatement(int line)
+	: Statement() {
+	lineno = line;
+}
+
+BreakStatement::~BreakStatement() = default;
+
+std::string BreakStatement::to_string() const {
+	return "<Break>";
+}
+
+// ============================================================
+// ForeachStatement 实现
+// ============================================================
+ForeachStatement::ForeachStatement(std::string* var, Expression* it,
+                                   Program* b, int line)
+	: var_name(var), iterable(it), body(b) {
+	lineno = line;
+}
+
+ForeachStatement::~ForeachStatement() {
+	delete var_name;
+	delete iterable;
+	delete body;
+}
+
+std::string ForeachStatement::to_string() const {
+	std::string var = (var_name != nullptr) ? *var_name : "?";
+	std::string it = (iterable != nullptr) ? iterable->to_string() : "?";
+	return "<For " + var + " in " + it + ">";
+}
+
+// ============================================================
 // ClassExpression 实现
 // ============================================================
 ClassExpression::ClassExpression(std::string* parent,

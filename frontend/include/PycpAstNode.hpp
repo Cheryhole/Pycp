@@ -38,7 +38,10 @@ enum class NodeType : uint16_t {
 	CLASS_EXPRESSION = 24,
 	FROM_IMPORT_STATEMENT = 25,
 	LIST_LITERAL = 26,
-	INDEX_EXPRESSION = 27
+	INDEX_EXPRESSION = 27,
+	REPEAT_STATEMENT = 28,
+	BREAK_STATEMENT = 29,
+	FOREACH_STATEMENT = 30
 };
 
 enum class UnaryOp : uint16_t {
@@ -471,6 +474,73 @@ struct MethodDefinition : Statement {
 	~MethodDefinition() override;
 
 	NodeType get_type() const override { return NodeType::METHOD_DEFINITION; }
+	std::string to_string() const override;
+};
+
+// ============================================================
+// RepeatStatement 节点（repeat 循环）
+// ============================================================
+//   四种语义模式（由 mode 区分）：
+//     INFINITE  无限循环
+//     WHILE     condition 为假时退出（每轮先判断）
+//     COUNT     重复 count_expr 次（可选 as 绑定序号变量，0-based）
+//     RANGE     从 start_expr 到 end_expr（含端点），步长自动或显式 by
+//   字段按模式取值；未使用的字段为 nullptr。
+//   var_name : as 绑定的循环变量名（无 as 时为 nullptr）。
+//   body     : 循环体语句块。
+enum class RepeatMode : uint16_t {
+	INFINITE = 0,
+	WHILE = 1,
+	COUNT = 2,
+	RANGE = 3
+};
+
+struct RepeatStatement : Statement {
+	RepeatMode mode;
+	Expression* count_expr;   // COUNT 模式：次数（其他模式 nullptr）
+	Expression* start_expr;   // RANGE 模式：起始（其他模式 nullptr）
+	Expression* end_expr;     // RANGE 模式：结束（其他模式 nullptr）
+	Expression* step_expr;    // RANGE 模式：步长（nullptr = 自动方向）
+	Expression* cond_expr;    // WHILE 模式：条件（其他模式 nullptr）
+	std::string* var_name;    // as 绑定变量名（无 as 时为 nullptr）
+	Program* body;
+
+	RepeatStatement(RepeatMode m,
+	                Expression* cnt, Expression* st, Expression* en,
+	                Expression* step, Expression* cond,
+	                std::string* var, Program* b, int line = -1);
+	~RepeatStatement() override;
+
+	NodeType get_type() const override { return NodeType::REPEAT_STATEMENT; }
+	std::string to_string() const override;
+};
+
+// ============================================================
+// BreakStatement 节点（break 语句）
+// ============================================================
+//   退出当前一层循环。仅允许出现在循环体内，循环外使用由 Codegen 报错。
+struct BreakStatement : Statement {
+	explicit BreakStatement(int line = -1);
+	~BreakStatement() override;
+
+	NodeType get_type() const override { return NodeType::BREAK_STATEMENT; }
+	std::string to_string() const override;
+};
+
+// ============================================================
+// ForeachStatement 节点（for i in iterable { ... }）
+// ============================================================
+//   遍历可迭代对象（List/String）的每个元素，绑定到 var_name，执行 body。
+//   运行时可迭代性判断：iterable 非可迭代对象时抛 TypeError。
+struct ForeachStatement : Statement {
+	std::string* var_name;   // 每次迭代绑定的变量名
+	Expression* iterable;    // 被遍历的可迭代对象表达式
+	Program* body;
+
+	ForeachStatement(std::string* var, Expression* it, Program* b, int line = -1);
+	~ForeachStatement() override;
+
+	NodeType get_type() const override { return NodeType::FOREACH_STATEMENT; }
 	std::string to_string() const override;
 };
 

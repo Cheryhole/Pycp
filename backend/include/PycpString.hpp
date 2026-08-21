@@ -26,6 +26,10 @@ class PYCP_API String : public Object{
 		Object* __string__();
 		Object* __addition__(Object*);
 		Object* __multiplication__(Object*);
+		Object* __get_item__(Object* key) override;
+	Object* __list__() override;
+	Object* __iterator__() override;
+	Object* __members__() override;
 
 		static void Initialize();
 		static void Finalize();

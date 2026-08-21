@@ -5,6 +5,7 @@
 #include "PycpNone.hpp"
 #include "PycpABI.hpp"
 #include "PycpConfig.hpp"
+#include "PycpMagic.hpp"
 
 #include <sstream>
 #include <vector>
@@ -133,7 +134,14 @@ std::vector<std::string> Class::method_names() const {
 	return names;
 }
 
-Object* Class::__getattr__(const std::string& name) {
+Object* Class::__get_attribute__(const std::string& name) {
+	// 1) 先从成员字典中查找（支持动态 set attribute）。
+	auto itm = members_.find(name);
+	if (itm != members_.end() && itm->second != nullptr) {
+		Incref(itm->second);
+		return itm->second;
+	}
+	// 2) 查找方法。
 	Function* fn = find_method(name);
 	if (fn == nullptr) {
 		throw AttributeError("class '" + name_ + "' has no attribute '" + name + "'");
@@ -148,6 +156,24 @@ Object* Class::__string__() {
 	}
 	// 普通类："<class \"name\">"。
 	return String::FromCString(("<class \"" + name_ + "\">").c_str());
+}
+
+Object* Class::__members__() {
+	// 返回类的方法名 + 通用成员。
+	List* lst = static_cast<List*>(Object::__members__());
+	for (const auto& n : method_names()) {
+		bool found = false;
+		for (std::size_t i = 0; i < lst->size(); ++i) {
+			Object* elem = lst->at(i);
+			if (elem != nullptr && elem->is_type("String") &&
+			    static_cast<String*>(elem)->get_value() == n) {
+				found = true;
+				break;
+			}
+		}
+		if (!found) lst->append(String::FromCString(n.c_str()));
+	}
+	return lst;
 }
 
 void Class::foreach_ref(const std::function<void(Object*)>& visit) {
@@ -219,8 +245,14 @@ Instance::~Instance() {
 	if (cls_ != nullptr) Decref(cls_);
 }
 
-Object* Instance::__getattr__(const std::string& name) {
-	// 仅字段访问；未找到返回 nullptr（方法访问经 get_bound_method）。
+Object* Instance::__get_attribute__(const std::string& name) {
+	// 1) 先从成员字典中查找（支持动态 set attribute）。
+	auto itm = members_.find(name);
+	if (itm != members_.end() && itm->second != nullptr) {
+		Incref(itm->second);
+		return itm->second;
+	}
+	// 2) 仅字段访问；未找到返回 nullptr（方法访问经 get_bound_method）。
 	auto it = fields_.find(name);
 	if (it != fields_.end()) {
 		// 可见性检查：外部访问 private 字段抛 AttributeError。
@@ -230,6 +262,10 @@ Object* Instance::__getattr__(const std::string& name) {
 			                     cls_->get_name() + "'");
 		}
 		return it->second;
+	}
+	// 3) 魔术方法：回退到通用分派（转发到类同名魔术方法）。
+	if (Object* magic = GetMagicMethodFunction(name)) {
+		return magic;
 	}
 	return nullptr;
 }
@@ -246,7 +282,30 @@ Object* Instance::get_bound_method(const std::string& name) {
 	return Pycp::New<BoundMethod>(this, fn);
 }
 
-void Instance::__setattr__(const std::string& name, Object* value) {
+Object* Instance::__members__() {
+	// 字段名 + 类方法名 + 通用成员。
+	List* lst = static_cast<List*>(Object::__members__());
+	std::vector<std::string> extra;
+	for (const auto& kv : fields_) extra.push_back(kv.first);
+	if (cls_ != nullptr) {
+		for (const auto& m : cls_->method_names()) extra.push_back(m);
+	}
+	for (const auto& n : extra) {
+		bool found = false;
+		for (std::size_t i = 0; i < lst->size(); ++i) {
+			Object* elem = lst->at(i);
+			if (elem != nullptr && elem->is_type("String") &&
+			    static_cast<String*>(elem)->get_value() == n) {
+				found = true;
+				break;
+			}
+		}
+		if (!found) lst->append(String::FromCString(n.c_str()));
+	}
+	return lst;
+}
+
+void Instance::__set_attribute__(const std::string& name, Object* value) {
 	// 可见性检查：外部写入 private 字段抛 AttributeError。
 	if (cls_ != nullptr && cls_->member_is_private(name) &&
 	    internal_access_depth() == 0) {
@@ -254,14 +313,16 @@ void Instance::__setattr__(const std::string& name, Object* value) {
 		throw AttributeError("'" + name + "' is private in class '" +
 		                     cls_->get_name() + "'");
 	}
-	auto it = fields_.find(name);
-	if (it != fields_.end()) {
-		if (it->second != nullptr) Decref(it->second);
-		it->second = value;
-	} else {
-		fields_[name] = value;
+	// 优先写入 fields_（类声明的字段），否则写入 members_（动态属性）。
+	auto itf = fields_.find(name);
+	if (itf != fields_.end()) {
+		if (itf->second != nullptr) Decref(itf->second);
+		itf->second = value;
+		if (value != nullptr) Incref(value);
+		return;
 	}
-	if (value != nullptr) Incref(value);
+	// 动态属性写入 members_（由基类管理引用计数）。
+	Object::__set_attribute__(name, value);
 }
 
 Object* Instance::__string__() {

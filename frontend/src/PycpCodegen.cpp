@@ -19,7 +19,7 @@ namespace {
 
 class Emitter {
 public:
-	Module module;
+	BC::Module module;
 
 	// ---- 符号表去重 ----
 	std::size_t intern_name(const std::string& name) {
@@ -83,6 +83,12 @@ public:
 	CodeObject* current() { return &module.code_objects[co_stack.back()]; }
 	std::size_t here() { return current()->code.size(); }
 
+	// 构造带位置信息的编译错误（供 Codegen 抛 Pycp::Exception 时携带文件名/行号）。
+	Pycp::Exception make_error(int line, const std::string& msg) {
+		if (line < 0) return Pycp::Exception(msg);
+		return Pycp::Exception(module.source_path, line, msg);
+	}
+
 	void patch_jump(std::size_t ins_idx, std::size_t target) {
 		// VM 语义：JUMP/JUMP_IF_* 执行 `pc = pc + operand - 1`，循环 `++pc`
 		// 后新 pc = ins_idx + operand。故 operand = target - ins_idx。
@@ -101,6 +107,18 @@ public:
 	// 弹出当前代码对象（回到父级）
 	void pop_code_object() {
 		co_stack.pop_back();
+	}
+
+	// 编译循环时维护的"循环栈"：每层循环记录其 break 占位指令索引。
+	// 遇到 BreakStatement 时将 emit(Op::BREAK) 的索引压入 loop_stack.back()；
+	// 循环编译完成时把这些占位 patch 到循环 end，再 pop。嵌套循环各层
+	// break 自然归位，正确实现"仅退出当前一层"。
+	std::vector<std::vector<std::size_t>> loop_stack;
+
+	// 生成唯一临时变量名（供范围循环缓存 end/step），避免嵌套循环冲突。
+	int next_temp_id = 0;
+	std::string new_temp(const std::string& hint) {
+		return "$range_" + std::to_string(next_temp_id++) + "_" + hint;
 	}
 
 private:
@@ -169,6 +187,69 @@ static void compile_class_body(Emitter& em, const std::string& name,
 // =============================================================
 // 表达式编译
 // =============================================================
+
+// 若表达式为整数字面量，取出其值（否则返回 false）。用于 repeat 循环
+// 方向/步长推导。
+static bool literal_int_value(Expression* e, int64_t& out) {
+	if (e == nullptr) return false;
+	if (e->get_type() == NodeType::INTEGER_LITERAL) {
+		IntegerLiteral* lit = static_cast<IntegerLiteral*>(e);
+		try {
+			out = std::stoll(*lit->value);
+			return true;
+		} catch (...) {
+			return false;
+		}
+	}
+	if (e->get_type() == NodeType::UNARY_EXPRESSION) {
+		UnaryExpression* ue = static_cast<UnaryExpression*>(e);
+		if (ue->op == UnaryOp::UMINUS) {
+			int64_t v = 0;
+			if (literal_int_value(ue->operand, v)) {
+				out = -v;
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+// 解析 repeat from a to b [by s] 的方向与步长：
+//   - 返回 false 表示方向矛盾（字面量校验失败，编译期应报错）。
+//   - 返回 true：cmp 为比较算子（LE 递增 / GE 递减），step 为步长常量。
+// 规则：
+//   * 显式 step 字面量 s：cmp = (s>0 ? LE : GE)；方向与 s 符号一致。
+//   * 自动步长（无 by）：取 a/b 字面量；a<=b 则 step=+1(LE)，a>b 则 step=-1(GE)；
+//     非字面量无法静态判定时默认 +1/LE（运行时由比较算子决定）。
+//   * 矛盾（a,b,s 均为字面量且 (a<=b && s<=0) || (a>=b && s>=0)）返回 false。
+static bool resolve_range_direction(RepeatStatement* rs, CompareOp& cmp, int64_t& step) {
+	int64_t a = 0, b = 0, s = 0;
+	bool has_a = literal_int_value(rs->start_expr, a);
+	bool has_b = literal_int_value(rs->end_expr, b);
+	bool has_s = (rs->step_expr != nullptr) && literal_int_value(rs->step_expr, s);
+
+	if (has_s) {
+		// 显式步长：方向由 s 决定
+		cmp = (s > 0) ? CompareOp::LE : CompareOp::GE;
+		step = s;
+		// 仅当端点也均为字面量时才能检测矛盾
+		if (has_a && has_b) {
+			if ((a <= b && s <= 0) || (a >= b && s >= 0))
+				return false;
+		}
+		return true;
+	}
+
+	// 自动步长：端点均为字面量则据其方向选 ±1
+	if (has_a && has_b) {
+		if (a <= b) { step = 1;  cmp = CompareOp::LE; }
+		else         { step = -1; cmp = CompareOp::GE; }
+	} else {
+		// 无法静态判定，默认递增（运行时比较算子 + 实际步长驱动）
+		step = 1; cmp = CompareOp::LE;
+	}
+	return true;
+}
 
 static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 	if (e->lineno >= 0) em.set_lineno(e->lineno);
@@ -422,6 +503,211 @@ static void compile_stmt(Emitter& em, Statement* s, Scope& scope) {
 			}
 			break;
 		}
+		case NodeType::REPEAT_STATEMENT: {
+			RepeatStatement* rs = static_cast<RepeatStatement*>(s);
+			// 循环起始标签（body 前）
+			std::size_t loop_start = em.here();
+			// 新建一层循环栈，记录该层所有 break 占位
+			em.loop_stack.emplace_back();
+
+			// 若为计数/范围循环且指定了 as 变量，编译 body 前将其登记为
+			// 局部（函数体）或全局（顶层）。顶层无 locals，STORE_VAR/LOAD_VAR
+			// 自动建全局，符合 Python 泄漏行为。
+			if (rs->var_name != nullptr) scope.add(*rs->var_name);
+
+			std::size_t end_jump = static_cast<std::size_t>(-1); // 条件为假跳转占位（WHILE/RANGE/COUNT）
+			std::size_t second_end_jump = static_cast<std::size_t>(-1); // RANGE 非字面量步长的第二个退出占位
+
+			switch (rs->mode) {
+				case RepeatMode::INFINITE: {
+					// 直接编译 body，末尾跳回 loop_start
+					compile_program(em, rs->body, scope);
+					em.patch_jump(em.emit(Op::JUMP), loop_start);
+					break;
+				}
+				case RepeatMode::WHILE: {
+					// 每轮 body 前先判断 cond，false 退出
+					compile_expr(em, rs->cond_expr, scope);
+					end_jump = em.emit(Op::JUMP_IF_FALSE);
+					compile_program(em, rs->body, scope);
+					em.patch_jump(em.emit(Op::JUMP), loop_start);
+					break;
+				}
+				case RepeatMode::COUNT: {
+					// 用 var_name（或匿名临时名）承载计数器：v 取 0..N-1
+					std::string v = (rs->var_name != nullptr)
+						? *rs->var_name : "$repeat";
+					em.emit(Op::LOAD_CONST, static_cast<int32_t>(em.intern_int(0)));
+					em.emit(Op::STORE_VAR, static_cast<int32_t>(em.intern_name(v)));
+					loop_start = em.here(); // 条件判断处即循环起点
+					em.emit(Op::LOAD_VAR, static_cast<int32_t>(em.intern_name(v)));
+					compile_expr(em, rs->count_expr, scope);
+					em.emit(Op::COMPARE_OP, static_cast<int32_t>(CompareOp::LT));
+					end_jump = em.emit(Op::JUMP_IF_FALSE);
+					compile_program(em, rs->body, scope);
+					// v = v + 1
+					em.emit(Op::LOAD_VAR, static_cast<int32_t>(em.intern_name(v)));
+					em.emit(Op::LOAD_CONST, static_cast<int32_t>(em.intern_int(1)));
+					em.emit(Op::BINARY_ADD);
+					em.emit(Op::STORE_VAR, static_cast<int32_t>(em.intern_name(v)));
+					em.patch_jump(em.emit(Op::JUMP), loop_start);
+					break;
+				}
+				case RepeatMode::RANGE: {
+					// 用 var_name 承载循环变量 i，取 a, a+step, ..., b（含端点）
+					std::string v = (rs->var_name != nullptr)
+						? *rs->var_name : "$repeat";
+					// 临时变量缓存端点/步长（唯一名避免嵌套冲突）
+					std::string end_tmp = em.new_temp("to");
+					std::string step_tmp = em.new_temp("by");
+
+					// ---- 显式步长（by s，字面量或表达式）：统一运行时方向校验 ----
+					if (rs->step_expr != nullptr) {
+						// 循环前求值 start/end/step 各一次（对齐 Python range：
+						// stop/step 求值一次并缓存）。
+						compile_expr(em, rs->start_expr, scope);
+						em.emit(Op::CHECK_INT);
+						em.emit(Op::STORE_VAR, static_cast<int32_t>(em.intern_name(v)));
+						compile_expr(em, rs->end_expr, scope);
+						em.emit(Op::CHECK_INT);
+						em.emit(Op::STORE_VAR, static_cast<int32_t>(em.intern_name(end_tmp)));
+						compile_expr(em, rs->step_expr, scope);
+						em.emit(Op::CHECK_INT);
+						em.emit(Op::STORE_VAR, static_cast<int32_t>(em.intern_name(step_tmp)));
+
+						// 方向矛盾检测：压 a b s 给 CHECK_RANGE_DIRECTION。
+						em.emit(Op::LOAD_VAR, static_cast<int32_t>(em.intern_name(v)));
+						em.emit(Op::LOAD_VAR, static_cast<int32_t>(em.intern_name(end_tmp)));
+						em.emit(Op::LOAD_VAR, static_cast<int32_t>(em.intern_name(step_tmp)));
+						em.emit(Op::CHECK_RANGE_DIRECTION);
+
+						loop_start = em.here();
+						// 判定步长符号：step < 0 ?（JUMP_IF_FALSE 会消费该 bool）
+						em.emit(Op::LOAD_VAR, static_cast<int32_t>(em.intern_name(step_tmp)));
+						em.emit(Op::LOAD_CONST, static_cast<int32_t>(em.intern_int(0)));
+						em.emit(Op::COMPARE_OP, static_cast<int32_t>(CompareOp::LT));
+						em.emit(Op::JUMP_IF_FALSE);
+						std::size_t neg_step_cond = em.here() - 1; // step<0 的 false 跳转
+						// 负步长分支：v >= b 继续
+						em.emit(Op::LOAD_VAR, static_cast<int32_t>(em.intern_name(v)));
+						em.emit(Op::LOAD_VAR, static_cast<int32_t>(em.intern_name(end_tmp)));
+						em.emit(Op::COMPARE_OP, static_cast<int32_t>(CompareOp::GE));
+						end_jump = em.emit(Op::JUMP_IF_FALSE); // 负分支退出
+						em.emit(Op::JUMP);
+						std::size_t body_jump = em.here() - 1; // 负分支跳 body
+						// 非负步长分支入口（step>=0）
+						std::size_t nonneg_pos = em.here();
+						em.patch_jump(neg_step_cond, nonneg_pos);
+						// 非负步长分支：v <= b 继续
+						em.emit(Op::LOAD_VAR, static_cast<int32_t>(em.intern_name(v)));
+						em.emit(Op::LOAD_VAR, static_cast<int32_t>(em.intern_name(end_tmp)));
+						em.emit(Op::COMPARE_OP, static_cast<int32_t>(CompareOp::LE));
+						second_end_jump = em.emit(Op::JUMP_IF_FALSE); // 非负分支退出
+						// body 入口
+						std::size_t body_pos = em.here();
+						em.patch_jump(body_jump, body_pos);
+						compile_program(em, rs->body, scope);
+						// v = v + step
+						em.emit(Op::LOAD_VAR, static_cast<int32_t>(em.intern_name(v)));
+						em.emit(Op::LOAD_VAR, static_cast<int32_t>(em.intern_name(step_tmp)));
+						em.emit(Op::BINARY_ADD);
+						em.emit(Op::STORE_VAR, static_cast<int32_t>(em.intern_name(v)));
+						em.patch_jump(em.emit(Op::JUMP), loop_start);
+						break;
+					}
+
+					// ---- 自动步长（无 by）：编译期按端点静态定方向，永不方向矛盾 ----
+					CompareOp dir_cmp = CompareOp::LE;
+					int64_t step = 1;
+					resolve_range_direction(rs, dir_cmp, step);
+					// 发射 start 值（先校验为 int）并存入 v
+					compile_expr(em, rs->start_expr, scope);
+					em.emit(Op::CHECK_INT);
+					em.emit(Op::STORE_VAR, static_cast<int32_t>(em.intern_name(v)));
+
+					loop_start = em.here();
+					em.emit(Op::LOAD_VAR, static_cast<int32_t>(em.intern_name(v)));
+					compile_expr(em, rs->end_expr, scope);
+					em.emit(Op::CHECK_INT);
+					// 按方向用 LE（递增）或 GE（递减）；步长由 step 常量决定。
+					em.emit(Op::COMPARE_OP, static_cast<int32_t>(dir_cmp));
+					end_jump = em.emit(Op::JUMP_IF_FALSE);
+					compile_program(em, rs->body, scope);
+					// v = v + step
+					em.emit(Op::LOAD_VAR, static_cast<int32_t>(em.intern_name(v)));
+					em.emit(Op::LOAD_CONST, static_cast<int32_t>(em.intern_int(step)));
+					em.emit(Op::BINARY_ADD);
+					em.emit(Op::STORE_VAR, static_cast<int32_t>(em.intern_name(v)));
+					em.patch_jump(em.emit(Op::JUMP), loop_start);
+					break;
+				}
+			}
+
+			// 循环结束位置
+			std::size_t loop_end = em.here();
+
+			// 回填条件假跳转（WHILE/COUNT/RANGE 的 end_jump）
+			if (end_jump != static_cast<std::size_t>(-1)) {
+				em.patch_jump(end_jump, loop_end);
+			}
+			// RANGE 非字面量步长的第二个退出占位
+			if (second_end_jump != static_cast<std::size_t>(-1)) {
+				em.patch_jump(second_end_jump, loop_end);
+			}
+
+			// 回填本层所有 break 占位到 loop_end（天然仅退出一层）
+			for (std::size_t b : em.loop_stack.back()) {
+				em.patch_jump(b, loop_end);
+			}
+			em.loop_stack.pop_back();
+			break;
+		}
+		case NodeType::BREAK_STATEMENT: {
+			BreakStatement* bs = static_cast<BreakStatement*>(s);
+			if (em.loop_stack.empty()) {
+				throw Pycp::Exception(
+					em.make_error(bs->lineno,
+						"break is only allowed inside a loop."));
+			}
+			// emit 占位，循环编译完成时回填到本层 loop_end
+			std::size_t bidx = em.emit(Op::BREAK);
+			em.loop_stack.back().push_back(bidx);
+			break;
+		}
+		case NodeType::FOREACH_STATEMENT: {
+			// for var in iterable { body }
+			ForeachStatement* fs = static_cast<ForeachStatement*>(s);
+			std::string it_tmp = em.new_temp("iter"); // 迭代器临时变量（唯一名）
+			scope.add(*fs->var_name);
+
+			// setup: it = iterable.__iterator__()（返回全新迭代器；不可迭代抛 TypeError）
+			compile_expr(em, fs->iterable, scope);
+			em.emit(Op::GET_ITER);
+			em.emit(Op::STORE_VAR, static_cast<int32_t>(em.intern_name(it_tmp)));
+
+			// 新建一层循环栈，记录该层所有 break 占位
+			em.loop_stack.emplace_back();
+
+			std::size_t loop_start = em.here();
+			// 每轮: elem = it.__next__()；StopIteration 时 FOR_ITER 按操作数跳转退出
+			em.emit(Op::LOAD_VAR, static_cast<int32_t>(em.intern_name(it_tmp)));
+			std::size_t end_jump = em.emit(Op::FOR_ITER);
+			// var = elem
+			em.emit(Op::STORE_VAR, static_cast<int32_t>(em.intern_name(*fs->var_name)));
+			compile_program(em, fs->body, scope);
+			// 回跳 loop_start
+			em.patch_jump(em.emit(Op::JUMP), loop_start);
+
+			// 循环结束位置
+			std::size_t loop_end = em.here();
+			em.patch_jump(end_jump, loop_end);
+			// 回填本层所有 break 占位到 loop_end（仅退出一层）
+			for (std::size_t b : em.loop_stack.back()) {
+				em.patch_jump(b, loop_end);
+			}
+			em.loop_stack.pop_back();
+			break;
+		}
 		default:
 			throw Pycp::Exception("Codegen: unsupported statement type.");
 	}
@@ -568,7 +854,7 @@ static void compile_program(Emitter& em, Program* p, Scope& scope) {
 // 顶层入口
 // =============================================================
 
-Module Compile(Program* program) {
+BC::Module Compile(Program* program) {
 	Emitter em;
 
 	// 顶层代码对象 MODULE_TOP_NAME：无局部变量（全部走 globals）

@@ -88,7 +88,7 @@ add_subdirectory(backend)
 # 在 backend 之后引入，使动态库可链接 PycpRuntime。产物输出到
 # ${CMAKE_BINARY_DIR}/stdlib/，运行时可执行文件旁的 stdlib/ 目录加载。
 # =====================================================================
-add_subdirectory(builtin_libraries)
+add_subdirectory(stdlib)
 
 # =====================================================================
 # 目录路径

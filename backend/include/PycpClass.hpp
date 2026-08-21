@@ -9,7 +9,7 @@
 // 运算符重载等魔术方法）。
 //
 // Instance 对应一次实例化：持有所属 Class 与实例
-// 字段表（字段名 -> Object*）。字段读写经 __getattr__/__setattr__。
+// 字段表（字段名 -> Object*）。字段读写经 __get_attribute__/__set_attribute__。
 //
 // 运算符重载语义：Instance 的 __addition__ 等虚函数转发到
 // 其类中同名魔术方法（__addition__ 等），即通过 ABI 的 Call 调
@@ -20,6 +20,7 @@
 
 #include "PycpObject.hpp"
 #include "PycpFunction.hpp"
+#include "PycpList.hpp"
 
 #include <string>
 #include <unordered_map>
@@ -81,10 +82,13 @@ public:
 	std::vector<std::string> method_names() const;
 
 	// 类自身属性访问（方法查找）。
-	Object* __getattr__(const std::string& name) override;
+	Object* __get_attribute__(const std::string& name) override;
 
 	// 类的字符串表示：<Name class at 0xADDR>。
 	Object* __string__() override;
+
+	// 属性名枚举：返回类的方法名 + 通用成员。
+	Object* __members__() override;
 
 	// 实例化钩子：调用类时由 VM 的 CALL 指令触发。
 	// 默认实现创建 Instance，先应用成员初始值（__init_defaults__），
@@ -134,12 +138,15 @@ public:
 	Class* get_class() const { return cls_; }
 
 	// 字段读写。
-	Object* __getattr__(const std::string& name) override;
-	void __setattr__(const std::string& name, Object* value) override;
+	Object* __get_attribute__(const std::string& name) override;
+	void __set_attribute__(const std::string& name, Object* value) override;
 
 	// 取绑定方法：新建 BoundMethod（Owned，refcount=1）。
 	//   仅当 name 为类方法时有效，否则返回 nullptr。
 	Object* get_bound_method(const std::string& name);
+
+	// 属性名枚举：返回字段名 + 类方法名 + 通用成员。
+	Object* __members__() override;
 
 	// 字符串转换：类定义 __string__ 时转发，否则返回默认 "<ClassName instance>"。
 	Object* __string__() override;
@@ -176,7 +183,7 @@ public:
 // 方法内部访问标志（thread_local）
 // =============================================================
 // 方法体执行期间（BytecodeFunction::invoke）递增深度，退出递减。
-// Instance 的 __getattr__/__setattr__ 据此区分「方法内部 self 访问」
+// Instance 的 __get_attribute__/__set_attribute__ 据此区分「方法内部 self 访问」
 // 与「外部 obj 访问」：深度 > 0 时放行 private，否则拦截。
 // =============================================================
 int internal_access_depth();

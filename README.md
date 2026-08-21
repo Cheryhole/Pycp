@@ -366,7 +366,7 @@ Pycp/
     │   ├── PycpBytecode.hpp    # 字节码格式 / 序列化
     │   └── PycpBytecodeVM.hpp  # 虚拟机
     └── src/                # 运行时源文件（11 个 .cpp）
-├── builtin_libraries/     # 标准库（C++ 原生动态库，import 时动态加载）
+├── stdlib/                # 标准库（C++ 原生动态库，import 时动态加载）
 │   ├── CMakeLists.txt     # 标准库统一构建入口（逐个 add_subdirectory）
 │   ├── io/                # io 标准库（io.so）：标准流对象与 print/input
 │   │   ├── CMakeLists.txt
@@ -401,7 +401,7 @@ Pycp/
 | `PycpMain.cpp` | 真正的 `main()` 入口，统一前端解析 + 后端编译/执行 |
 | `frontend/` | 前端：词法/语法分析、AST、代码生成、AOT |
 | `backend/` | 后端：运行时库（对象模型、GC、VM、字节码），**不依赖前端** |
-| `builtin_libraries/` | 标准库：C++ 原生动态库（`io` / `Pycp` / `classtools`），`import` 时由 VM 动态加载 |
+| `stdlib/` | 标准库：C++ 原生动态库（`io` / `Pycp` / `classtools`），`import` 时由 VM 动态加载 |
 | 顶层 `CMakeLists.txt` | 全项目统一构建入口，产出 `pycp` 可执行文件 |
 | `frontend/CMakeLists.txt` | 独立构建 `parser_test`（打印 AST 的解析器测试） |
 | `backend/CMakeLists.txt` | 独立构建运行时库与 `test_pycp` 测试 |
@@ -499,7 +499,7 @@ cmake --build build -j
 - **装饰器语法糖**：`@decorator` 把被装饰对象（函数或任意对象）作为参数传给装饰器函数，用返回值替换原对象。
 - **成员可见性**：`@private` / `@public` 修饰类内成员，控制该成员在类外的访问可见性（方法内部经 `self` 访问不受限）。
 - **文件级导出**：模块顶层符号默认 public；`@private func foo(){}` 的顶层符号对其他文件 `import` 时不可见。
-- **内置库**（`builtin_libraries/` 目录，C++ 原生实现）：
+- **内置库**（`stdlib/` 目录，C++ 原生实现）：
   - `io`：`io.stdin` / `io.stdout` / `io.stderr` 文件对象（`write` / `readline` 方法），以及 `io.print(value)`（输出内容后自动换行）与 `io.input(prompt)`（打印提示后读取一行）。
   - `Pycp`：`Pycp.String(x)` / `Pycp.Integer(x)` 类型转换类、`Pycp.Object` 基类，以及 `Pycp.public` / `Pycp.private` 可见性装饰器函数。
   - `classtools`：`classtools.super()`（返回父类）、`classtools.public` / `classtools.private`（可见性装饰器函数，与 Pycp 库功能一致）。

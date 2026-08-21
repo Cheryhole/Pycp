@@ -2,6 +2,9 @@
 #include "PycpString.hpp"
 #include "PycpException.hpp"
 #include "PycpGC.hpp"
+#include "PycpList.hpp"
+#include "PycpIterator.hpp"
+#include "PycpMagic.hpp"
 
 #include <iostream>
 
@@ -68,6 +71,58 @@ Object* String::__multiplication__(Object* other){
 		res += str;
 	}
 	return New<String>(res);
+}
+
+Object* String::__get_item__(Object* key) {
+	if (key == nullptr || !key->is_type("Integer")) {
+		throw TypeError("string indices must be integers.");
+	}
+	int64_t i = static_cast<Integer*>(key)->get_value();
+	int64_t n = static_cast<int64_t>(_value.size());
+	if (i < 0) i += n; // 负索引归一化
+	if (i < 0 || i >= n) {
+		throw IndexError("string index out of range.");
+	}
+	std::string one(1, _value[static_cast<std::size_t>(i)]);
+	return String::FromCString(one.c_str());
+}
+
+Object* String::__list__() {
+	// Pycp.List("abc") -> ["a", "b", "c"]：逐字符转 List。
+	List* lst = Pycp::New<List>();
+	for (char ch : _value) {
+		std::string one(1, ch);
+		lst->append(String::FromCString(one.c_str()));
+	}
+	return lst;
+}
+
+Object* String::__iterator__() {
+	// 每次调用返回全新的独立迭代器实例。
+	return Pycp::New<StringIterator>(this);
+}
+
+Object* String::__members__() {
+	// 先收集基类 members_ 中的 key，再添加 string 特有的魔术方法名。
+	List* lst = static_cast<List*>(Object::__members__());
+	std::vector<std::string> extra = {
+		"__integer__", "__string__", "__addition__", "__multiplication__",
+		"__get_item__", "__list__", "__iterator__",
+		"__get_attribute__", "__set_attribute__", "__members__",
+	};
+	for (const auto& n : extra) {
+		bool found = false;
+		for (std::size_t i = 0; i < lst->size(); ++i) {
+			Object* elem = lst->at(i);
+			if (elem != nullptr && elem->is_type("String") &&
+			    static_cast<String*>(elem)->get_value() == n) {
+				found = true;
+				break;
+			}
+		}
+		if (!found) lst->append(String::FromCString(n.c_str()));
+	}
+	return lst;
 }
 
 std::string AsString(Object* obj){

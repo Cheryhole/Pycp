@@ -110,7 +110,9 @@ std::size_t estimate_stack_depth(const Pycp::BC::CodeObject& co) {
 				break;
 			case Pycp::BC::Op::GET_ATTR:
 			case Pycp::BC::Op::LOAD_ATTR:
-				// 弹对象再压属性值，栈深不变
+			case Pycp::BC::Op::GET_ITER:
+			case Pycp::BC::Op::FOR_ITER:
+				// 弹对象/迭代器再压属性值/元素（或 StopIteration 跳转），栈深不变
 				break;
 			case Pycp::BC::Op::STORE_ATTR:
 				// 弹值 + 对象，栈深减 1
@@ -276,7 +278,7 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 			case Pycp::BC::Op::STORE_ATTR: {
 				std::size_t idx = static_cast<std::size_t>(ins.operand);
 				const std::string& attr = module.symtab[idx];
-				// 弹值 + 对象；SetAttr -> __setattr__ 内部按需 Incref 存入，
+				// 弹值 + 对象；SetAttr -> __set_attribute__ 内部按需 Incref 存入，
 				// 此处释放 value 从栈 pop 带来的引用（与 VM STORE_ATTR 一致，
 				// 避免字段持有后栈引用泄漏）。
 				os << "    { Pycp::Object* value = st.back(); st.pop_back();\n";
@@ -345,6 +347,12 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 				os << "    { Pycp::Object* cond = st.back(); st.pop_back();\n";
 				os << "      bool f = Pycp::IsFalse(cond); Pycp::Decref(cond);\n";
 				os << "      if (!f) goto L_" << target << "; }\n";
+				break;
+			}
+			case Pycp::BC::Op::BREAK: {
+				// 由 Codegen 回填为当前最内层循环 end，语义同 JUMP（goto）。
+				long target = static_cast<long>(pc) + static_cast<long>(ins.operand);
+				os << "    goto L_" << target << ";\n";
 				break;
 			}
 
@@ -448,7 +456,7 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 						   << cpp_string_literal(mod_name) << ");\n";
 						os << "        if (mobj != nullptr && dynamic_cast<Pycp::Module*>(mobj) != nullptr) {\n";
 						os << "          Pycp::Module* mo = static_cast<Pycp::Module*>(mobj);\n";
-						os << "          parent_obj = mo->__getattr__("
+						os << "          parent_obj = mo->__get_attribute__("
 						   << cpp_string_literal(attr_name) << ");\n";
 						os << "        }\n";
 						os << "      }\n";
@@ -531,6 +539,57 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 
 				// 7) 压入类对象（新建 Class 为 Owned，由栈接管这 1 份引用）。
 				os << "      st.push_back(cls); }\n";
+				break;
+			}
+
+			case Pycp::BC::Op::CHECK_INT: {
+				// 校验栈顶为 Integer，仅校验不弹栈（与 VM 语义一致）。
+				os << "    { Pycp::Object* v = st.back();\n";
+				os << "      if (v == nullptr || !v->is_type(\"Integer\"))\n";
+				os << "        throw Pycp::TypeError(\"repeat range value must be an integer.\"); }\n";
+				break;
+			}
+			case Pycp::BC::Op::CHECK_RANGE_DIRECTION: {
+				// 校验 repeat 范围方向与步长符号不矛盾（与 VM 语义一致）。
+				os << "    { Pycp::Object* so = st.back(); st.pop_back();\n";
+				os << "      Pycp::Object* bo = st.back(); st.pop_back();\n";
+				os << "      Pycp::Object* ao = st.back(); st.pop_back();\n";
+				os << "      if (ao == nullptr || bo == nullptr || so == nullptr ||\n";
+				os << "          !ao->is_type(\"Integer\") || !bo->is_type(\"Integer\") ||\n";
+				os << "          !so->is_type(\"Integer\"))\n";
+				os << "        throw Pycp::TypeError(\"repeat range value must be an integer.\");\n";
+				os << "      int64_t av = static_cast<Pycp::Integer*>(ao)->get_value();\n";
+				os << "      int64_t bv = static_cast<Pycp::Integer*>(bo)->get_value();\n";
+				os << "      int64_t sv = static_cast<Pycp::Integer*>(so)->get_value();\n";
+				os << "      Pycp::Decref(ao); Pycp::Decref(bo); Pycp::Decref(so);\n";
+				os << "      if ((av < bv && sv < 0) || (av > bv && sv > 0))\n";
+				os << "        throw Pycp::ValueError(\"repeat range step contradicts endpoints direction.\"); }\n";
+				break;
+			}
+
+			case Pycp::BC::Op::GET_ITER: {
+				// obj -> obj.__iterator__()（返回全新迭代器）。与 VM 语义一致：
+				// 不可迭代时 __iterator__ 抛 TypeError。
+				os << "    { Pycp::Object* obj = st.back(); st.pop_back();\n";
+				os << "      Pycp::Object* it = obj->__iterator__();\n";
+				os << "      Pycp::Decref(obj);\n";
+				os << "      st.push_back(it); }\n";
+				break;
+			}
+			case Pycp::BC::Op::FOR_ITER: {
+				// it -> it.__next__()：成功压入下一元素；StopIteration 则 goto 目标。
+				// 仅本指令捕捉 StopIteration（foreach 默认），其他异常向外传播。
+				long target = static_cast<long>(pc) + static_cast<long>(ins.operand);
+				os << "    { Pycp::Object* it = st.back(); st.pop_back();\n";
+				os << "      try {\n";
+				os << "        Pycp::Object* elem = it->__next__();\n";
+				os << "        Pycp::Decref(it);\n";
+				os << "        st.push_back(elem);\n";
+				os << "      } catch (const Pycp::StopIteration&) {\n";
+				os << "        Pycp::Decref(it);\n";
+				os << "        goto L_" << target << ";\n";
+				os << "      }\n";
+				os << "    }\n";
 				break;
 			}
 

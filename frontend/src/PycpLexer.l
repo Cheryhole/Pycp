@@ -40,6 +40,12 @@ from     { return KW_FROM; }
 as       { return KW_AS; }
 class    { return KW_CLASS; }
 inherits { return KW_INHERITS; }
+repeat   { return KW_REPEAT; }
+to       { return KW_TO; }
+break    { return KW_BREAK; }
+by       { return KW_BY; }
+for      { return KW_FOR; }
+in       { return KW_IN; }
 
 [a-zA-Z_][a-zA-Z0-9_]* { // identifier
 	Pycplval.text = new std::string(Pycptext);

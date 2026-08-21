@@ -61,6 +61,16 @@ class ValueError : public Exception {
 				: Exception(file_, lineno_, "ValueError: " + msg) {}
 };
 
+// 迭代结束：迭代器耗尽后调用 __next__ 抛出。仅 foreach（FOR_ITER opcode）
+// 内部捕捉作为循环结束信号，其他场景不捕捉（照常向外传播）。
+class StopIteration : public Exception {
+	public:
+		explicit StopIteration(const std::string& msg = "iterating over a depleted iterator")
+				: Exception("StopIteration: " + msg) {}
+		StopIteration(const std::string& file_, int lineno_, const std::string& msg)
+				: Exception(file_, lineno_, "StopIteration: " + msg) {}
+};
+
 // 名称错误：引用未定义的变量
 class NameError : public Exception {
 	public:

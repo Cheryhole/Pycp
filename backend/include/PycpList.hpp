@@ -29,8 +29,9 @@ class List : public Object {
 private:
 	// 元素表：List 持有其引用（构造/追加时 Incref，析构 Decref）。
 	std::vector<Object*> items_;
-	// length 方法对象（懒创建，析构 Decref）。
+	// length / append 方法对象（懒创建，析构 Decref）。
 	Function* length_fn_ = nullptr;
+	Function* append_fn_ = nullptr;
 
 	// 归一化索引：负索引转正，越界抛 IndexError（附 file/lineno 可选）。
 	std::size_t normalize_index(Object* key) const;
@@ -54,7 +55,9 @@ public:
 	Object* __list__() override;
 	Object* __addition__(Object* other) override;
 	Object* __string__() override;
-	Object* __getattr__(const std::string& name) override;
+	Object* __get_attribute__(const std::string& name) override;
+	Object* __iterator__() override;
+	Object* __members__() override;
 
 	// GC 子引用遍历：枚举 items_ 中所有元素。
 	void foreach_ref(const std::function<void(Object*)>& visit) override;

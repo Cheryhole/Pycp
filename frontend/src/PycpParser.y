@@ -60,7 +60,8 @@ extern void Pycp_delete_buffer(YY_BUFFER_STATE);
 %token NEWLINE
 %token <text> LT_INTEGER LT_STRING IDENTIFIER
 %token KW_FUNC KW_RETURN KW_IF KW_ELIF KW_ELSE KW_NONE KW_IMPORT KW_AS KW_CLASS
-%token KW_FROM KW_INHERITS
+%token KW_FROM KW_INHERITS KW_REPEAT KW_TO KW_BREAK KW_BY
+%token KW_FOR KW_IN
 %token OP_PLUS OP_MINUS OP_MULTIPLY OP_DIVIDE OP_POWER
 %token OP_LPARENTHESES OP_RPARENTHESES
 %token OP_LBRACKET OP_RBRACKET
@@ -105,6 +106,9 @@ extern void Pycp_delete_buffer(YY_BUFFER_STATE);
 %type <node> if_statement
 %type <if_branches> elif_clauses
 %type <if_suffix> opt_elif_else
+%type <node> repeat_statement
+%type <node> break_statement
+%type <node> for_statement
 
 %type <node> expression
 %type <node> comparison_expression
@@ -203,6 +207,15 @@ statement: assignment_statement {
 			$$ = $1;
 		}
 		| if_statement {
+			$$ = $1;
+		}
+		| repeat_statement {
+			$$ = $1;
+		}
+		| break_statement {
+			$$ = $1;
+		}
+		| for_statement {
 			$$ = $1;
 		}
 		| expression {
@@ -553,6 +566,130 @@ elif_clauses: KW_ELIF expression code_block {
 				/*is_elif=*/true
 			));
 			$$ = $1;
+		}
+;
+
+// ============================================================
+// repeat 循环语句（结构化循环）
+//
+// 语法形式（as 必须位于最后，紧邻 code_block）：
+//   repeat { }                                  无限循环
+//   repeat if <cond> { }                         while：cond 为假退出
+//   repeat <N> { }                               计数 N 次（i 不绑定）
+//   repeat <N> as <i> { }                        计数 N 次，i = 0..N-1
+//   repeat from <a> to <b> { }                   范围 [a, b]，步长自动
+//   repeat from <a> to <b> as <i> { }            范围，i 取端点值
+//   repeat from <a> to <b> by <s> { }            范围，显式步长
+//   repeat from <a> to <b> by <s> as <i> { }     范围，显式步长 + i
+//
+// 各形式由独立产生式区分（KW_FROM/KW_AS/KW_BY 作为分隔符），
+// 无歧义；body 统一为 code_block（大括号语句序列）。
+// ============================================================
+repeat_statement: KW_REPEAT code_block {
+			$$ = new RepeatStatement(
+				RepeatMode::INFINITE,
+				nullptr, nullptr, nullptr, nullptr, nullptr,
+				nullptr,
+				new Program($2),
+				Pycplineno
+			);
+		}
+		| KW_REPEAT KW_IF expression code_block {
+			$$ = new RepeatStatement(
+				RepeatMode::WHILE,
+				nullptr, nullptr, nullptr, nullptr,
+				static_cast<Expression*>($3),
+				nullptr,
+				new Program($4),
+				Pycplineno
+			);
+		}
+		| KW_REPEAT expression code_block {
+			// 计数循环（无 as 变量）
+			$$ = new RepeatStatement(
+				RepeatMode::COUNT,
+				static_cast<Expression*>($2), nullptr, nullptr, nullptr, nullptr,
+				nullptr,
+				new Program($3),
+				Pycplineno
+			);
+		}
+		| KW_REPEAT expression KW_AS IDENTIFIER code_block {
+			// 计数循环（绑定 i）
+			$$ = new RepeatStatement(
+				RepeatMode::COUNT,
+				static_cast<Expression*>($2), nullptr, nullptr, nullptr, nullptr,
+				$4,
+				new Program($5),
+				Pycplineno
+			);
+		}
+		| KW_REPEAT KW_FROM expression KW_TO expression code_block {
+			// 范围循环（无 by/as）
+			$$ = new RepeatStatement(
+				RepeatMode::RANGE,
+				nullptr,
+				static_cast<Expression*>($3), static_cast<Expression*>($5),
+				nullptr, nullptr,
+				nullptr,
+				new Program($6),
+				Pycplineno
+			);
+		}
+		| KW_REPEAT KW_FROM expression KW_TO expression KW_AS IDENTIFIER code_block {
+			// 范围循环（as i，无 by）
+			$$ = new RepeatStatement(
+				RepeatMode::RANGE,
+				nullptr,
+				static_cast<Expression*>($3), static_cast<Expression*>($5),
+				nullptr, nullptr,
+				$7,
+				new Program($8),
+				Pycplineno
+			);
+		}
+		| KW_REPEAT KW_FROM expression KW_TO expression KW_BY expression code_block {
+			// 范围循环（by 步长，无 as）
+			$$ = new RepeatStatement(
+				RepeatMode::RANGE,
+				nullptr,
+				static_cast<Expression*>($3), static_cast<Expression*>($5),
+				static_cast<Expression*>($7), nullptr,
+				nullptr,
+				new Program($8),
+				Pycplineno
+			);
+		}
+		| KW_REPEAT KW_FROM expression KW_TO expression KW_BY expression KW_AS IDENTIFIER code_block {
+			// 范围循环（by 步长 + as i）
+			$$ = new RepeatStatement(
+				RepeatMode::RANGE,
+				nullptr,
+				static_cast<Expression*>($3), static_cast<Expression*>($5),
+				static_cast<Expression*>($7), nullptr,
+				$9,
+				new Program($10),
+				Pycplineno
+			);
+		}
+;
+
+// break 语句：退出当前一层循环（无代码块，独立语句）。
+break_statement: KW_BREAK {
+			$$ = new BreakStatement(Pycplineno);
+		}
+;
+
+// foreach 语句：for 变量 in 表达式 { 语句体 }
+// 遍历可迭代对象（List/String）的每个元素绑定到变量。expression 不以
+// OP_LBRACE 起始、code_block 以 OP_LBRACE 起始，两者边界无歧义。
+for_statement: KW_FOR IDENTIFIER KW_IN expression code_block {
+			$$ = new ForeachStatement(
+				$2,
+				static_cast<Expression*>($4),
+				new Program($5),
+				Pycplineno
+			);
 		}
 ;
 

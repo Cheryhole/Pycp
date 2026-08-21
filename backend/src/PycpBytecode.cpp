@@ -1,12 +1,4 @@
 #include "PycpBytecode.hpp"
-#include "PycpException.hpp"
-#include "PycpABI.hpp"
-#include "PycpNone.hpp"
-#include "PycpGC.hpp"
-#include "PycpConfig.hpp"
-
-#include <cstring>
-#include <stdexcept>
 
 namespace Pycp::BC {
 
