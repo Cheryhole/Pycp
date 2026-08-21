@@ -1,6 +1,7 @@
 #include "io.hpp"
 #include "PycpFile.hpp"
 #include "PycpModule.hpp"   // runtime 的 Module 完整定义
+#include "PycpClass.hpp"    // BuiltinTypeClass / Class::add_method
 #include "PycpFunction.hpp"
 #include "PycpString.hpp"
 #include "PycpInteger.hpp"
@@ -61,6 +62,28 @@ void set_func(Module* mod, const char* name, PycpNativeFunction fn) {
 	Decref(f); // namespace 持有
 }
 
+// File(path [, mode])：打开文件并返回 File 对象（对齐 Python open）。
+// 支持 1 或 2 个参数：path 必填，mode 可选（默认 "r"）。
+Object* _builtin_file_ctor(Object*, Object** argv, std::size_t argc) {
+	if (argc < 1 || argc > 2) {
+		throw TypeError("File() expects 1 or 2 arguments (path [, mode]).");
+	}
+	Object* path_obj = argv[0];
+	if (path_obj == nullptr || !path_obj->is_type("String")) {
+		throw TypeError("File() path must be a string.");
+	}
+	std::string path = static_cast<String*>(path_obj)->get_value();
+	std::string mode = "r";
+	if (argc == 2) {
+		Object* mode_obj = argv[1];
+		if (mode_obj == nullptr || !mode_obj->is_type("String")) {
+			throw TypeError("File() mode must be a string.");
+		}
+		mode = static_cast<String*>(mode_obj)->get_value();
+	}
+	return New<File>(path, mode);
+}
+
 // io.stdout / io.stdin / io.stderr 为 File，
 // 支持 .write（仅字符串）、.readline 方法；
 // print / input 为模块级函数。
@@ -96,6 +119,26 @@ Module* make_io_module() {
 	// 模块级函数：print / input（对齐 Python3 单参数语义）。
 	set_func(mod, "print", _builtin_print);
 	set_func(mod, "input", _builtin_input);
+
+	// File 类型类：io.File(path [, mode]) 打开文件并返回 File 对象。
+	// 注册为 BuiltinTypeClass（而非普通 Function），使 io.File 显示为
+	// "<class "File">" 且 io.File.__members__() 返回其方法名（write/read/
+	// readline/readlines/close/open），而非空结果。
+	{
+		BuiltinTypeClass* file_cls = New<BuiltinTypeClass>("File", _builtin_file_ctor);
+		// 把实例方法注册进类型类 methods_，使 __members__() 能枚举到。
+		// 这些 Function 经由 File 实例的 __get_attribute__ 被懒创建并绑定，
+		// 此处仅用于类级成员枚举与类方法调用（如 io.File.open 静态风格）。
+		file_cls->add_method("write",     New<Function>("write",     File_write_fn()));
+		file_cls->add_method("read",      New<Function>("read",      File_read_fn()));
+		file_cls->add_method("readline",  New<Function>("readline",  File_readline_fn()));
+		file_cls->add_method("readlines", New<Function>("readlines", File_readlines_fn()));
+		file_cls->add_method("close",     New<Function>("close",     File_close_fn()));
+		file_cls->add_method("open",      New<Function>("open",      File_open_fn()));
+		(*ns)["File"] = file_cls;
+		Incref(file_cls);
+		Decref(file_cls); // namespace 持有
+	}
 
 	return mod;
 }

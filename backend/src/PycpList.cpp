@@ -37,6 +37,10 @@ Object* _list_append(Object*, Object** argv, std::size_t argc) {
 
 } // anonymous namespace
 
+// ---- 实例方法函数访问器：暴露给 stdlib/Pycp 注册 List 类型类方法 ----
+PycpNativeFunction List_length_fn() { return _list_length; }
+PycpNativeFunction List_append_fn() { return _list_append; }
+
 List* List::New() {
 	return Pycp::New<List>();
 }
@@ -177,6 +181,10 @@ Object* List::__string__() {
 }
 
 Object* List::__get_attribute__(const std::string& name) {
+	// 0) 内建只读属性 __name__：返回类型名（type_name()）对应的 String。
+	if (name == "__name__") {
+		return GetNameAttribute(this);
+	}
 	// 1) 先从成员字典中查找（支持动态 set attribute）。
 	auto it = members_.find(name);
 	if (it != members_.end() && it->second != nullptr) {

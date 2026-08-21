@@ -134,6 +134,16 @@ class NativeExtensionError : public Exception {
 				: Exception(file_, lineno_, "NativeExtensionError: " + msg) {}
 };
 
+// IO错误：文件打开 / 读写 / 关闭失败
+class IOError : public Exception {
+	public:
+		explicit IOError(const std::string& msg)
+				: Exception("IOError: " + msg) {}
+		IOError(const std::string& file_, int lineno_, const std::string
+& msg)
+				: Exception(file_, lineno_, "IOError: " + msg) {}
+};
+
 } // namespace Pycp
 
 #endif // PYCP_EXCEPTION_HPP

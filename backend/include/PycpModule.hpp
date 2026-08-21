@@ -12,6 +12,7 @@
 // =============================================================
 
 #include "PycpObject.hpp"
+#include "PycpString.hpp"
 
 #include <string>
 #include <unordered_map>
@@ -46,6 +47,11 @@ public:
 	// 属性访问：namespace_ 中查 name，未找到抛 AttributeError。
 	Object* __get_attribute__(const std::string& name) override;
 
+	// 覆盖基类虚函数：返回该模块所有可用成员名（成员字典 key +
+	// 命名空间中非 private 的公开名称）的 List。
+	Object* __members__() override;
+
+	Object* __string__();
 	// GC 子引用遍历：枚举命名空间（namespace_）中的值，供标记-清除从
 	// 模块 root 出发标记可达对象。仅遍历不 Decref（析构不释放值，由
 	// 模块执行环境收尾时统一管理）。

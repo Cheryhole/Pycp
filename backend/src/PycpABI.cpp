@@ -47,12 +47,14 @@ Object* GetAttr(Object* obj, const std::string& name){
 	// 模块对象作为 self 插入 argv[0]，导致参数偏移/argc 多 1）。
 	// 非函数属性（io.stdout/io.stdin 等 File 对象）返回行为保持不变。
 	if (dynamic_cast<Pycp::Module*>(obj) != nullptr) {
-		Object* v = obj->__get_attribute__(name); // Borrowed
+		// __get_attribute__ 已统一返回 Owned（普通命名空间成员与魔术方法
+		// 包装的 BoundMethod 均在此转为 Owned），故此处不再额外 Incref，
+		// 否则模块魔术方法产生的 BoundMethod 会被重复引用计数导致泄漏。
+		Object* v = obj->__get_attribute__(name);
 		if (v == nullptr) {
 			throw AttributeError("module has no attribute '" + name + "'");
 		}
-		Incref(v); // Borrowed 转 Owned（调用方负责 Decref）
-		return v;
+		return v; // 已 Owned（调用方负责 Decref）
 	}
 	// 其他类型（类/list 等）：__get_attribute__ 返回 Borrowed。
 	// 若返回的是 Function（如 list 的 length 方法），包装为绑定方法，

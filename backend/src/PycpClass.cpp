@@ -135,6 +135,10 @@ std::vector<std::string> Class::method_names() const {
 }
 
 Object* Class::__get_attribute__(const std::string& name) {
+	// 0) 内建只读属性 __name__：返回类型名（type_name()）对应的 String。
+	if (name == "__name__") {
+		return GetNameAttribute(this);
+	}
 	// 1) 先从成员字典中查找（支持动态 set attribute）。
 	auto itm = members_.find(name);
 	if (itm != members_.end() && itm->second != nullptr) {
@@ -143,10 +147,21 @@ Object* Class::__get_attribute__(const std::string& name) {
 	}
 	// 2) 查找方法。
 	Function* fn = find_method(name);
-	if (fn == nullptr) {
-		throw AttributeError("class '" + name_ + "' has no attribute '" + name + "'");
+	if (fn != nullptr) {
+		return fn;
 	}
-	return fn;
+	// 3) 回退到魔术方法分派（如 __members__/__string__ 等），让
+	//    Class.__members__()、Class.__string__() 等可经魔术方法调用，
+	//    而不仅依赖注册到 methods_ 的普通方法。
+	if (Pycp::IsMagicMethodName(name)) {
+		Function* magic = static_cast<Function*>(Pycp::GetMagicMethodFunction(name));
+		if (magic != nullptr) {
+			// 类对象上的魔术方法不绑定 self（Class 非实例），直接返回 Function。
+			Incref(magic);
+			return magic;
+		}
+	}
+	throw AttributeError("class '" + name_ + "' has no attribute '" + name + "'");
 }
 
 Object* Class::__string__() {
@@ -219,11 +234,13 @@ Object* BuiltinTypeClass::instantiate(Object** argv, std::size_t argc) {
 	if (ctor_ == nullptr) {
 		throw TypeError("builtin type '" + std::string(get_name()) + "' has no constructor.");
 	}
-	if (argc != 1) {
-		throw TypeError("builtin type '" + std::string(get_name()) + "' expects exactly 1 argument.");
-	}
-	if (argv == nullptr || argv[0] == nullptr) {
-		throw TypeError("builtin type '" + std::string(get_name()) + "' argument is null.");
+	// 不在此强制 argc == 1：各类型构造器（ctor_）自行校验参数个数
+	// （如 io.File 支持 1 或 2 个参数 path [, mode]；Pycp.String/Integer/
+	// List 仍各自要求 argc == 1）。这样 BuiltinTypeClass 既能表达单参
+	// 类型构造，也能表达带可选参数的类型构造。
+	if (argv == nullptr) {
+		throw TypeError("builtin type '" + std::string(get_name()) +
+		                "' argument array is null.");
 	}
 	return ctor_(nullptr, argv, argc);
 }
@@ -246,6 +263,10 @@ Instance::~Instance() {
 }
 
 Object* Instance::__get_attribute__(const std::string& name) {
+	// 0) 内建只读属性 __name__：返回类型名（type_name()）对应的 String。
+	if (name == "__name__") {
+		return GetNameAttribute(this);
+	}
 	// 1) 先从成员字典中查找（支持动态 set attribute）。
 	auto itm = members_.find(name);
 	if (itm != members_.end() && itm->second != nullptr) {
@@ -476,12 +497,16 @@ void Instance::foreach_ref(const std::function<void(Object*)>& visit) {
 BoundMethod::BoundMethod(Object* inst, Function* method)
 	: Function(method != nullptr ? method->get_name() : ""),
 	  instance_(inst), method_(method) {
-	if (instance_ != nullptr) Incref(instance_);
+	if (instance_ != nullptr) {
+		Incref(instance_);
+	}
 	if (method_ != nullptr) Incref(method_);
 }
 
 BoundMethod::~BoundMethod() {
-	if (instance_ != nullptr) Decref(instance_);
+	if (instance_ != nullptr) {
+		Decref(instance_);
+	}
 	if (method_ != nullptr) Decref(method_);
 	instance_ = nullptr;
 	method_ = nullptr;

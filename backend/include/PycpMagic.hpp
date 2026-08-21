@@ -38,6 +38,12 @@ bool IsMagicMethodName(const std::string& name);
 // 供各类型的 __members__ 使用（返回 Owned Object*，即 List）。
 Object* BuildNameList(const std::vector<std::string>& names);
 
+// 处理 __name__ 属性访问：返回该对象类型名（type_name()）对应的
+// String。供各类型的 __get_attribute__ 在判别 name == "__name__" 时
+// 调用：GetNameAttribute(receiver) 返回 receiver->type_name() 的 String
+// （Owned，由调用方管理）。
+Object* GetNameAttribute(Object* receiver);
+
 } // namespace Pycp
 
 #endif // PYCP_MAGIC_HPP

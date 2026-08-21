@@ -3,12 +3,14 @@
 #include "PycpFunction.hpp"
 #include "PycpString.hpp"
 #include "PycpInteger.hpp"
+#include "PycpList.hpp"      // List_length_fn / List_append_fn
 #include "PycpNone.hpp"
 #include "PycpGC.hpp"
 #include "PycpException.hpp"
 #include "PycpConfig.hpp"
 #include "PycpABI.hpp"
 #include "PycpClass.hpp"
+#include "PycpMagic.hpp"     // GetMagicMethodFunction
 
 namespace Pycp {
 
@@ -54,13 +56,26 @@ Object* _builtin_get_members(Object*, Object** argv, std::size_t argc) {
 }
 
 // 将类对象以指定名字放入模块命名空间（构造 BuiltinTypeClass ->
-// Incref 进 map -> 释放 Owned）。
-void set_type_class(Module* mod, const char* name, PycpNativeFunction ctor) {
+// Incref 进 map -> 释放 Owned）。返回 cls 以便调用方 add_method 注册
+// 类型方法，使 Pycp.X.__members__() 能枚举到（而非空列表）。
+BuiltinTypeClass* set_type_class(Module* mod, const char* name, PycpNativeFunction ctor) {
 	auto* ns = mod->get_namespace();
 	BuiltinTypeClass* cls = New<BuiltinTypeClass>(name, ctor);
 	(*ns)[name] = cls;
 	Incref(cls);
 	Decref(cls); // namespace 持有
+	return cls;
+}
+
+// 把一组魔术方法名注册进类型类 methods_（复用 PycpMagic 维护的缓存
+// Function，与实例 __get_attribute__ 回退同源）。未识别的魔方法名跳过。
+void add_magic_methods(BuiltinTypeClass* cls, const std::vector<std::string>& names) {
+	for (const auto& n : names) {
+		Object* m = Pycp::GetMagicMethodFunction(n);
+		if (m != nullptr) {
+			cls->add_method(n, static_cast<Function*>(m));
+		}
+	}
 }
 
 // =============================================================
@@ -139,9 +154,33 @@ Module* make_pycp_module() {
 	// 内置类型类：Pycp.String(x) / Pycp.Integer(x)。
 	// 调用时走类实例化路径（BuiltinTypeClass::instantiate），把参数
 	// 传给构造回调，返回内置 String / Integer 对象。
-	set_type_class(mod, "String", _builtin_string_ctor);
-	set_type_class(mod, "Integer", _builtin_integer_ctor);
-	set_type_class(mod, "List", _builtin_list_ctor);
+	// 注册类型方法，使 Pycp.X.__members__() 枚举到（与实例 __members__ 一致）。
+	BuiltinTypeClass* string_cls = set_type_class(mod, "String", _builtin_string_ctor);
+	BuiltinTypeClass* integer_cls = set_type_class(mod, "Integer", _builtin_integer_ctor);
+	BuiltinTypeClass* list_cls    = set_type_class(mod, "List",   _builtin_list_ctor);
+
+	// List 的公开方法（真实实例方法）：length / append。
+	list_cls->add_method("length", New<Function>("length", List_length_fn()));
+	list_cls->add_method("append", New<Function>("append", List_append_fn()));
+	// List 魔术方法。
+	add_magic_methods(list_cls, {
+		"__iterator__", "__list__", "__addition__", "__string__",
+		"__get_item__", "__set_item__",
+	});
+
+	// String 魔术方法（无真实公开非魔术方法）。
+	add_magic_methods(string_cls, {
+		"__integer__", "__string__", "__addition__", "__multiplication__",
+		"__get_item__", "__list__", "__iterator__",
+	});
+
+	// Integer 魔术方法（算术 / 比较 / 一元）。
+	add_magic_methods(integer_cls, {
+		"__integer__", "__string__", "__negation__", "__addition__",
+		"__subtraction__", "__multiplication__", "__division__", "__power__",
+		"__less_than__", "__less_equal__", "__equal__", "__not_equal__",
+		"__greater_than__", "__greater_equal__",
+	});
 
 	// Pycp.Object 基类：类似 Python 的 object，含默认空 __initialize__
 	// （供子类 super().__initialize__(self) 调用）。不自动继承；

@@ -125,4 +125,10 @@ Object* BuildNameList(const std::vector<std::string>& names) {
 	return lst;
 }
 
+Object* GetNameAttribute(Object* receiver) {
+	// 属性访问 __name__：返回该对象类型名（type_name()）对应的 String。
+	// 返回 Owned 引用（新创建 String），由调用方管理。
+	return String::FromCString(receiver->type_name().c_str());
+}
+
 } // namespace Pycp

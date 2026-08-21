@@ -23,6 +23,12 @@
 
 namespace Pycp {
 
+// 统一原生函数调用签名（与 PycpFunction.hpp 中的 PycpNativeFunction 一致）。
+// 此处前置定义别名，避免 PycpList.hpp include PycpFunction.hpp 时与
+// PycpFunction.hpp -> PycpABI.hpp -> PycpList.hpp 形成环形包含导致
+// PycpNativeFunction 未定义。
+using PycpNativeFunction = Object* (*)(Object* self, Object** argv, std::size_t argc);
+
 class Function;
 
 class List : public Object {
@@ -62,6 +68,12 @@ public:
 	// GC 子引用遍历：枚举 items_ 中所有元素。
 	void foreach_ref(const std::function<void(Object*)>& visit) override;
 };
+
+// List 实例方法的原生实现函数访问器（PycpNativeFunction 签名），供
+// stdlib/Pycp 把 length/append 注册进 List 类型类 BuiltinTypeClass 的
+// methods_，使 Pycp.List.__members__() 返回方法名。argv[0] 为 self（List*）。
+PycpNativeFunction List_length_fn();
+PycpNativeFunction List_append_fn();
 
 } // namespace Pycp
 

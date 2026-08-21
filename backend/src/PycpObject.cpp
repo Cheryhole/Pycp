@@ -50,6 +50,10 @@ Object* Object::__negation__(){
 }
 
 Object* Object::__get_attribute__(const std::string& name){
+  // 0) 内建只读属性 __name__：返回类型名（type_name()）对应的 String。
+  if (name == "__name__") {
+    return GetNameAttribute(this);
+  }
   // 1) 先从成员字典中查找。
   auto it = members_.find(name);
   if (it != members_.end() && it->second != nullptr) {

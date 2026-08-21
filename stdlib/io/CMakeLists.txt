@@ -12,7 +12,6 @@
 # 本库源文件与头文件
 set(IO_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpFile.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/FileFromStream.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io.cpp
 )
 

@@ -58,18 +58,26 @@ VM::~VM() {
 		auto* ns = kv.second->get_namespace();
 		if (ns != nullptr) {
 			for (auto& p : *ns) {
-				if (p.second != nullptr) Decref(p.second);
+				if (p.second != nullptr) {
+					Decref(p.second);
+				}
 			}
 			ns->clear();
 		}
 	}
 
-	// 第二步：释放各模块对象（namespace 已空，析构不会再连锁）。
+	// 第二步：解除各模块对象在 GC 中的 root 标记。
+	// 注意：被 import 的原生/用户模块对象，其引用计数已由第一步
+	// （清空入口模块 namespace 时对全局变量值 Decref）归零并释放，
+	// 因此此处【不可再 Decref】，否则会对已释放对象二次释放。
+	// 仅入口模块 entry_mod_ 不被任何全局变量持有，需在此显式 Decref 释放。
 	for (auto& kv : module_cache_) {
 		if (kv.second != nullptr) {
 			GC_RemoveRoot(kv.second);
-			Decref(kv.second);
 		}
+	}
+	if (entry_mod_ != nullptr) {
+		Decref(entry_mod_);
 	}
 	module_cache_.clear();
 
@@ -136,6 +144,10 @@ Pycp::Module* VM::load_module(const std::string& name) {
 		Pycp::Module* extmod = LoadNativeModule(name, search_dir);
 		if (extmod != nullptr) {
 			GC_AddRoot(extmod);
+			// module_cache_ 持久持有该模块对象，需将其引用计数计入，
+			// 否则后续（如 ~VM 清理命名空间）的 Decref 会把 rc 减到 0 误删，
+			// 导致 module_cache_ 持有悬垂指针（use-after-free）。
+			Incref(extmod);
 			module_cache_[name] = extmod;
 			return extmod;
 		}
@@ -155,6 +167,8 @@ Pycp::Module* VM::load_module(const std::string& name) {
 	// 若其反向 import 本模块名，会命中这个未填充完的对象而非无限递归）。
 	Pycp::Module* modobj = Pycp::Module::New(name);
 	GC_AddRoot(modobj);
+	// module_cache_ 持久持有，计入引用计数（与 native 模块分支一致）。
+	Incref(modobj);
 	module_cache_[name] = modobj;
 
 	// 为子模块构造执行环境：其顶层 globals 指向 Module 的命名空间。
@@ -650,6 +664,7 @@ Object* VM::execute(CodeObject* co,
 					args[nargs - 1 - i] = pop();
 				Object* callee = pop();
 
+
 				Object* ret = nullptr;
 				if (callee->is_type("Function")) {
 					Function* fn = static_cast<Function*>(callee);
@@ -693,7 +708,13 @@ Object* VM::execute(CodeObject* co,
 					throw VMError(cur_file(), cur_line(), "import index out of range.");
 				const std::string& modname = module_->imports[idx];
 				Pycp::Module* modobj = load_module(modname);
+				// load_module 返回的模块对象自身持有 1 份引用（创建时 New）。
+				// 此处 push 会再 Incref 一次（栈引用约定），但若直接 push 会导致
+				// 引用计数翻倍（模块对象多出一份无主引用）。因此 push 后立刻
+				// Decref 一次，使栈上的引用与 load_module 返回的引用合为同一份，
+				// 避免后续 STORE_VAR / 析构时引用计数无法归零导致重复释放。
 				push(modobj);
+				if (modobj != nullptr) Decref(modobj);
 				break;
 			}
 
@@ -710,6 +731,7 @@ Object* VM::execute(CodeObject* co,
 				Object* val = Pycp::Module::GetAttr(static_cast<Pycp::Module*>(obj), attr);
 				Decref(obj);
 				push(val);
+				Decref(val); // push 已 Incref，释放 Owned 这份（与 LOAD_ATTR 一致）
 				break;
 			}
 
