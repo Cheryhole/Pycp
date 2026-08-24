@@ -173,8 +173,8 @@ static void collect_assignment_targets(Program* p, std::unordered_set<std::strin
 // =============================================================
 
 static void compile_expr(Emitter& em, Expression* e, Scope& scope);
-static void compile_stmt(Emitter& em, Statement* s, Scope& scope);
-static void compile_program(Emitter& em, Program* p, Scope& scope);
+static void compile_stmt(Emitter& em, Statement* s, Scope& scope, bool top_level = true);
+static void compile_program(Emitter& em, Program* p, Scope& scope, bool top_level = true);
 static void compile_class_def(Emitter& em, ClassDefinition* cd, Scope& scope);
 static void compile_class_expr(Emitter& em, ClassExpression* ce, Scope& scope);
 // 通用类编译：根据类名/父类名/成员/方法构造 ClassDef 并发射 MAKE_CLASS。
@@ -268,6 +268,15 @@ static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 			em.emit(Op::LOAD_CONST, static_cast<int32_t>(em.intern_none()));
 			break;
 		}
+		case NodeType::BOOLEAN_LITERAL: {
+			BooleanLiteral* lit = static_cast<BooleanLiteral*>(e);
+			if (lit->value) {
+				em.emit(Op::LOAD_TRUE);
+			} else {
+				em.emit(Op::LOAD_FALSE);
+			}
+			break;
+		}
 		case NodeType::IDENTIFIER_EXPRESSION: {
 			IdentifierExpression* id = static_cast<IdentifierExpression*>(e);
 			// 变量引用统一走 LOAD_VAR（VM 按 局部->捕获->全局 查找）
@@ -317,7 +326,7 @@ static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 			em.current()->nlocals = static_cast<uint16_t>(fn_scope.names.size());
 			em.current()->names = fn_scope.names;
 
-			compile_program(em, fe->body, fn_scope);
+			compile_program(em, fe->body, fn_scope, false);
 			// 末尾补 RETURN_NONE
 			if (em.current()->code.empty() ||
 			    (em.current()->code.back().op != Op::RETURN &&
@@ -387,7 +396,7 @@ static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 // 语句编译
 // =============================================================
 
-static void compile_stmt(Emitter& em, Statement* s, Scope& scope) {
+static void compile_stmt(Emitter& em, Statement* s, Scope& scope, bool top_level) {
 	if (s->lineno >= 0) em.set_lineno(s->lineno);
 	switch (s->get_type()) {
 		case NodeType::ASSIGNMENT_STATEMENT: {
@@ -417,7 +426,14 @@ static void compile_stmt(Emitter& em, Statement* s, Scope& scope) {
 		case NodeType::EXPRESSION_STATEMENT: {
 			ExpressionStatement* es = static_cast<ExpressionStatement*>(s);
 			compile_expr(em, es->expression, scope);
-			em.emit(Op::POP_TOP);
+			// REPL 求值模式下，顶层表达式语句保留栈顶值作为模块返回值，
+			// 供 REPL 回显结果（与 Python 一致）；函数体/分支内的表达式
+			// 语句（top_level=false）或非 REPL 模块仍丢弃栈顶。
+			if (em.module.repl_eval && top_level) {
+				em.emit(Op::RETURN);
+			} else {
+				em.emit(Op::POP_TOP);
+			}
 			break;
 		}
 		case NodeType::IMPORT_STATEMENT: {
@@ -467,7 +483,7 @@ static void compile_stmt(Emitter& em, Statement* s, Scope& scope) {
 			// if 分支
 			compile_expr(em, is->if_branch->condition, scope);
 			false_patches.push_back(em.emit(Op::JUMP_IF_FALSE));
-			compile_program(em, is->if_branch->body, scope);
+			compile_program(em, is->if_branch->body, scope, false);
 			end_jumps.push_back(em.emit(Op::JUMP));
 
 			// elif 分支
@@ -479,7 +495,7 @@ static void compile_stmt(Emitter& em, Statement* s, Scope& scope) {
 
 				compile_expr(em, br->condition, scope);
 				false_patches.push_back(em.emit(Op::JUMP_IF_FALSE));
-				compile_program(em, br->body, scope);
+				compile_program(em, br->body, scope, false);
 				end_jumps.push_back(em.emit(Op::JUMP));
 			}
 
@@ -488,7 +504,7 @@ static void compile_stmt(Emitter& em, Statement* s, Scope& scope) {
 				std::size_t else_start = em.here();
 				em.patch_jump(false_patches.back(), else_start);
 				false_patches.pop_back();
-				compile_program(em, is->else_body, scope);
+				compile_program(em, is->else_body, scope, false);
 			}
 
 			// 回填最后一个未回填的 false 占位（无 else 时跳到 end）
@@ -521,7 +537,7 @@ static void compile_stmt(Emitter& em, Statement* s, Scope& scope) {
 			switch (rs->mode) {
 				case RepeatMode::INFINITE: {
 					// 直接编译 body，末尾跳回 loop_start
-					compile_program(em, rs->body, scope);
+					compile_program(em, rs->body, scope, false);
 					em.patch_jump(em.emit(Op::JUMP), loop_start);
 					break;
 				}
@@ -529,7 +545,7 @@ static void compile_stmt(Emitter& em, Statement* s, Scope& scope) {
 					// 每轮 body 前先判断 cond，false 退出
 					compile_expr(em, rs->cond_expr, scope);
 					end_jump = em.emit(Op::JUMP_IF_FALSE);
-					compile_program(em, rs->body, scope);
+					compile_program(em, rs->body, scope, false);
 					em.patch_jump(em.emit(Op::JUMP), loop_start);
 					break;
 				}
@@ -544,7 +560,7 @@ static void compile_stmt(Emitter& em, Statement* s, Scope& scope) {
 					compile_expr(em, rs->count_expr, scope);
 					em.emit(Op::COMPARE_OP, static_cast<int32_t>(CompareOp::LT));
 					end_jump = em.emit(Op::JUMP_IF_FALSE);
-					compile_program(em, rs->body, scope);
+					compile_program(em, rs->body, scope, false);
 					// v = v + 1
 					em.emit(Op::LOAD_VAR, static_cast<int32_t>(em.intern_name(v)));
 					em.emit(Op::LOAD_CONST, static_cast<int32_t>(em.intern_int(1)));
@@ -606,7 +622,7 @@ static void compile_stmt(Emitter& em, Statement* s, Scope& scope) {
 						// body 入口
 						std::size_t body_pos = em.here();
 						em.patch_jump(body_jump, body_pos);
-						compile_program(em, rs->body, scope);
+						compile_program(em, rs->body, scope, false);
 						// v = v + step
 						em.emit(Op::LOAD_VAR, static_cast<int32_t>(em.intern_name(v)));
 						em.emit(Op::LOAD_VAR, static_cast<int32_t>(em.intern_name(step_tmp)));
@@ -632,7 +648,7 @@ static void compile_stmt(Emitter& em, Statement* s, Scope& scope) {
 					// 按方向用 LE（递增）或 GE（递减）；步长由 step 常量决定。
 					em.emit(Op::COMPARE_OP, static_cast<int32_t>(dir_cmp));
 					end_jump = em.emit(Op::JUMP_IF_FALSE);
-					compile_program(em, rs->body, scope);
+					compile_program(em, rs->body, scope, false);
 					// v = v + step
 					em.emit(Op::LOAD_VAR, static_cast<int32_t>(em.intern_name(v)));
 					em.emit(Op::LOAD_CONST, static_cast<int32_t>(em.intern_int(step)));
@@ -694,7 +710,7 @@ static void compile_stmt(Emitter& em, Statement* s, Scope& scope) {
 			std::size_t end_jump = em.emit(Op::FOR_ITER);
 			// var = elem
 			em.emit(Op::STORE_VAR, static_cast<int32_t>(em.intern_name(*fs->var_name)));
-			compile_program(em, fs->body, scope);
+			compile_program(em, fs->body, scope, false);
 			// 回跳 loop_start
 			em.patch_jump(em.emit(Op::JUMP), loop_start);
 
@@ -777,7 +793,7 @@ static void compile_class_body(Emitter& em, const std::string& name,
 		em.current()->nlocals = static_cast<uint16_t>(fn_scope.names.size());
 		em.current()->names = fn_scope.names;
 
-		compile_program(em, fe->body, fn_scope);
+		compile_program(em, fe->body, fn_scope, false);
 		if (em.current()->code.empty() ||
 		    (em.current()->code.back().op != Op::RETURN &&
 		     em.current()->code.back().op != Op::RETURN_NONE)) {
@@ -842,9 +858,9 @@ static void compile_class_body(Emitter& em, const std::string& name,
 	em.emit(Op::MAKE_CLASS, static_cast<int32_t>(cidx));
 }
 
-static void compile_program(Emitter& em, Program* p, Scope& scope) {
+static void compile_program(Emitter& em, Program* p, Scope& scope, bool top_level) {
 	for (Statement* s : *(p->statements)) {
-		compile_stmt(em, s, scope);
+		compile_stmt(em, s, scope, top_level);
 	}
 }
 
@@ -854,8 +870,9 @@ static void compile_program(Emitter& em, Program* p, Scope& scope) {
 // 顶层入口
 // =============================================================
 
-BC::Module Compile(Program* program) {
+BC::Module Compile(Program* program, bool repl_eval) {
 	Emitter em;
+	em.module.repl_eval = repl_eval; // 须在编译语句前设定，影响顶层表达式语句的 RETURN
 
 	// 顶层代码对象 MODULE_TOP_NAME：无局部变量（全部走 globals）
 	// 将顶层代码对象名 intern 进符号表，保证序列化时能正确解析其名称。

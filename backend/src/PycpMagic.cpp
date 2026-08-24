@@ -22,6 +22,7 @@ std::unordered_map<std::string, Function*>& magic_cache() {
 Object* _magic0(Object* receiver, const std::string& m) {
 	if (m == "__integer__")   return receiver->__integer__();
 	if (m == "__string__")    return receiver->__string__();
+	if (m == "__boolean__")   return receiver->__boolean__();
 	if (m == "__list__")      return receiver->__list__();
 	if (m == "__iterator__")  return receiver->__iterator__();
 	if (m == "__next__")      return receiver->__next__();
@@ -59,9 +60,9 @@ Object* _magic2(Object* receiver, const std::string& m, Object* arg1, Object* ar
 }
 
 bool is_zero_arg_magic(const std::string& m) {
-	return m == "__integer__" || m == "__string__" || m == "__list__" ||
-	       m == "__iterator__" || m == "__next__" || m == "__negation__" ||
-	       m == "__members__";
+	return m == "__integer__" || m == "__string__" || m == "__boolean__" ||
+	       m == "__list__" || m == "__iterator__" || m == "__next__" ||
+	       m == "__negation__" || m == "__members__";
 }
 
 bool is_one_arg_magic(const std::string& m) {

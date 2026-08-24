@@ -38,6 +38,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace Pycp {
@@ -67,6 +68,18 @@ public:
 	// 执行顶层代码（code_objects[0]），返回其返回值（通常为 None）。
 	Object* run();
 
+	// 在已有全局环境（global_env_）上执行一个独立 Module 的顶层代码，
+	// 返回其返回值（REPL 模式下顶层表达式语句经 RETURN 保留的值）。
+	// 用于 REPL 逐行/逐块求值：每次复用同一 VM 的 globals 上下文。
+	//
+	// 重要：本方法会接管 m 的生命周期（加入 owned_modules_），VM 析构时
+	// 统一释放。这是因为 MAKE_FUNCTION 生成的 BytecodeFunction 会持有 m 的
+	// 指针（闭包引用所属模块），若在本方法内释放 m，则后续（如 REPL 下一行）
+	// 调用该函数时会访问已销毁的 Module（悬垂指针 → invalid code object index
+	// / segfault）。故执行后仅清理 m 的 runtime_consts（GC_RemoveRoot+Decref），
+	// 不释放 m 本身。调用方【不应】再 delete m。
+	Object* exec_module(Module* m);
+
 	// 供 BytecodeFunction::invoke 调用：执行指定模块的指定代码对象。
 	//   m       : 所属模块（函数定义时所在模块，跨模块调用需切换）
 	//   co_idx  : code_objects 索引
@@ -78,6 +91,11 @@ public:
 	// 获取所属模块（供 BytecodeFunction 读取函数名等元数据）
 	Module* get_module() const { return module_; }
 
+	// 获取 VM 的全局命名空间（REPL 用于执行前快照 / 错误回滚）。
+	std::unordered_map<std::string, Object*>* get_globals() const {
+		return global_env_->globals;
+	}
+
 private:
 	Module* module_;
 	std::shared_ptr<Environment> global_env_; // 持有 globals map
@@ -87,6 +105,17 @@ private:
 	// 生命周期由调用方保证（registry 中的 Module 存活于 VM 使用期间）。
 	std::map<std::string, Module*>* registry_;
 	std::map<std::string, Pycp::Module*> module_cache_;
+
+	// 常驻模块集合（native 扩展模块，如 Pycp/io/classtools）。
+	// 这些模块由 Initialize/Finalize 拥有、生命周期跨 VM 实例，~VM 不应
+	// 清理其命名空间内容（否则会提前释放 Pycp.Object 等仍被用户类
+	// parent_ 指向的对象，导致退出阶段堆损坏）。~VM 仅移除其 root 并对
+	// 其 Decref（抵消 LoadNativeModule 的 Incref），交由 Finalize 统一回收。
+	std::unordered_set<std::string> resident_modules_;
+
+	// 由 exec_module 提交、本 VM 负责释放的 Module 列表（REPL 场景）。
+	// 这些 Module 被 BytecodeFunction 闭包引用，须存活至 VM 析构。
+	std::vector<Module*> owned_modules_;
 
 	// 执行单个代码对象（共享执行循环核心）
 	Object* execute(CodeObject* co,

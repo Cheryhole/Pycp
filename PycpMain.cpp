@@ -39,8 +39,11 @@
 #include "PycpBytecode.hpp"  // 字节码格式 / 序列化
 #include "PycpBytecodeDump.hpp" // 字节码查看（dump）接口
 #include "PycpBytecodeVM.hpp"// VM 执行
+#include "PycpString.hpp"    // REPL 回显：String::get_value()
 #include "PycpException.hpp"
 #include "PycpConfig.hpp"    // 集中管理的常量（扩展名/输出命名/版本等）
+
+#include "linenoise.h"       // REPL 行编辑（方向键/历史），third_party/linenoise
 
 #include <map>
 
@@ -203,6 +206,204 @@ int execute_program(std::map<std::string, Pycp::BC::Module>& modules,
 	return 0;
 }
 
+// =============================================================
+// 交互式 REPL
+// =============================================================
+
+// 判断一段已累积的输入是否尚未完整（需继续读取下一行）。
+// 本语言块定界符为花括号 {}（func/if/repeat/class 等），故续行条件：
+//   * 括号未闭合（([{ 计数大于 )]}），或
+//   * 最后一行以 '{' 结尾（块头未闭合，等待块体）。
+// 忽略字符串内的括号与花括号（基于简单转义处理）。
+bool repl_needs_continuation(const std::string& buf) {
+	int depth = 0;
+	bool in_string = false;
+	char quote = 0;
+	for (std::size_t i = 0; i < buf.size(); ++i) {
+		char c = buf[i];
+		if (in_string) {
+			if (c == '\\') { ++i; continue; } // 跳过转义字符
+			if (c == quote) in_string = false;
+		} else {
+			if (c == '"' || c == '\'') { in_string = true; quote = c; }
+			else if (c == '(' || c == '[' || c == '{') depth++;
+			else if (c == ')' || c == ']' || c == '}') depth--;
+		}
+	}
+	if (depth > 0) return true;
+	// 找最后的非空白字符
+	std::size_t end = buf.size();
+	while (end > 0) {
+		char c = buf[end - 1];
+		if (c == ' ' || c == '\t' || c == '\n' || c == '\r') --end;
+		else break;
+	}
+	if (end == 0) return false;
+	return buf[end - 1] == '{';
+}
+
+// 将对象以可读字符串形式输出到控制台（复用 __string__，String 取 C++ 值）。
+void repl_print_value(Pycp::Object* obj) {
+	if (obj == nullptr) return;
+	Pycp::Object* so = obj->__string__();
+	if (so != nullptr && so->is_type("String")) {
+		std::cout << static_cast<Pycp::String*>(so)->get_value() << std::endl;
+	} else {
+		std::cout << "<unprintable>" << std::endl;
+	}
+	if (so != nullptr) Pycp::Decref(so);
+}
+
+void run_repl() {
+	Pycp::Initialize();
+
+	// REPL 使用无入口模块的 VM，全局命名空间独立创建（globals 在 VM 内）。
+	Pycp::BC::VM vm(nullptr);
+	auto* globals = vm.get_globals();
+	using GlobalsMap = std::unordered_map<std::string, Pycp::Object*>;
+
+	std::cout << "Pycp " << Pycp::PYCP_VERSION << " interactive mode. Press Ctrl-D to leave.\n";
+	std::cout.flush();
+
+	std::string buffer;
+	bool continuation = false;
+
+	while (true) {
+		char* raw = linenoise(continuation ? "... " : ">>> ");
+		if (raw == nullptr) {
+			// Ctrl-D (EOF)：退出 REPL，退出码 0。
+			std::cout << std::endl;
+			break;
+		}
+		std::string line(raw);
+		linenoiseFree(raw);
+
+		// 历史记录：每读入一行（不含换行）即单独加入历史，供上箭头逐行
+		// 回退。不可把含换行的完整多行 buffer 整体入历史——linenoise 对
+		// 含换行的历史项在上箭头调出时会折叠为 "[... N pasted lines ...]"
+		// 占位符。空白行（主提示符直接回车）不产生历史项。
+		{
+			bool line_blank = true;
+			for (char c : line) {
+				if (c != ' ' && c != '\t' && c != '\r') {
+					line_blank = false;
+					break;
+				}
+			}
+			if (!line_blank) {
+				linenoiseHistoryAdd(line.c_str());
+			}
+		}
+
+		buffer += line;
+		buffer += '\n';
+
+		// 整段 buffer 全为空白（空格/制表符/换行/回车）时安全忽略，
+		// 不进入编译，不打印错误，回到主提示符。覆盖主提示符空行与
+		// 「续行中连续空行导致整段仍全空白」的边界情况。
+		{
+			bool all_blank = true;
+			for (char c : buffer) {
+				if (c != ' ' && c != '\t' && c != '\n' && c != '\r') {
+					all_blank = false;
+					break;
+				}
+			}
+			if (all_blank) {
+				buffer.clear();
+				continuation = false;
+				continue;
+			}
+		}
+
+		// 先判断是否需要续行（不调用 parse，避免不完整输入污染解析器全局状态）。
+		// 仅当输入「可能已完整」时才编译一次，与文件模式等价。
+		if (repl_needs_continuation(buffer)) {
+			continuation = true;
+			continue; // 保留 buffer，继续读取下一行
+		}
+
+		// 尝试编译（此时 buffer 通常已完整：括号/花括号平衡且不以 '{' 结尾）。
+		// 采用单语句解析 ABI：每次只编译当前完整 buffer 这一条语句单元，
+		// 不携带历史行——实现「逐条独立解析执行」，历史语句不再重编译。
+		// 注意：compile_statement 返回的对象生命周期由 VM::exec_module 接管
+		//（VM 在析构时统一释放），故此处用裸指针，切勿 delete。
+		Pycp::BC::Module* mod = nullptr;
+		try {
+			mod = new Pycp::BC::Module(
+				Pycp::ModuleLoader::compile_statement(buffer, Pycp::REPL_SOURCE_NAME));
+		} catch (Pycp::Exception&) {
+			// 语法错误：解析器已向 stderr 输出了 File/line/msg，故不重复打印。
+			// 丢弃已累积的输入，回到主提示符。
+			buffer.clear();
+			continuation = false;
+			continue;
+		} catch (const std::exception& e) {
+			std::cerr << "Error: " << e.what() << std::endl;
+			buffer.clear();
+			continuation = false;
+			continue;
+		}
+
+		// 编译成功：在执行前对全局命名空间做快照（用于失败回滚）。
+		GlobalsMap snapshot = *globals;
+		for (auto& kv : snapshot) Pycp::Incref(kv.second);
+
+		try {
+			Pycp::Object* res = vm.exec_module(mod);
+			if (res != nullptr && res->type_name() != "None") {
+				repl_print_value(res);
+			}
+			if (res != nullptr) Pycp::Decref(res);
+			// 成功路径释放快照持有的引用（仅成功时执行，避免与 catch 重复 Decref）
+			for (auto& kv : snapshot) Pycp::Decref(kv.second);
+		} catch (Pycp::Exception& e) {
+			// 回退该行产生的全部全局副作用，仅显示错误，不退出。
+			// 严格配对引用计数：
+			//  1) 释放错误行【新定义】的变量（快照中不存在的键）；
+			//  2) 释放错误行【覆盖】的既有变量（当前值 != 快照值）；
+			//  3) 用快照整体替换 globals（拷贝，快照值进入 globals）；
+			//  4) Decref 快照持有（抵消进入本行时的 Incref）。
+			// 注意：未变动的既有变量不能在 1/2 中 Decref，否则会多减一次
+			// 导致悬垂，下一行访问即崩溃。
+			for (auto& kv : *globals) {
+				if (snapshot.find(kv.first) == snapshot.end())
+					Pycp::Decref(kv.second); // 错误行新定义的变量
+			}
+			for (auto& kv : snapshot) {
+				auto it = globals->find(kv.first);
+				if (it != globals->end() && it->second != kv.second)
+					Pycp::Decref(it->second); // 错误行覆盖的既有变量
+			}
+			*globals = snapshot;
+			for (auto& kv : snapshot) Pycp::Decref(kv.second);
+			std::string msg = e.format();
+			if (!msg.empty()) std::cerr << msg << std::endl;
+		} catch (const std::exception& e) {
+			for (auto& kv : *globals) {
+				if (snapshot.find(kv.first) == snapshot.end())
+					Pycp::Decref(kv.second);
+			}
+			for (auto& kv : snapshot) {
+				auto it = globals->find(kv.first);
+				if (it != globals->end() && it->second != kv.second)
+					Pycp::Decref(it->second);
+			}
+			*globals = snapshot;
+			for (auto& kv : snapshot) Pycp::Decref(kv.second);
+			std::cerr << "Error: " << e.what() << std::endl;
+		}
+
+		// 历史已在每行读入时逐条记录（见上），不再把含换行的多行 buffer
+		// 整体入历史，避免上箭头回退时被 linenoise 折叠为占位符。
+
+		buffer.clear();
+		continuation = false;
+	}
+
+	Pycp::Finalize();
+}
+
 } // anonymous namespace
 
 int main(int argc, char** argv) {
@@ -216,9 +417,14 @@ int main(int argc, char** argv) {
 		print_help(argv[0]);
 		return 2;
 	}
-	if (opt.show_help || opt.input_file.empty()) {
+	if (opt.show_help) {
 		print_help(argv[0]);
-		return opt.show_help ? 0 : 2;
+		return 0;
+	}
+	if (opt.input_file.empty()) {
+		// 无参数启动：进入交互式 REPL（像 Python 解释器）。
+		run_repl();
+		return 0;
 	}
 
 	int ret = 0;

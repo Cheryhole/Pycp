@@ -16,6 +16,8 @@
 
 namespace Pycp {
 
+class Class;  // 前向声明，避免与 PycpClass.hpp 循环依赖
+
 // 函数种类（见路线图第 6 步：Native / Bytecode 区分）
 enum class FunctionKind{
 	Native,    // C++ 实现的内建/用户函数
@@ -34,6 +36,11 @@ class PYCP_API Function : public Object{
 		FunctionKind kind;
 		const char* name;
 
+		// 方法定义所属的类（仅类方法有意义；顶层/模块函数为 nullptr）。
+		// 用于 super() 推断"当前方法所属类"以正确解析父类，而非依赖
+		// 最派生实例的类（否则继承链上重复调用 super 会无限递归）。
+		Class* owner_class_ = nullptr;
+
 		// Native 函数入口（无状态 C 函数指针，避免 C++ lambda [＆] 悬空捕获）
 		PycpNativeFunction native;
 
@@ -44,6 +51,10 @@ class PYCP_API Function : public Object{
 
 		FunctionKind get_kind() const { return kind; }
 		const char* get_name() const override { return name; }
+
+		// 方法所属类（供 super() 解析父类）。仅类方法设置，其余为 nullptr。
+		Class* get_owner_class() const { return owner_class_; }
+		void set_owner_class(Class* cls) { owner_class_ = cls; }
 
 		// 字符串表示：普通函数 "<function \"name\" at 0xADDR>"，
 		// 匿名函数（name 为空或 @anonymous）输出 "@anonymous"。

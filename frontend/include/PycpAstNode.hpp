@@ -27,6 +27,7 @@ enum class NodeType : uint16_t {
 	INTEGER_LITERAL = 12,
 	STRING_LITERAL = 13,
 	NONE_LITERAL = 14,
+	BOOLEAN_LITERAL = 15,
 	IF_STATEMENT = 15,
 	IF_BRANCH = 16,
 	IMPORT_STATEMENT = 17,
@@ -270,6 +271,19 @@ struct NoneLiteral : Literal {
 	~NoneLiteral() override = default;
 
 	NodeType get_type() const override { return NodeType::NONE_LITERAL; }
+	std::string to_string() const override;
+};
+
+// ============================================================
+// BooleanLiteral 节点（True / False 关键字字面量）
+// ============================================================
+struct BooleanLiteral : Literal {
+	bool value;  // true 表示 True，false 表示 False
+
+	explicit BooleanLiteral(bool v, int line = -1);
+	~BooleanLiteral() override = default;
+
+	NodeType get_type() const override { return NodeType::BOOLEAN_LITERAL; }
 	std::string to_string() const override;
 };
 

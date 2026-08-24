@@ -1,6 +1,7 @@
 #include "PycpList.hpp"
 #include "PycpInteger.hpp"
 #include "PycpString.hpp"
+#include "PycpBoolean.hpp"
 #include "PycpNone.hpp"
 #include "PycpFunction.hpp"
 #include "PycpClass.hpp"
@@ -119,6 +120,11 @@ Object* List::__list__() {
 	return this;
 }
 
+Object* List::__boolean__() {
+	// 非空列表为 True，空列表为 False。
+	return items_.empty() ? Boolean::False() : Boolean::True();
+}
+
 Object* List::__iterator__() {
 	// 每次调用返回全新的独立迭代器实例。
 	return Pycp::New<ListIterator>(this);
@@ -129,7 +135,7 @@ Object* List::__members__() {
 	List* lst = static_cast<List*>(Object::__members__());
 	std::vector<std::string> extra = {
 		"length", "append",
-		"__iterator__", "__list__", "__addition__", "__string__",
+		"__iterator__", "__list__", "__boolean__", "__addition__", "__string__",
 		"__get_item__", "__set_item__",
 		"__get_attribute__", "__set_attribute__", "__members__",
 	};

@@ -1,6 +1,7 @@
 #include "PycpObject.hpp"
 #include "PycpString.hpp"
 #include "PycpList.hpp"
+#include "PycpBoolean.hpp"
 #include "PycpABI.hpp"
 #include "PycpMagic.hpp"
 
@@ -47,6 +48,11 @@ Object* Object::__string__(){
 
 Object* Object::__negation__(){
   throw TypeError("Unsupported to negate.");
+}
+
+Object* Object::__boolean__(){
+  // 基类默认：视为真（true）。
+  return Boolean::True();
 }
 
 Object* Object::__get_attribute__(const std::string& name){

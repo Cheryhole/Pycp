@@ -16,8 +16,10 @@ namespace Codegen {
 
 // 将 Program AST 编译为字节码模块。
 //   program : 顶层程序 AST（由 parser 生成）。
+//   repl_eval : 为 true 时，顶层表达式语句保留栈顶值作为模块返回值，
+//               供 REPL 回显表达式结果（由 Module.repl_eval 一并记录）。
 // 返回编译好的 BC::Module（code_objects[0] 为 <module> 顶层代码）。
-BC::Module Compile(Ast::Program* program);
+BC::Module Compile(Ast::Program* program, bool repl_eval = false);
 
 } // namespace Codegen
 } // namespace Pycp

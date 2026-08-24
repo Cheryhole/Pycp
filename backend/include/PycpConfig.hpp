@@ -51,6 +51,11 @@ constexpr const char* MODULE_TOP_NAME   = "<module>"; // 顶层代码对象名
 constexpr const char* MODULE_ENTRY_NAME = "<entry>";  // 入口占位模块名
 
 // =============================================================
+// REPL 输入源名（报错显示用，等价于 Python 的 <stdin>）
+// =============================================================
+constexpr const char* REPL_SOURCE_NAME  = "<stdin>";  // REPL 逐条输入的源名称
+
+// =============================================================
 // 内建函数名
 // =============================================================
 constexpr const char* BUILTIN_PRINT = "print";

@@ -56,7 +56,16 @@ Object* GetAttr(Object* obj, const std::string& name){
 		}
 		return v; // 已 Owned（调用方负责 Decref）
 	}
-	// 其他类型（类/list 等）：__get_attribute__ 返回 Borrowed。
+	// 类对象（Class）：取方法返回【未绑定】函数，self 须由调用方手动传入
+	// （对齐 Python `Class.method` 语义）。不包装 BoundMethod，否则会把
+	// Class 自身当作 self 注入，导致未实例化直接调用 `Class.method()` 时
+	// 静默执行而非报"缺少参数"。类内部 self 调用靠 internal_access 放行。
+	if (dynamic_cast<Pycp::Class*>(obj) != nullptr) {
+		Object* v = obj->__get_attribute__(name);
+		if (v != nullptr) Incref(v); // 返回 Borrowed，转 Owned
+		return v;
+	}
+	// 其他实例类型（list/string/file 等）：__get_attribute__ 返回 Borrowed。
 	// 若返回的是 Function（如 list 的 length 方法），包装为绑定方法，
 	// 使调用时 self 自动绑定到接收者对象（与 File 分支一致）。
 	Object* v = obj->__get_attribute__(name);
@@ -144,9 +153,14 @@ Object* Compare(Object* lhs, Object* rhs, int op){
 	// 仅同类型的 Integer / String 可参与真正的值比较；
 	// 其余组合（含 None、跨类型）与 VM COMPARE_OP 语义一致：
 	//   EQ → 0（false）、NE → 1（true）、其余抛 TypeError。
+	// Boolean 继承 Integer，与 Integer 互通比较（True==1 / False==0）。
+	bool both_int_like =
+		(dynamic_cast<Integer*>(lhs) != nullptr) &&
+		(dynamic_cast<Integer*>(rhs) != nullptr);
 	bool comparable =
-		(lhs->type_name() == rhs->type_name()) &&
-		(lhs->is_type("Integer") || lhs->is_type("String"));
+		((lhs->type_name() == rhs->type_name()) &&
+		 (lhs->is_type("Integer") || lhs->is_type("String"))) ||
+		both_int_like;
 
 	if (comparable) {
 		switch (op) {
@@ -172,8 +186,13 @@ Object* Compare(Object* lhs, Object* rhs, int op){
 bool IsFalse(Object* v){
 	if (v == nullptr) return true;
 	if (v->is_type("None")) return true;
-	if (v->is_type("Integer"))
-		return static_cast<Integer*>(v)->get_value() == 0;
+	// 统一经 __boolean__() 取得布尔对象（等价于隐式 Boolean(v)），
+	// 再按整数值判定真假（0 为假，非 0 为真）。Boolean 继承 Integer，
+	// dynamic_cast 对 Boolean / Integer 均成功。
+	Object* b = v->__boolean__();
+	if (Integer* ib = dynamic_cast<Integer*>(b))
+		return ib->get_value() == 0;
+	// __boolean__ 返回非 Integer 子类时按真处理（理论上不会发生）。
 	return false;
 }
 

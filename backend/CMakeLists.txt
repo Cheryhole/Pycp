@@ -55,6 +55,7 @@ set(PYCP_HEADERS
     ${PYCP_INCLUDE_DIR}/PycpObject.hpp
     ${PYCP_INCLUDE_DIR}/PycpNone.hpp
     ${PYCP_INCLUDE_DIR}/PycpInteger.hpp
+    ${PYCP_INCLUDE_DIR}/PycpBoolean.hpp
     ${PYCP_INCLUDE_DIR}/PycpString.hpp
     ${PYCP_INCLUDE_DIR}/PycpList.hpp
     ${PYCP_INCLUDE_DIR}/PycpIterator.hpp
@@ -76,6 +77,7 @@ set(PYCP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpObject.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpNone.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpInteger.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpBoolean.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpString.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpFunction.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpGC.cpp

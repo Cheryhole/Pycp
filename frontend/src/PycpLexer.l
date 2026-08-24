@@ -26,6 +26,7 @@ int _comment_return_state = 0; // 记录进入块注释前的状态（0=INITIAL�
 %x STRING
 %x EXPECT_ELIF
 %x COMMENT
+%x MEMBER_ACCESS
 
 %%
 
@@ -35,6 +36,8 @@ if       { return KW_IF; }
 elif     { return KW_ELIF; }
 else     { return KW_ELSE; }
 None     { return KW_NONE; }
+True     { return KW_TRUE; }
+False    { return KW_FALSE; }
 import   { return KW_IMPORT; }
 from     { return KW_FROM; }
 as       { return KW_AS; }
@@ -99,8 +102,11 @@ in       { return KW_IN; }
 "<="   { return OP_LE; }
 ">="   { return OP_GE; }
 ","    { return OP_COMMA; }
-"."    { return OP_DOT; }
+"."    { BEGIN(MEMBER_ACCESS); return OP_DOT; }
 "@"    { return OP_AT; }
+
+<MEMBER_ACCESS>[a-zA-Z_][a-zA-Z0-9_]* { Pycplval.text = new std::string(Pycptext); BEGIN(INITIAL); return IDENTIFIER; }
+<MEMBER_ACCESS>[^a-zA-Z0-9_] { BEGIN(INITIAL); yyless(0); }
 
 \"   { 
 	_string_buffer.clear();

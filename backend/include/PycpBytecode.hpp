@@ -54,6 +54,8 @@ enum class Op : uint8_t {
 	LOAD_NONE  = 0x04,   // 无操作数             -> 压 None
 	POP_TOP    = 0x05,   // 无操作数             -> 弹栈
 	DUP_TOP    = 0x06,   // 无操作数             -> 复制栈顶
+	LOAD_TRUE  = 0x07,   // 无操作数             -> 压 Boolean::True()（值 1）
+	LOAD_FALSE = 0x08,   // 无操作数             -> 压 Boolean::False()（值 0）
 
 	// ---- 运算（转调 ABI）----
 	BINARY_ADD  = 0x10,  // a b -> c = Add(a,b)
@@ -190,6 +192,11 @@ struct Module {
 
 	// 反序列化后重建的运行时对象（GC root 持有）
 	std::vector<Object*> runtime_consts; // 与 const_pool 对齐的 Object* 实例
+
+	// REPL 求值标记：由 ModuleLoader::compile_string 置 true。
+	// 为真时，Codegen 对顶层表达式语句 emit RETURN（保留栈顶值作模块
+	// 返回值），供 REPL 回显表达式结果；文件模式恒为 false。
+	bool repl_eval = false;
 };
 
 // =============================================================

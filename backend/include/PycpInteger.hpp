@@ -28,6 +28,7 @@ class PYCP_API Integer : public Object{
 
 		Object* __integer__() override;
 		Object* __string__() override;
+		Object* __boolean__() override;
 		Object* __negation__() override;
 		Object* __addition__(Object*) override;
 		Object* __subtraction__(Object*) override;

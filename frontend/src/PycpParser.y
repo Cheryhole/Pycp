@@ -59,7 +59,7 @@ extern void Pycp_delete_buffer(YY_BUFFER_STATE);
 
 %token NEWLINE
 %token <text> LT_INTEGER LT_STRING IDENTIFIER
-%token KW_FUNC KW_RETURN KW_IF KW_ELIF KW_ELSE KW_NONE KW_IMPORT KW_AS KW_CLASS
+%token KW_FUNC KW_RETURN KW_IF KW_ELIF KW_ELSE KW_NONE KW_IMPORT KW_AS KW_CLASS KW_TRUE KW_FALSE
 %token KW_FROM KW_INHERITS KW_REPEAT KW_TO KW_BREAK KW_BY
 %token KW_FOR KW_IN
 %token OP_PLUS OP_MINUS OP_MULTIPLY OP_DIVIDE OP_POWER
@@ -862,6 +862,12 @@ primary_expression: LT_INTEGER {
 		| KW_NONE {
 			$$ = new NoneLiteral(Pycplineno);
 		}
+		| KW_TRUE {
+			$$ = new BooleanLiteral(true, Pycplineno);
+		}
+		| KW_FALSE {
+			$$ = new BooleanLiteral(false, Pycplineno);
+		}
 		| OP_LPARENTHESES expression OP_RPARENTHESES {
 			$$ = $2;
 		}
@@ -954,6 +960,33 @@ Node* parsef(const std::string& path){
 	file.close();
 
 	return parse(text);
+}
+
+// 单语句解析 ABI（REPL 逐条执行 / 外部复用）。
+// 语义对标 Python 的 "single" 解析模式：解析【一段完整语句】
+// （可能跨多行，如类/函数/列表定义），整体作为一个解析单元返回。
+// 实现上复用整段解析（parse），将 buffer 解析为 Program；REPL 的续行
+// 启发式已保证 buffer 在调用本函数时是完整的单条语句单元。
+// 注意：调用方需自行在调用前重置 Pycp_parse_error_count 与
+// g_current_source_path（见 ModuleLoader::compile_statement），本函数与
+// parse() 对称地重置词法错误标志。
+Node* parse_statement(const std::string& text){
+	Node* _final_asttree = nullptr;
+	g_lexer_error = false;
+	Pycplineno = 1; // 重置行号，避免同进程内多次解析累积导致报错行号偏大。
+
+	YY_BUFFER_STATE buffer = Pycp_scan_string(text.c_str());
+
+	Pycpparse(_final_asttree);
+
+	Pycp_delete_buffer(buffer);
+
+	// 词法错误已由 lexer 输出并停止扫描，此处返回 nullptr 中止解析。
+	if (g_lexer_error) {
+		return nullptr;
+	}
+
+	return _final_asttree;
 }
 
 

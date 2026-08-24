@@ -1,4 +1,5 @@
 #include "PycpBytecodeVM.hpp"
+#include "PycpBoolean.hpp"
 
 namespace Pycp::BC {
 
@@ -50,11 +51,15 @@ VM::VM(Module* module, std::map<std::string, Module*>* registry,
 }
 
 VM::~VM() {
-	// 第一步：显式断开所有模块命名空间的引用（清空 map 并 Decref 值），
-	// 打破模块间可能形成的循环引用（A import B 且 B import A），避免
+	// 第一步：显式断开所有【非驻留】模块命名空间的引用（清空 map 并 Decref
+	// 值），打破模块间可能形成的循环引用（A import B 且 B import A），避免
 	// 后续 Decref Module 时因环导致连锁析构 / 双重释放。
+	// 常驻 native 模块（Pycp/io/classtools）跳过：其命名空间内容（如
+	// Pycp.Object 类）可能仍被用户类 parent_ 引用，须存活到 Finalize 阶段
+	// 随最后的子类引用一起回收，否则会悬垂。
 	for (auto& kv : module_cache_) {
 		if (kv.second == nullptr) continue;
+		if (resident_modules_.count(kv.first)) continue;
 		auto* ns = kv.second->get_namespace();
 		if (ns != nullptr) {
 			for (auto& p : *ns) {
@@ -67,13 +72,18 @@ VM::~VM() {
 	}
 
 	// 第二步：解除各模块对象在 GC 中的 root 标记。
-	// 注意：被 import 的原生/用户模块对象，其引用计数已由第一步
+	// 注意：被 import 的用户模块对象，其引用计数已由第一步
 	// （清空入口模块 namespace 时对全局变量值 Decref）归零并释放，
 	// 因此此处【不可再 Decref】，否则会对已释放对象二次释放。
 	// 仅入口模块 entry_mod_ 不被任何全局变量持有，需在此显式 Decref 释放。
+	// 常驻模块则在此 Decref（抵消 LoadNativeModule 的 Incref），使其引用
+	// 计数在 Finalize 的 GC_Collect 中归零并释放，避免泄漏。
 	for (auto& kv : module_cache_) {
 		if (kv.second != nullptr) {
 			GC_RemoveRoot(kv.second);
+			if (resident_modules_.count(kv.first)) {
+				Decref(kv.second);
+			}
 		}
 	}
 	if (entry_mod_ != nullptr) {
@@ -112,6 +122,20 @@ VM::~VM() {
 		}
 		module_->runtime_consts.clear();
 	}
+
+	// 释放由 exec_module 接管的 Module（REPL 场景）。其 runtime_consts
+	// 在 exec_module 末尾有意保留（供闭包后续调用），此处统一清理再释放。
+	for (Module* om : owned_modules_) {
+		for (Object* c : om->runtime_consts) {
+			if (c != nullptr) {
+				GC_RemoveRoot(c);
+				Decref(c);
+			}
+		}
+		om->runtime_consts.clear();
+		delete om;
+	}
+	owned_modules_.clear();
 }
 
 Object* VM::run() {
@@ -123,6 +147,59 @@ Object* VM::run() {
 	env->globals = global_env_->globals;
 	// 顶层视为一个无参函数，locals 用于存储全局代码中的临时（实际全部走 globals）
 	return execute(top, env, nullptr, 0);
+}
+
+Object* VM::exec_module(Module* m) {
+	if (m == nullptr || m->code_objects.empty())
+		throw VMError("empty module.");
+	// 确保 runtime_consts 已构建（编译路径 Compile 未填充）。
+	if (m->runtime_consts.empty() && !m->const_pool.empty()) {
+		m->runtime_consts.reserve(m->const_pool.size());
+		for (const auto& c : m->const_pool) {
+			switch (c.kind) {
+				case ConstKind::INTEGER:
+					m->runtime_consts.push_back(Integer::FromLong(c.int_value));
+					break;
+				case ConstKind::STRING:
+					m->runtime_consts.push_back(String::FromCString(c.str_value.c_str()));
+					break;
+				case ConstKind::NONE:
+					m->runtime_consts.push_back(None::instance);
+					Incref(None::instance);
+					break;
+				default:
+					throw VMError("unknown constant kind.");
+			}
+			GC_AddRoot(m->runtime_consts.back());
+		}
+	}
+
+	// 临时切换 module_ 使 execute 内部读取正确的 symtab/source_path/
+	// runtime_consts（与 load_module / call 的跨模块执行机制一致）。
+	Module* saved_module = module_;
+	module_ = m;
+	Object* result = nullptr;
+	try {
+		CodeObject* top = &m->code_objects[0];
+		std::shared_ptr<Environment> env = std::make_shared<Environment>();
+		env->globals = global_env_->globals;
+		result = execute(top, env, nullptr, 0);
+	} catch (...) {
+		module_ = saved_module;
+		// 异常路径同样接管 m（保留 runtime_consts 供可能已存入 globals 的
+		// 闭包后续使用），由 VM 析构统一清理。
+		owned_modules_.push_back(m);
+		throw;
+	}
+	module_ = saved_module;
+	// 注意：此处【不】清理 m 的 runtime_consts。REPL 模式下 m 内的代码对象
+	// （如通过 MAKE_FUNCTION 定义的闭包函数体）后续仍会被调用，常量必须持续
+	// 存活。runtime_consts 的清理与 m 本身的释放一并推迟到 VM 析构
+	// （见 ~VM 中对 owned_modules_ 的处理）。
+
+	// 接管 m 的生命周期：函数闭包可能仍引用 m，须由 VM 持有至析构。
+	owned_modules_.push_back(m);
+	return result;
 }
 
 Pycp::Module* VM::load_module(const std::string& name) {
@@ -149,6 +226,9 @@ Pycp::Module* VM::load_module(const std::string& name) {
 			// 导致 module_cache_ 持有悬垂指针（use-after-free）。
 			Incref(extmod);
 			module_cache_[name] = extmod;
+			// 标记为常驻模块：其生命周期跨 VM 实例，~VM 不应清理其
+			// 命名空间内容（如 Pycp.Object 类），交由 Finalize 统一回收。
+			resident_modules_.insert(name);
 			return extmod;
 		}
 	}
@@ -281,6 +361,16 @@ Object* VM::execute(CodeObject* co,
 	std::vector<Object*> stack;
 	stack.reserve(64);
 
+	// 参数个数校验：实参少于声明的形参个数（含 self）时，
+	// 抛 TypeError 提示缺少必填位置参数。典型场景：类对象（Class）
+	// 未实例化直接调用方法（如 `Class.method()`），self 未传入。
+	if (argc < static_cast<std::size_t>(co->nparams)) {
+		throw VMError("function '" + std::string(co->name) +
+		              "' missing required positional argument(s): expected " +
+		              std::to_string(co->nparams) + ", got " +
+		              std::to_string(argc));
+	}
+
 	// 参数绑定到局部槽（locals[0..nparams)）
 	for (std::size_t i = 0; i < argc && i < env->locals.size(); ++i) {
 		env->locals[i] = argv[i];
@@ -332,6 +422,14 @@ Object* VM::execute(CodeObject* co,
 			}
 			case Op::LOAD_NONE:
 				push(None::instance);
+				break;
+
+			case Op::LOAD_TRUE:
+				push(Boolean::True());
+				break;
+
+			case Op::LOAD_FALSE:
+				push(Boolean::False());
 				break;
 
 			case Op::LOAD_VAR: {
@@ -548,17 +646,25 @@ Object* VM::execute(CodeObject* co,
 				Class* cls = New<Class>(cdef.name);
 
 				// 继承：查找父类，复制其成员与方法（子类同名覆盖）。
-				if (!cdef.parent_name.empty()) {
+				// 未显式 inherits 时默认自动继承 Pycp.Object（对齐 Python object）。
+				// 父类引用：单标识符（全局变量）或属性访问路径（模块.类）。
+				std::string parent_ref = cdef.parent_name.empty()
+					? std::string("Pycp.Object") : cdef.parent_name;
+				if (!parent_ref.empty()) {
 					Object* parent_obj = nullptr;
-					// 父类引用：单标识符（全局变量）或属性访问路径（模块.类）。
-					std::size_t dot = cdef.parent_name.find('.');
+					std::size_t dot = parent_ref.find('.');
 					if (dot == std::string::npos) {
-						parent_obj = Environment_Lookup(env.get(), cdef.parent_name);
+						parent_obj = Environment_Lookup(env.get(), parent_ref);
 					} else {
 						// 路径 A.B：先查 A（模块），再从模块取属性 B。
-						std::string mod_name = cdef.parent_name.substr(0, dot);
-						std::string attr_name = cdef.parent_name.substr(dot + 1);
+						std::string mod_name = parent_ref.substr(0, dot);
+						std::string attr_name = parent_ref.substr(dot + 1);
 						Object* mod_obj = Environment_Lookup(env.get(), mod_name);
+						if (mod_obj == nullptr && mod_name == "Pycp") {
+							// Pycp 可能尚未被当前模块显式 import，经 VM 加载。
+							Pycp::Module* pm = load_module("Pycp");
+							mod_obj = pm;
+						}
 						if (mod_obj != nullptr && dynamic_cast<Pycp::Module*>(mod_obj) != nullptr) {
 							Pycp::Module* mo = static_cast<Pycp::Module*>(mod_obj);
 							parent_obj = mo->__get_attribute__(attr_name);
@@ -567,7 +673,7 @@ Object* VM::execute(CodeObject* co,
 						if (parent_obj == nullptr || dynamic_cast<Class*>(parent_obj) == nullptr) {
 						Decref(cls);
 						throw NameError(cur_file(), cur_line(),
-						                "parent class '" + cdef.parent_name + "' is not defined");
+						                "parent class '" + parent_ref + "' is not defined");
 						}
 						Class* parent = static_cast<Class*>(parent_obj);
 					cls->set_parent(parent);
@@ -642,6 +748,7 @@ Object* VM::execute(CodeObject* co,
 						fn = static_cast<BytecodeFunction*>(decorated);
 					}
 					cls->add_method(m.first, fn, fn->is_private()); // add_method 内部 Incref
+					fn->set_owner_class(cls);   // 供 super() 解析当前方法所属类
 					Decref(fn);                          // 释放新建 Owned
 				}
 				// 弹出装饰器对象（每个 pop 出一份栈上引用，需 Decref 释放）。
@@ -878,7 +985,16 @@ Object* BytecodeFunction::invoke(Object** argv, std::size_t argc) {
 		// native 模式：self 传 this，使生成的 pycp_fn_N 能经 get_captured 取捕获环境。
 		return native_fn_(this, argv, argc);
 	}
-	return vm->call(module, code_idx, argv, argc, captured);
+	// 进入类方法：压入所属类，供 super() 正确解析父类（而非最派生实例类）。
+	Pycp::push_current_class(owner_class_);
+	try {
+		Object* ret = vm->call(module, code_idx, argv, argc, captured);
+		Pycp::pop_current_class();
+		return ret;
+	} catch (...) {
+		Pycp::pop_current_class();
+		throw;
+	}
 }
 
 } // namespace Pycp

@@ -21,7 +21,14 @@ Object* _builtin_super(Object*, Object** argv [[maybe_unused]], std::size_t argc
 	if (self == nullptr) {
 		throw TypeError("super() used outside a method.");
 	}
-	Class* cls = self->get_class();
+	// 基于"当前方法所属类"解析父类，而非最派生实例的类，避免继承链上
+	// 重复调用 super 时无限递归到自身（如 o1.__initialize__ 内 super 应
+	// 取 o1 的父类而非 o2 的父类）。
+	Class* cls = current_class();
+	if (cls == nullptr) {
+		// 退化：无方法上下文时用最派生实例类（保持旧行为）。
+		cls = self->get_class();
+	}
 	Class* parent = (cls != nullptr) ? cls->get_parent() : nullptr;
 	if (parent == nullptr) {
 		throw TypeError("super(): class '" +

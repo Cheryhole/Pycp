@@ -5,6 +5,8 @@ bin/
 
 Makefile
 
+simplebuild.sh
+
 test.*
 test*/
 *.pyi

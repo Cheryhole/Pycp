@@ -3,6 +3,7 @@
 #include "PycpFunction.hpp"
 #include "PycpString.hpp"
 #include "PycpInteger.hpp"
+#include "PycpBoolean.hpp"
 #include "PycpList.hpp"      // List_length_fn / List_append_fn
 #include "PycpNone.hpp"
 #include "PycpGC.hpp"
@@ -36,6 +37,15 @@ Object* _builtin_integer_ctor(Object*, Object** argv, std::size_t argc) {
 	if (argc != 1) throw TypeError("Integer() expects exactly 1 argument.");
 	if (argv[0] == nullptr) throw TypeError("Integer() argument is null.");
 	return New<Integer>(argv[0]);
+}
+
+// Boolean(x)：Boolean 类型构造器。复用 Boolean(Object*) 构造。
+// Integer 传入（0/非0）转换为 False/True；String 按 Python 规则
+// ("", "False", "0" 为 False，其余 True) 由 String::__integer__ 还原。
+Object* _builtin_boolean_ctor(Object*, Object** argv, std::size_t argc) {
+	if (argc != 1) throw TypeError("Boolean() expects exactly 1 argument.");
+	if (argv[0] == nullptr) throw TypeError("Boolean() argument is null.");
+	return New<Boolean>(argv[0]);
 }
 
 // List(x)：List 类型构造器。调用对象的 __list__ 转换，返回内置 List。
@@ -126,6 +136,39 @@ Object* _object_init(Object*, Object** argv, std::size_t argc) {
 	return None::instance; // 无操作
 }
 
+// ---- Object 默认魔术方法（native 包装 C++ 虚方法行为）----
+// 这些方法注册到 Pycp.Object，作为可被子类 override 的协议方法：
+//   __get_attribute__(self, name) : 属性取值钩子
+//   __set_attribute__(self, name, value) : 属性赋值钩子
+//   __string__() : 字符串化
+// 注意：Instance 的属性访问/赋值钩子分派对 Object 默认实现回退 C++
+// 内部路径（见 PycpClass.cpp），故这些 native 主要供方法存在性/枚举/
+// super() 调用，且用户 override 后优先走用户实现。
+Object* _object_get_attribute(Object* /*fn*/, Object** argv, std::size_t argc) {
+	if (argc != 2)
+		throw TypeError("__get_attribute__() expects 2 arguments (self, name).");
+	if (argv[1] == nullptr || !argv[1]->is_type("String"))
+		throw TypeError("__get_attribute__() name must be a String.");
+	const std::string& nm = static_cast<String*>(argv[1])->get_value();
+	return argv[0]->__get_attribute__(nm); // 转发到 C++ 虚方法（Owned 语义）
+}
+
+Object* _object_set_attribute(Object* /*fn*/, Object** argv, std::size_t argc) {
+	if (argc != 3)
+		throw TypeError("__set_attribute__() expects 3 arguments (self, name, value).");
+	if (argv[1] == nullptr || !argv[1]->is_type("String"))
+		throw TypeError("__set_attribute__() name must be a String.");
+	const std::string& nm = static_cast<String*>(argv[1])->get_value();
+	argv[0]->__set_attribute__(nm, argv[2]);
+	return None::instance;
+}
+
+Object* _object_string(Object* /*fn*/, Object** argv, std::size_t argc) {
+	if (argc != 1)
+		throw TypeError("__string__() expects 1 argument (self).");
+	return argv[0]->__string__();
+}
+
 // 将普通类对象放入命名空间（用于 Pycp.Object 基类）。
 [[maybe_unused]] void set_plain_class(Module* mod, const char* name) {
 	auto* ns = mod->get_namespace();
@@ -143,6 +186,22 @@ void set_object_class(Module* mod, const char* name) {
 	Function* init = New<Function>("__initialize__", _object_init);
 	cls->add_method("__initialize__", init);
 	Decref(init); // add_method 已 Incref
+	// Object 协议方法：__get_attribute__ / __set_attribute__ / __string__。
+	// 作为可被子类 override 的属性访问/赋值钩子与字符串化默认实现。
+	{
+		Function* m1 = New<Function>("__get_attribute__", _object_get_attribute);
+		cls->add_method("__get_attribute__", m1);
+		m1->set_owner_class(cls);
+		Decref(m1);
+		Function* m2 = New<Function>("__set_attribute__", _object_set_attribute);
+		cls->add_method("__set_attribute__", m2);
+		m2->set_owner_class(cls);
+		Decref(m2);
+		Function* m3 = New<Function>("__string__", _object_string);
+		cls->add_method("__string__", m3);
+		m3->set_owner_class(cls);
+		Decref(m3);
+	}
 	(*ns)[name] = cls;
 	Incref(cls);
 	Decref(cls); // namespace 持有
@@ -158,6 +217,7 @@ Module* make_pycp_module() {
 	BuiltinTypeClass* string_cls = set_type_class(mod, "String", _builtin_string_ctor);
 	BuiltinTypeClass* integer_cls = set_type_class(mod, "Integer", _builtin_integer_ctor);
 	BuiltinTypeClass* list_cls    = set_type_class(mod, "List",   _builtin_list_ctor);
+	BuiltinTypeClass* boolean_cls = set_type_class(mod, "Boolean", _builtin_boolean_ctor);
 
 	// List 的公开方法（真实实例方法）：length / append。
 	list_cls->add_method("length", New<Function>("length", List_length_fn()));
@@ -182,6 +242,14 @@ Module* make_pycp_module() {
 		"__greater_than__", "__greater_equal__",
 	});
 
+	// Boolean 魔术方法（继承 Integer 算术/比较，复用同一集合）。
+	add_magic_methods(boolean_cls, {
+		"__integer__", "__string__", "__negation__", "__addition__",
+		"__subtraction__", "__multiplication__", "__division__", "__power__",
+		"__less_than__", "__less_equal__", "__equal__", "__not_equal__",
+		"__greater_than__", "__greater_equal__",
+	});
+
 	// Pycp.Object 基类：类似 Python 的 object，含默认空 __initialize__
 	// （供子类 super().__initialize__(self) 调用）。不自动继承；
 	// 实例化走默认 instantiate（返回 Instance）。
@@ -193,6 +261,16 @@ Module* make_pycp_module() {
 
 	// get_members(obj)：返回对象所有成员名称的 List。
 	set_func(mod, "get_members", _builtin_get_members);
+
+	// 全局布尔常量：Pycp.True / Pycp.False（作为模块命名空间常量值，
+	// 访问即得到常驻 Boolean 实例，与关键字 True/False 是同一对象）。
+	{
+		auto* ns = mod->get_namespace();
+		(*ns)["True"] = Boolean::True();
+		Incref(Boolean::True());
+		(*ns)["False"] = Boolean::False();
+		Incref(Boolean::False());
+	}
 
 	return mod;
 }

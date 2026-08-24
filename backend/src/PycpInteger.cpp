@@ -1,6 +1,7 @@
 #include "PycpInteger.hpp"
 #include "PycpString.hpp"
 #include "PycpList.hpp"
+#include "PycpBoolean.hpp"
 #include "PycpException.hpp"
 #include "PycpGC.hpp"
 #include "PycpMagic.hpp"
@@ -56,12 +57,17 @@ Object* Integer::__string__(){
 	return New<String>(std::to_string(this->_value));
 }
 
+Object* Integer::__boolean__(){
+	// 非零为 True，零为 False。
+	return this->_value == 0 ? Boolean::False() : Boolean::True();
+}
+
 Object* Integer::__negation__(){
 	return New<Integer>(-(this->_value));
 }
 
 Object* Integer::__addition__(Object* other){
-	if (other == nullptr || !other->is_type("Integer")){
+	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
 		throw TypeError("Unsupported to add.");
 	}
 	Integer* i = static_cast<Integer*>(other);
@@ -69,7 +75,7 @@ Object* Integer::__addition__(Object* other){
 }
 
 Object* Integer::__subtraction__(Object* other){
-	if (other == nullptr || !other->is_type("Integer")){
+	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
 		throw TypeError("Unsupported to subtract.");
 	}
 	Integer* i = static_cast<Integer*>(other);
@@ -79,7 +85,7 @@ Object* Integer::__subtraction__(Object* other){
 Object* Integer::__multiplication__(Object* other){
 	if (other == nullptr) throw TypeError("Unsupported to multiply.");
 
-	if (other->is_type("Integer")){
+	if (dynamic_cast<Integer*>(other) != nullptr){
 		Integer* i = static_cast<Integer*>(other);
 		return New<Integer>(this->_value * i->_value);
 	}
@@ -97,7 +103,7 @@ Object* Integer::__multiplication__(Object* other){
 }
 
 Object* Integer::__division__(Object* other){
-	if (other == nullptr || !other->is_type("Integer")){
+	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
 		throw TypeError("Unsupported to divide.");
 	}
 	Integer* i = static_cast<Integer*>(other);
@@ -108,7 +114,7 @@ Object* Integer::__division__(Object* other){
 }
 
 Object* Integer::__power__(Object* other){
-	if (other == nullptr || !other->is_type("Integer")){
+	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
 		throw TypeError("Unsupported to power.");
 	}
 	Integer* i = static_cast<Integer*>(other);
@@ -122,7 +128,7 @@ Object* Integer::__power__(Object* other){
 // 比较运算符：仅支持同类型 Integer。返回小整数池 Integer 0/1（PERMANENT，
 // 由 ABI Compare 返回给 VM，栈持有引用但无需额外 Decref——池对象常驻）。
 Object* Integer::__less_than__(Object* other){
-	if (other == nullptr || !other->is_type("Integer")){
+	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
 		throw TypeError("Unsupported to compare.");
 	}
 	return this->_value < static_cast<Integer*>(other)->_value
@@ -130,7 +136,7 @@ Object* Integer::__less_than__(Object* other){
 }
 
 Object* Integer::__less_equal__(Object* other){
-	if (other == nullptr || !other->is_type("Integer")){
+	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
 		throw TypeError("Unsupported to compare.");
 	}
 	return this->_value <= static_cast<Integer*>(other)->_value
@@ -138,7 +144,7 @@ Object* Integer::__less_equal__(Object* other){
 }
 
 Object* Integer::__equal__(Object* other){
-	if (other == nullptr || !other->is_type("Integer")){
+	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
 		throw TypeError("Unsupported to compare.");
 	}
 	return this->_value == static_cast<Integer*>(other)->_value
@@ -146,7 +152,7 @@ Object* Integer::__equal__(Object* other){
 }
 
 Object* Integer::__not_equal__(Object* other){
-	if (other == nullptr || !other->is_type("Integer")){
+	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
 		throw TypeError("Unsupported to compare.");
 	}
 	return this->_value != static_cast<Integer*>(other)->_value
@@ -154,7 +160,7 @@ Object* Integer::__not_equal__(Object* other){
 }
 
 Object* Integer::__greater_than__(Object* other){
-	if (other == nullptr || !other->is_type("Integer")){
+	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
 		throw TypeError("Unsupported to compare.");
 	}
 	return this->_value > static_cast<Integer*>(other)->_value
@@ -162,7 +168,7 @@ Object* Integer::__greater_than__(Object* other){
 }
 
 Object* Integer::__greater_equal__(Object* other){
-	if (other == nullptr || !other->is_type("Integer")){
+	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
 		throw TypeError("Unsupported to compare.");
 	}
 	return this->_value >= static_cast<Integer*>(other)->_value
@@ -173,7 +179,7 @@ Object* Integer::__members__() {
 	// 先收集基类 members_ 中的 key，再添加 integer 特有的魔术方法名。
 	List* lst = static_cast<List*>(Object::__members__());
 	std::vector<std::string> extra = {
-		"__integer__", "__string__", "__negation__", "__addition__",
+		"__integer__", "__string__", "__boolean__", "__negation__", "__addition__",
 		"__subtraction__", "__multiplication__", "__division__", "__power__",
 		"__less_than__", "__less_equal__", "__equal__", "__not_equal__",
 		"__greater_than__", "__greater_equal__",

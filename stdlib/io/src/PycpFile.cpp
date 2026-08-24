@@ -79,6 +79,8 @@ std::ios::openmode File::ToOpenMode(FileMode mode) const {
         case FileMode::APPEND_READ:
             om = std::ios::in | std::ios::out | std::ios::app;
             break;
+				default:
+						break;
     }
     if (is_binary_) {
         om |= std::ios::binary;
@@ -305,8 +307,8 @@ Object* File::readlines() {
     
     List* lines = New<List>();
     std::string line;
-    bool success;
-    
+    [[maybe_unused]] bool success;
+
     if (owns_stream_) {
         while (std::getline(file_, line)) {
             Object* line_str = String::FromCString(line.c_str());
@@ -485,7 +487,8 @@ Object* File::__get_attribute__(const std::string& attr_name) {
             case FileMode::READ_WRITE: mode_str = "r+"; break;
             case FileMode::WRITE_READ: mode_str = "w+"; break;
             case FileMode::APPEND_READ: mode_str = "a+"; break;
-        }
+						default: mode_str = "?"; break;
+				}
         if (is_binary_) mode_str += "b";
         return String::FromCString(mode_str.c_str());
     }
@@ -560,6 +563,7 @@ Object* File::__string__() {
         case FileMode::READ_WRITE: mode_str = "r+"; break;
         case FileMode::WRITE_READ: mode_str = "w+"; break;
         case FileMode::APPEND_READ: mode_str = "a+"; break;
+				default: mode_str = "?"; break;
     }
     if (is_binary_) mode_str += "b";
     return String::FromCString(("<File \"" + name_ + "\" mode=\"" + mode_str + "\" " + status + ">").c_str());

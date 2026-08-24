@@ -20,6 +20,8 @@ const char* op_name(Op op) {
 		case Op::LOAD_VAR:      return "LOAD_VAR";
 		case Op::STORE_VAR:     return "STORE_VAR";
 		case Op::LOAD_NONE:     return "LOAD_NONE";
+		case Op::LOAD_TRUE:     return "LOAD_TRUE";
+		case Op::LOAD_FALSE:    return "LOAD_FALSE";
 		case Op::POP_TOP:       return "POP_TOP";
 		case Op::DUP_TOP:       return "DUP_TOP";
 		case Op::BINARY_ADD:    return "BINARY_ADD";

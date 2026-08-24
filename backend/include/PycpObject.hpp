@@ -73,6 +73,11 @@ class PYCP_API Object{
 		// 类型判定便捷方法。
 		bool is_type(const std::string& name) const { return type_name_ == name; }
 
+		// 类型名重写（子类构造时覆盖基类初始化列表设定的类型名，
+		// 例如 Boolean 继承 Integer 后需将 "Integer" 改为 "Boolean"）。
+		// 注意 type_name() 非虚，类型判定依赖该成员，故此 setter 必要。
+		void set_type_name(const std::string& name) { type_name_ = name; }
+
 		// 可见性查询/设置（默认 public，即 private_ == false）。
 		bool is_private() const { return private_; }
 		void set_private(bool priv) { private_ = priv; }
@@ -94,6 +99,8 @@ class PYCP_API Object{
 
 		virtual Object* __integer__();
 		virtual Object* __string__();
+		// 真值判定：返回 Boolean 对象（True/False）。默认返回 True（基类语义）。
+		virtual Object* __boolean__();
 		virtual Object* __negation__();
 		virtual Object* __get_attribute__(const std::string& name);
 		virtual void __set_attribute__(const std::string& name, Object* value);

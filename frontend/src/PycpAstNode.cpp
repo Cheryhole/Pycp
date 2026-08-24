@@ -270,6 +270,18 @@ std::string NoneLiteral::to_string() const {
 }
 
 // ============================================================
+// BooleanLiteral 实现
+// ============================================================
+BooleanLiteral::BooleanLiteral(bool v, int line) {
+	lineno = line;
+	value = v;
+}
+
+std::string BooleanLiteral::to_string() const {
+	return value ? "<True>" : "<False>";
+}
+
+// ============================================================
 // IfBranch 实现
 // ============================================================
 IfBranch::IfBranch(Expression* cond, Program* b, int line, bool elif)

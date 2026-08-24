@@ -80,6 +80,8 @@ std::size_t estimate_stack_depth(const Pycp::BC::CodeObject& co) {
 			case Pycp::BC::Op::LOAD_CONST:
 			case Pycp::BC::Op::LOAD_VAR:
 			case Pycp::BC::Op::LOAD_NONE:
+			case Pycp::BC::Op::LOAD_TRUE:
+			case Pycp::BC::Op::LOAD_FALSE:
 			case Pycp::BC::Op::MAKE_FUNCTION:
 			case Pycp::BC::Op::LOAD_MODULE:
 				++depth;
@@ -211,6 +213,14 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 			case Pycp::BC::Op::LOAD_NONE:
 				os << "    st.push_back(Pycp::None::instance);\n";
 				os << "    Pycp::Incref(Pycp::None::instance);\n";
+				break;
+			case Pycp::BC::Op::LOAD_TRUE:
+				os << "    st.push_back(Pycp::Boolean::True());\n";
+				os << "    Pycp::Incref(Pycp::Boolean::True());\n";
+				break;
+			case Pycp::BC::Op::LOAD_FALSE:
+				os << "    st.push_back(Pycp::Boolean::False());\n";
+				os << "    Pycp::Incref(Pycp::Boolean::False());\n";
 				break;
 
 			case Pycp::BC::Op::LOAD_VAR: {
@@ -443,17 +453,24 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 				   << cpp_string_literal(cdef.name) << ");\n";
 
 				// 2) 继承：父类引用（单标识符或模块.类路径），复制父类成员与方法。
-				if (!cdef.parent_name.empty()) {
+				//    未显式 inherits 时默认自动继承 Pycp.Object（对齐 Python object）。
+				{
+					std::string parent_ref = cdef.parent_name.empty()
+						? std::string("Pycp.Object") : cdef.parent_name;
 					os << "      Pycp::Object* parent_obj = nullptr;\n";
-					std::size_t dot = cdef.parent_name.find('.');
+					std::size_t dot = parent_ref.find('.');
 					if (dot == std::string::npos) {
 						os << "      parent_obj = Pycp::Environment_Lookup(env.get(), "
-						   << cpp_string_literal(cdef.parent_name) << ");\n";
+						   << cpp_string_literal(parent_ref) << ");\n";
 					} else {
-						std::string mod_name = cdef.parent_name.substr(0, dot);
-						std::string attr_name = cdef.parent_name.substr(dot + 1);
+						std::string mod_name = parent_ref.substr(0, dot);
+						std::string attr_name = parent_ref.substr(dot + 1);
 						os << "      { Pycp::Object* mobj = Pycp::Environment_Lookup(env.get(), "
 						   << cpp_string_literal(mod_name) << ");\n";
+						// Pycp 可能尚未被当前模块显式 import：经加载辅助取。
+						if (mod_name == "Pycp") {
+							os << "        if (mobj == nullptr) mobj = pycp_load_native(\"Pycp\");\n";
+						}
 						os << "        if (mobj != nullptr && dynamic_cast<Pycp::Module*>(mobj) != nullptr) {\n";
 						os << "          Pycp::Module* mo = static_cast<Pycp::Module*>(mobj);\n";
 						os << "          parent_obj = mo->__get_attribute__("
@@ -464,7 +481,7 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 					os << "      if (parent_obj == nullptr || dynamic_cast<Pycp::Class*>(parent_obj) == nullptr) {\n";
 					os << "        Pycp::Decref(cls);\n";
 					os << "        throw Pycp::NameError(" << cpp_string_literal(file) << ", "
-					   << lineno << ", \"parent class '" << cdef.parent_name
+					   << lineno << ", \"parent class '" << parent_ref
 					   << "' is not defined\");\n";
 					os << "      }\n";
 					os << "      Pycp::Class* parent = static_cast<Pycp::Class*>(parent_obj);\n";
@@ -651,6 +668,7 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	os << "#include \"PycpFunction.hpp\"\n";
 	os << "#include \"PycpManager.hpp\"\n";
 	os << "#include \"PycpNone.hpp\"\n";
+	os << "#include \"PycpBoolean.hpp\"\n";
 	os << "#include \"PycpInteger.hpp\"\n";
 	os << "#include \"PycpString.hpp\"\n";
 	os << "#include \"PycpModule.hpp\"\n";

@@ -60,6 +60,7 @@ public:
 	Object* __set_item__(Object* key, Object* value) override;
 	Object* __list__() override;
 	Object* __addition__(Object* other) override;
+	Object* __boolean__() override;
 	Object* __string__() override;
 	Object* __get_attribute__(const std::string& name) override;
 	Object* __iterator__() override;

@@ -57,6 +57,12 @@ void Incref(Object* obj){
 
 void Decref(Object* obj){
 	if (obj == nullptr) return;
+	// 防御：若 obj 已被 GC 兜底回收（不在 g_tracked），其内存已释放，
+	// 再次 Decref 会访问悬垂内存并可能二次 delete。此时直接跳过
+	// （不递减、不释放），避免 corrupted double-linked list / double free。
+	// 典型场景：被多个不可达对象共享的子对象，被 GC 删除后，其余引用者
+	// 析构时对同一指针 Decref。
+	if (g_tracked.count(obj) == 0) return;
 
 	obj->_set_refcount(obj->_refcount() - 1);
 	if (obj->_refcount() > 0) return;
@@ -133,6 +139,10 @@ void GC_Collect(){
 		}
 	}
 	for (Object* o : to_free){
+		// 若 o 已被其他待删对象的析构经引用计数连锁释放（如被多个不可达
+		// 对象共享的子对象），其已从 g_tracked 移除，此处跳过，避免对同一
+		// 内存二次 delete（否则 corrupted double-linked list / double free）。
+		if (g_tracked.count(o) == 0) continue;
 		GC_Untrack(o);
 		delete o;
 	}

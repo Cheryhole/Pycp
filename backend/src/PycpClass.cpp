@@ -18,6 +18,7 @@ namespace Pycp {
 namespace {
 thread_local int g_internal_access_depth = 0;
 thread_local std::vector<Instance*> g_current_self_stack;
+thread_local std::vector<Class*> g_current_class_stack;
 }
 
 int internal_access_depth() { return g_internal_access_depth; }
@@ -34,6 +35,20 @@ void pop_current_self() {
 Instance* current_self() {
 	if (g_current_self_stack.empty()) return nullptr;
 	return g_current_self_stack.back();
+}
+
+// =============================================================
+// 当前方法所属类上下文（thread_local 栈）：供 super() 正确解析
+// 父类——基于"当前执行方法所属类"，而非最派生实例的类（否则
+// 继承链上重复调用 super 会无限递归到自身）。
+// =============================================================
+void push_current_class(Class* cls) { g_current_class_stack.push_back(cls); }
+void pop_current_class() {
+	if (!g_current_class_stack.empty()) g_current_class_stack.pop_back();
+}
+Class* current_class() {
+	if (g_current_class_stack.empty()) return nullptr;
+	return g_current_class_stack.back();
 }
 
 // 将指针格式化为十六进制地址字符串（0x...）。
@@ -63,6 +78,11 @@ Class::~Class() {
 		if (kv.second != nullptr) Decref(kv.second);
 	}
 	methods_.clear();
+	// 父类引用由引用计数持有（见 set_parent），此处释放以避免悬垂指针。
+	if (parent_ != nullptr) {
+		Decref(parent_);
+		parent_ = nullptr;
+	}
 }
 
 void Class::AddMemberName(Class* cls, const std::string& name) {
@@ -74,13 +94,17 @@ void Class::AddMethod(Class* cls, const std::string& name, Object* fn) {
 	if (cls == nullptr) throw TypeError("cannot add method to null class.");
 	if (fn == nullptr || !fn->is_type("Function"))
 		throw TypeError("method must be a function.");
-	cls->add_method(name, static_cast<Function*>(fn));
+	Function* f = static_cast<Function*>(fn);
+	f->set_owner_class(cls);   // 供 super() 解析当前方法所属类
+	cls->add_method(name, f);
 }
 
 void Class::set_parent(Class* parent) {
-	// 父类为借用引用（不 Incref，避免循环引用导致泄漏；
-	// 父类生命周期由模块命名空间保证）。
+	// 子类持有父类引用（不形成环：父类不知晓子类），故引用计数持有，
+	// 保证父类生命周期 >= 所有子类，杜绝父类被提前释放导致子类 parent_ 悬垂。
+	if (parent_ != nullptr) Decref(parent_);
 	parent_ = parent;
+	if (parent_ != nullptr) Incref(parent_);
 }
 
 void Class::add_member_name(const std::string& name) {
@@ -148,6 +172,17 @@ Object* Class::__get_attribute__(const std::string& name) {
 	// 2) 查找方法。
 	Function* fn = find_method(name);
 	if (fn != nullptr) {
+		// 可见性检查：外部访问 private 方法抛 AttributeError。
+		// 类内部 self 调用经 internal_access（depth>0）放行，与 Instance 一致。
+		if (method_is_private(name) && internal_access_depth() == 0) {
+			throw AttributeError("'" + name + "' is private in class '" +
+			                     name_ + "'");
+		}
+		// __init_defaults__ 为内部初始化方法，禁止外部访问（实例化内部
+		// 经 find_method 直接取，不经过此属性访问路径）。
+		if (name == "__init_defaults__" && internal_access_depth() == 0) {
+			throw AttributeError("'" + name + "' is internal and not accessible.");
+		}
 		return fn;
 	}
 	// 3) 回退到魔术方法分派（如 __members__/__string__ 等），让
@@ -174,9 +209,27 @@ Object* Class::__string__() {
 }
 
 Object* Class::__members__() {
-	// 返回类的方法名 + 通用成员。
+	// 返回类的字段声明名 + 方法名 + 通用成员。
 	List* lst = static_cast<List*>(Object::__members__());
+	// 类字段声明（如 mem1/mem2/mem3），过滤 private。
+	for (const auto& n : get_member_names()) {
+		if (member_is_private(n)) continue;
+		bool found = false;
+		for (std::size_t i = 0; i < lst->size(); ++i) {
+			Object* elem = lst->at(i);
+			if (elem != nullptr && elem->is_type("String") &&
+			    static_cast<String*>(elem)->get_value() == n) {
+				found = true;
+				break;
+			}
+		}
+		if (!found) lst->append(String::FromCString(n.c_str()));
+	}
+	// 类方法名（如 a/__initialize__），过滤 private 与 internal 的
+	// __init_defaults__（内部字段初始化方法，不暴露到 pycp 代码）。
 	for (const auto& n : method_names()) {
+		if (method_is_private(n)) continue;
+		if (n == "__init_defaults__") continue;
 		bool found = false;
 		for (std::size_t i = 0; i < lst->size(); ++i) {
 			Object* elem = lst->at(i);
@@ -267,6 +320,24 @@ Object* Instance::__get_attribute__(const std::string& name) {
 	if (name == "__name__") {
 		return GetNameAttribute(this);
 	}
+	// 0.5) 用户 override 的属性访问钩子 __get_attribute__(self, name)。
+	//      Object 提供的默认实现（owner_class 为 Object）不触发，走 C++
+	//      默认路径，避免无限递归；用户自定义实现则优先调用（劫持取值）。
+	if (cls_ != nullptr) {
+		// 仅类外部访问（internal_access_depth==0）触发钩子；方法体内
+		// self.x 访问走 C++ 默认，避免钩子内部 self.x 再触发钩子无限递归。
+		Function* hook = cls_->find_method("__get_attribute__");
+		if (hook != nullptr && internal_access_depth() == 0 &&
+		    (hook->get_owner_class() == nullptr ||
+		     std::string(hook->get_owner_class()->get_name()) != "Object")) {
+			Object* self = this;
+			Object* name_s = String::FromCString(name.c_str());
+			Object* argv[2] = { self, name_s };
+			Object* r = hook->invoke(argv, 2);
+			Decref(name_s);
+			return r; // invoke 返回 Owned，直接转交
+		}
+	}
 	// 1) 先从成员字典中查找（支持动态 set attribute）。
 	auto itm = members_.find(name);
 	if (itm != members_.end() && itm->second != nullptr) {
@@ -300,6 +371,11 @@ Object* Instance::get_bound_method(const std::string& name) {
 		throw AttributeError("'" + name + "' is private in class '" +
 		                     cls_->get_name() + "'");
 	}
+	// __init_defaults__ 为内部初始化方法，禁止外部访问（实例化内部经
+	// find_method 直接取，不经过绑定方法路径）。
+	if (name == "__init_defaults__" && internal_access_depth() == 0) {
+		throw AttributeError("'" + name + "' is internal and not accessible.");
+	}
 	return Pycp::New<BoundMethod>(this, fn);
 }
 
@@ -309,7 +385,14 @@ Object* Instance::__members__() {
 	std::vector<std::string> extra;
 	for (const auto& kv : fields_) extra.push_back(kv.first);
 	if (cls_ != nullptr) {
-		for (const auto& m : cls_->method_names()) extra.push_back(m);
+		for (const auto& m : cls_->method_names()) {
+			// 过滤 private 方法（与 Class::__members__ 一致），
+			// 避免经实例对象暴露 @private 方法。
+			if (cls_->method_is_private(m)) continue;
+			// 过滤 internal 的 __init_defaults__，不暴露到 pycp 代码。
+			if (m == "__init_defaults__") continue;
+			extra.push_back(m);
+		}
 	}
 	for (const auto& n : extra) {
 		bool found = false;
@@ -327,6 +410,24 @@ Object* Instance::__members__() {
 }
 
 void Instance::__set_attribute__(const std::string& name, Object* value) {
+	// 用户 override 的属性赋值钩子 __set_attribute__(self, name, value)。
+	// Object 提供的默认实现（owner_class 为 Object）不触发，走 C++ 默认。
+	if (cls_ != nullptr) {
+		// 仅类外部赋值（internal_access_depth==0）触发钩子；方法体内
+		// self.x = v 走 C++ 默认，避免钩子内部 self.x = v 再触发钩子递归。
+		Function* hook = cls_->find_method("__set_attribute__");
+		if (hook != nullptr && internal_access_depth() == 0 &&
+		    (hook->get_owner_class() == nullptr ||
+		     std::string(hook->get_owner_class()->get_name()) != "Object")) {
+			Object* self = this;
+			Object* name_s = String::FromCString(name.c_str());
+			Object* argv[3] = { self, name_s, value };
+			Object* r = hook->invoke(argv, 3);
+			Decref(name_s);
+			if (r != nullptr) Decref(r);
+			return; // 钩子接管赋值（存储/丢弃由钩子负责）
+		}
+	}
 	// 可见性检查：外部写入 private 字段抛 AttributeError。
 	if (cls_ != nullptr && cls_->member_is_private(name) &&
 	    internal_access_depth() == 0) {
@@ -349,7 +450,12 @@ void Instance::__set_attribute__(const std::string& name, Object* value) {
 Object* Instance::__string__() {
 	if (cls_ != nullptr) {
 		Function* fn = cls_->find_method("__string__");
-		if (fn != nullptr) {
+		// 仅调用用户 override 的实现；Object 提供的默认 __string__（owner_class
+		// 为 Object，经继承复制而来）回退 C++ 默认，避免 `_object_string` 再调
+		// argv[0]->__string__() 造成无限递归。
+		if (fn != nullptr &&
+		    (fn->get_owner_class() == nullptr ||
+		     std::string(fn->get_owner_class()->get_name()) != "Object")) {
 			Object* self = this;
 			Object* argv[1] = { self };
 			return fn->invoke(argv, 1);

@@ -1,6 +1,7 @@
 #include "PycpInteger.hpp"
 #include "PycpString.hpp"
 #include "PycpException.hpp"
+#include "PycpBoolean.hpp"
 #include "PycpGC.hpp"
 #include "PycpList.hpp"
 #include "PycpIterator.hpp"
@@ -49,6 +50,11 @@ Object* String::__integer__(){
 
 Object* String::__string__(){
 	return this;
+}
+
+Object* String::__boolean__(){
+	// 非空串为 True，空串为 False。
+	return _value.empty() ? Boolean::False() : Boolean::True();
 }
 
 Object* String::__addition__(Object* other){
@@ -106,7 +112,7 @@ Object* String::__members__() {
 	// 先收集基类 members_ 中的 key，再添加 string 特有的魔术方法名。
 	List* lst = static_cast<List*>(Object::__members__());
 	std::vector<std::string> extra = {
-		"__integer__", "__string__", "__addition__", "__multiplication__",
+		"__integer__", "__string__", "__boolean__", "__addition__", "__multiplication__",
 		"__get_item__", "__list__", "__iterator__",
 		"__get_attribute__", "__set_attribute__", "__members__",
 	};

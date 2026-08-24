@@ -12,7 +12,10 @@
 
 // 由 Flex/Bison 生成的解析器提供
 extern Pycp::Ast::Node* parsef(const std::string& path);
+extern Pycp::Ast::Node* parse(const std::string& src);
+extern Pycp::Ast::Node* parse_statement(const std::string& src);
 extern int Pycp_parse_error_count;
+extern std::string g_current_source_path;
 
 namespace Pycp {
 
@@ -61,6 +64,53 @@ BC::Module ModuleLoader::compile_file(const std::string& path) {
 	auto* program = static_cast<Pycp::Ast::Program*>(ast);
 	Pycp::BC::Module module = Pycp::Codegen::Compile(program);
 	module.source_path = path;
+	delete ast;
+	return module;
+}
+
+BC::Module ModuleLoader::compile_string(const std::string& src,
+                                         const std::string& name) {
+	// 重置上一次 REPL 行的错误计数与源路径，避免沿用旧状态。
+	Pycp_parse_error_count = 0;
+	g_current_source_path = name;
+
+	Pycp::Ast::Node* ast = parse(src);
+	if (ast == nullptr || Pycp_parse_error_count > 0) {
+		throw Pycp::Exception("");
+	}
+	if (ast->get_type() != Pycp::Ast::NodeType::PROGRAM) {
+		delete ast;
+		throw Pycp::Exception("Expected a program AST.");
+	}
+	auto* program = static_cast<Pycp::Ast::Program*>(ast);
+	Pycp::BC::Module module = Pycp::Codegen::Compile(program, /*repl_eval=*/true);
+	module.source_path = name;
+	delete ast;
+	return module;
+}
+
+BC::Module ModuleLoader::compile_statement(const std::string& src,
+                                           const std::string& name) {
+	// 单语句解析 ABI：解析【一段完整语句】（可跨多行，如类/函数/列表定义），
+	// 整体作为独立 Program 编译并执行。REPL 逐条输入模型下，每次只传入当前
+	// 完整 buffer（不携带历史行），由调用方保证 buffer 已由续行启发式判定为
+	// 完整的单条语句单元。
+	// 重置上一次 REPL 行的错误计数与源路径，避免沿用旧状态。
+	Pycp_parse_error_count = 0;
+	g_current_source_path = name;
+
+	Pycp::Ast::Node* ast = parse_statement(src);
+	if (ast == nullptr || Pycp_parse_error_count > 0) {
+		throw Pycp::Exception("");
+	}
+	if (ast->get_type() != Pycp::Ast::NodeType::PROGRAM) {
+		delete ast;
+		throw Pycp::Exception("Expected a program AST.");
+	}
+	auto* program = static_cast<Pycp::Ast::Program*>(ast);
+	// 顶层表达式语句按 REPL 模式 RETURN 回显，与 compile_string 一致。
+	Pycp::BC::Module module = Pycp::Codegen::Compile(program, /*repl_eval=*/true);
+	module.source_path = name;
 	delete ast;
 	return module;
 }

@@ -36,6 +36,25 @@ public:
 	// 供 load_all 内部使用，也供 PycpMain 复用。
 	static BC::Module compile_file(const std::string& path);
 
+	// 编译内存中的源码字符串为 BC::Module（parse + Codegen::Compile）。
+	// 供 REPL 逐行/逐块求值使用；返回的 Module 已置 repl_eval=true，
+	// 使顶层表达式语句保留返回值供 REPL 回显。
+	//   src  : 源码文本
+	//   name : 用于报错显示的源名称（默认 REPL_SOURCE_NAME，即 <stdin>）
+	static BC::Module compile_string(const std::string& src,
+	                                 const std::string& name = REPL_SOURCE_NAME);
+
+	// 单语句解析 ABI：编译【一段完整语句】为独立 BC::Module（parse_statement
+	// + Codegen::Compile）。语义对标 Python 的 "single" 解析模式——解析一条
+	// 完整语句单元（可跨多行，如类/函数/列表定义），整体编译、整体执行。
+	// 供 REPL 逐条输入模型使用：每次只传入当前完整 buffer（不携带历史行），
+	// 与 compile_string 不同之处在于调用方语义为「一条语句」而非「整段程序」，
+	// 二者底层均置 repl_eval=true 以支持顶层表达式回显。
+	//   src  : 单条语句源码文本（可跨多行）
+	//   name : 用于报错显示的源名称（默认 REPL_SOURCE_NAME，即 <stdin>）
+	static BC::Module compile_statement(const std::string& src,
+	                                    const std::string& name = REPL_SOURCE_NAME);
+
 	// 根据模块名在 entry_dir 下解析为绝对文件路径。
 	//   成功返回绝对路径；失败返回空字符串。
 	static std::string resolve(const std::string& modname,

@@ -201,6 +201,12 @@ PYCP_API void push_current_self(Instance* self);
 PYCP_API void pop_current_self();
 PYCP_API Instance* current_self();
 
+// 当前方法所属类上下文（供 super() 解析父类，避免基于最派生实例类
+// 导致继承链 super 调用无限递归到自身）。
+PYCP_API void push_current_class(Class* cls);
+PYCP_API void pop_current_class();
+PYCP_API Class* current_class();
+
 // =============================================================
 // BoundMethod：绑定到接收者对象的方法对象
 //
