@@ -629,11 +629,10 @@ elif_clauses: KW_ELIF expression code_block {
 		}
 ;
 
-// ============================================================
+/// ============================================================
 // repeat 循环语句（结构化循环）
 //
 // 语法形式（as 必须位于最后，紧邻 code_block）：
-//   repeat { }                                  无限循环
 //   repeat if <cond> { }                         while：cond 为假退出
 //   repeat <N> { }                               计数 N 次（i 不绑定）
 //   repeat <N> as <i> { }                        计数 N 次，i = 0..N-1
@@ -642,19 +641,10 @@ elif_clauses: KW_ELIF expression code_block {
 //   repeat from <a> to <b> by <s> { }            范围，显式步长
 //   repeat from <a> to <b> by <s> as <i> { }     范围，显式步长 + i
 //
-// 各形式由独立产生式区分（KW_FROM/KW_AS/KW_BY 作为分隔符），
-// 无歧义；body 统一为 code_block（大括号语句序列）。
+// 【注意】无限循环形式 repeat { } 已移除，请使用 repeat if true { }
+//        或 while 的语义替代。
 // ============================================================
-repeat_statement: KW_REPEAT code_block {
-			$$ = new RepeatStatement(
-				RepeatMode::INFINITE,
-				nullptr, nullptr, nullptr, nullptr, nullptr,
-				nullptr,
-				new Program($2),
-				Pycplineno
-			);
-		}
-		| KW_REPEAT KW_IF expression code_block {
+repeat_statement: KW_REPEAT KW_IF expression code_block {
 			$$ = new RepeatStatement(
 				RepeatMode::WHILE,
 				nullptr, nullptr, nullptr, nullptr,
