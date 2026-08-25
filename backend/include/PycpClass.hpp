@@ -88,7 +88,10 @@ public:
 	Object* __string__() override;
 
 	// 属性名枚举：返回类的方法名 + 通用成员。
-	Object* __members__() override;
+	Object* __introspect__() override;
+
+	// 数据成员键值对（含类方法名），供 __map__ 视图遍历/字符串化使用。
+	std::vector<std::pair<std::string, Object*>> member_pairs() const override;
 
 	// 实例化钩子：调用类时由 VM 的 CALL 指令触发。
 	// 默认实现创建 Instance，先应用成员初始值（__init_defaults__），
@@ -141,12 +144,31 @@ public:
 	Object* __get_attribute__(const std::string& name) override;
 	void __set_attribute__(const std::string& name, Object* value) override;
 
+	// 成员字典视图（类似 Python 的 __dict__）：返回绑定本实例、合并
+	// fields_ 与动态 members_ 的 Map 视图（实时同步）。
+	Object* __map__() override;
+
+	// 删除协议：delete obj.attr 触发，优先从 fields_ 删除，否则 members_。
+	void __delete_attribute__(const std::string& name) override;
+	// delete obj 触发：用户定义 __delete__ 则调用，否则 Object 默认抛错。
+	Object* __delete__() override;
+	// delete obj[key] 触发：用户定义 __delete_item__ 则调用，否则默认抛错。
+	Object* __delete_item__(Object* key) override;
+
+	// 字段名枚举（仅 fields_ + 动态 members_，不含类方法），供 __map__
+	// 视图字符串化/计数使用。返回去重后的名称（fields_ 优先）。
+	std::vector<std::string> field_names() const;
+
+	// 数据成员键值对（合并 fields_ + 动态 members_，排除类方法）。
+	// 供 __map__ 视图遍历/字符串化使用。
+	std::vector<std::pair<std::string, Object*>> member_pairs() const override;
+
 	// 取绑定方法：新建 BoundMethod（Owned，refcount=1）。
 	//   仅当 name 为类方法时有效，否则返回 nullptr。
 	Object* get_bound_method(const std::string& name);
 
 	// 属性名枚举：返回字段名 + 类方法名 + 通用成员。
-	Object* __members__() override;
+	Object* __introspect__() override;
 
 	// 字符串转换：类定义 __string__ 时转发，否则返回默认 "<ClassName instance>"。
 	Object* __string__() override;

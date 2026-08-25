@@ -6,6 +6,9 @@
 #include "PycpABI.hpp"
 #include "PycpConfig.hpp"
 #include "PycpMagic.hpp"
+#include "PycpMap.hpp"
+
+#include <unordered_set>
 
 #include <sstream>
 #include <vector>
@@ -185,8 +188,8 @@ Object* Class::__get_attribute__(const std::string& name) {
 		}
 		return fn;
 	}
-	// 3) 回退到魔术方法分派（如 __members__/__string__ 等），让
-	//    Class.__members__()、Class.__string__() 等可经魔术方法调用，
+	// 3) 回退到魔术方法分派（如 __introspect__/__string__ 等），让
+	//    Class.__introspect__()、Class.__string__() 等可经魔术方法调用，
 	//    而不仅依赖注册到 methods_ 的普通方法。
 	if (Pycp::IsMagicMethodName(name)) {
 		Function* magic = static_cast<Function*>(Pycp::GetMagicMethodFunction(name));
@@ -208,9 +211,9 @@ Object* Class::__string__() {
 	return String::FromCString(("<class \"" + name_ + "\">").c_str());
 }
 
-Object* Class::__members__() {
+Object* Class::__introspect__() {
 	// 返回类的字段声明名 + 方法名 + 通用成员。
-	List* lst = static_cast<List*>(Object::__members__());
+	List* lst = static_cast<List*>(Object::__introspect__());
 	// 类字段声明（如 mem1/mem2/mem3），过滤 private。
 	for (const auto& n : get_member_names()) {
 		if (member_is_private(n)) continue;
@@ -242,6 +245,23 @@ Object* Class::__members__() {
 		if (!found) lst->append(String::FromCString(n.c_str()));
 	}
 	return lst;
+}
+
+std::vector<std::pair<std::string, Object*>> Class::member_pairs() const {
+	// 合并字段声明名 + 类方法名（方法对应值经 __get_attribute__ 动态取，
+	// 此处填 nullptr），使 __map__ 视图同时包含属性与方法。
+	std::vector<std::pair<std::string, Object*>> out;
+	std::unordered_set<std::string> seen;
+	for (const auto& n : get_member_names()) {
+		if (member_is_private(n)) continue;
+		if (seen.insert(n).second) out.emplace_back(n, nullptr);
+	}
+	for (const auto& n : method_names()) {
+		if (method_is_private(n)) continue;
+		if (n == "__init_defaults__") continue;
+		if (seen.insert(n).second) out.emplace_back(n, nullptr);
+	}
+	return out;
 }
 
 void Class::foreach_ref(const std::function<void(Object*)>& visit) {
@@ -292,8 +312,10 @@ Object* BuiltinTypeClass::instantiate(Object** argv, std::size_t argc) {
 	// List 仍各自要求 argc == 1）。这样 BuiltinTypeClass 既能表达单参
 	// 类型构造，也能表达带可选参数的类型构造。
 	if (argv == nullptr) {
-		throw TypeError("builtin type '" + std::string(get_name()) +
-		                "' argument array is null.");
+		// 空参构造（如 Pycp.Map()）：提供占位数组，避免 ctor 访问空指针。
+		// 构造器仍按 argc == 0 分支自行处理。
+		static Object* empty[]{nullptr};
+		argv = empty;
 	}
 	return ctor_(nullptr, argv, argc);
 }
@@ -344,7 +366,9 @@ Object* Instance::__get_attribute__(const std::string& name) {
 		Incref(itm->second);
 		return itm->second;
 	}
-	// 2) 仅字段访问；未找到返回 nullptr（方法访问经 get_bound_method）。
+	// 2) 字段访问，未找到再尝试类方法（绑定为可调用 BoundMethod）。
+	//    与 VM GetAttr 路径一致：实例字段优先，其次类方法，最后魔术方法。
+	//    这样 __map__ 视图经 __get_attribute__ 也能取到类方法（可调用）。
 	auto it = fields_.find(name);
 	if (it != fields_.end()) {
 		// 可见性检查：外部访问 private 字段抛 AttributeError。
@@ -354,6 +378,9 @@ Object* Instance::__get_attribute__(const std::string& name) {
 			                     cls_->get_name() + "'");
 		}
 		return it->second;
+	}
+	if (Object* bm = get_bound_method(name)) {
+		return bm;
 	}
 	// 3) 魔术方法：回退到通用分派（转发到类同名魔术方法）。
 	if (Object* magic = GetMagicMethodFunction(name)) {
@@ -379,14 +406,14 @@ Object* Instance::get_bound_method(const std::string& name) {
 	return Pycp::New<BoundMethod>(this, fn);
 }
 
-Object* Instance::__members__() {
+Object* Instance::__introspect__() {
 	// 字段名 + 类方法名 + 通用成员。
-	List* lst = static_cast<List*>(Object::__members__());
+	List* lst = static_cast<List*>(Object::__introspect__());
 	std::vector<std::string> extra;
 	for (const auto& kv : fields_) extra.push_back(kv.first);
 	if (cls_ != nullptr) {
 		for (const auto& m : cls_->method_names()) {
-			// 过滤 private 方法（与 Class::__members__ 一致），
+			// 过滤 private 方法（与 Class::__introspect__ 一致），
 			// 避免经实例对象暴露 @private 方法。
 			if (cls_->method_is_private(m)) continue;
 			// 过滤 internal 的 __init_defaults__，不暴露到 pycp 代码。
@@ -587,6 +614,107 @@ Object* Instance::__list__() {
 	Object* self = this;
 	Object* argv[1] = { self };
 	return fn->invoke(argv, 1);
+}
+
+std::vector<std::string> Instance::field_names() const {
+	// 仅实例数据成员名（fields_ + 动态成员，排除类方法），fields_ 优先。
+	std::vector<std::string> names;
+	for (const auto& kv : member_pairs()) {
+		names.push_back(kv.first);
+	}
+	return names;
+}
+
+std::vector<std::pair<std::string, Object*>> Instance::member_pairs() const {
+	// 合并 fields_、动态 members_（数据成员）与类方法名，使 __map__ 视图
+	// 同时包含属性与方法（方法对应值经 __get_attribute__ 动态取，此处填 nullptr）。
+	std::vector<std::pair<std::string, Object*>> out;
+	std::unordered_set<std::string> seen;
+	for (const auto& kv : fields_) {
+		if (seen.insert(kv.first).second) {
+			out.emplace_back(kv.first, kv.second);
+		}
+	}
+	for (const auto& kv : members_) {
+		if (kv.second == nullptr) continue;
+		if (seen.insert(kv.first).second) {
+			out.emplace_back(kv.first, kv.second);
+		}
+	}
+	if (cls_ != nullptr) {
+		for (const auto& m : cls_->method_names()) {
+			// 过滤 private 方法（与 __introspect__ 一致），
+			// 避免经实例对象暴露 @private 方法。
+			if (cls_->method_is_private(m)) continue;
+			// 过滤 internal 的 __init_defaults__，不暴露到 pycp 代码。
+			if (m == "__init_defaults__") continue;
+			if (seen.insert(m).second) {
+				out.emplace_back(m, nullptr);
+			}
+		}
+	}
+	return out;
+}
+
+Object* Instance::__map__() {
+	// 返回绑定本实例、合并 fields_+members_ 的 Map 视图。
+	return Map::NewView(this);
+}
+
+void Instance::__delete_attribute__(const std::string& name) {
+	// 优先从实例字段删除；否则从动态成员字典删除。
+	// 若用户定义了 __delete_attribute__(self, name) 钩子，则由其接管。
+	if (cls_ != nullptr) {
+		Function* hook = cls_->find_method("__delete_attribute__");
+		if (hook != nullptr &&
+		    (hook->get_owner_class() == nullptr ||
+		     std::string(hook->get_owner_class()->get_name()) != "Object")) {
+			Object* self = this;
+			Object* name_s = String::FromCString(name.c_str());
+			Object* argv[2] = { self, name_s };
+			Object* r = hook->invoke(argv, 2);
+			Decref(name_s);
+			if (r != nullptr) Decref(r);
+			return;
+		}
+	}
+	auto itf = fields_.find(name);
+	if (itf != fields_.end()) {
+		if (itf->second != nullptr) Decref(itf->second);
+		fields_.erase(itf);
+		return;
+	}
+	Object::__delete_attribute__(name);
+}
+
+Object* Instance::__delete__() {
+	// 用户定义 __delete__ 则调用，否则回退 Object 默认实现。
+	if (cls_ != nullptr) {
+		Function* fn = cls_->find_method("__delete__");
+		if (fn != nullptr &&
+		    (fn->get_owner_class() == nullptr ||
+		     std::string(fn->get_owner_class()->get_name()) != "Object")) {
+			Object* self = this;
+			Object* argv[1] = { self };
+			return fn->invoke(argv, 1);
+		}
+	}
+	return Object::__delete__();
+}
+
+Object* Instance::__delete_item__(Object* key) {
+	// 用户定义 __delete_item__ 则调用，否则回退 Object 默认实现。
+	if (cls_ != nullptr) {
+		Function* fn = cls_->find_method("__delete_item__");
+		if (fn != nullptr &&
+		    (fn->get_owner_class() == nullptr ||
+		     std::string(fn->get_owner_class()->get_name()) != "Object")) {
+			Object* self = this;
+			Object* argv[2] = { self, key };
+			return fn->invoke(argv, 2);
+		}
+	}
+	return Object::__delete_item__(key);
 }
 
 void Instance::foreach_ref(const std::function<void(Object*)>& visit) {

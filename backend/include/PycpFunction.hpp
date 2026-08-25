@@ -34,7 +34,7 @@ struct BuiltinFunction;
 class PYCP_API Function : public Object{
 	protected:
 		FunctionKind kind;
-		const char* name;
+		std::string name;
 
 		// 方法定义所属的类（仅类方法有意义；顶层/模块函数为 nullptr）。
 		// 用于 super() 推断"当前方法所属类"以正确解析父类，而非依赖
@@ -50,7 +50,7 @@ class PYCP_API Function : public Object{
 		Function(const char* name, PycpNativeFunction func);
 
 		FunctionKind get_kind() const { return kind; }
-		const char* get_name() const override { return name; }
+		const char* get_name() const override { return name.c_str(); }
 
 		// 方法所属类（供 super() 解析父类）。仅类方法设置，其余为 nullptr。
 		Class* get_owner_class() const { return owner_class_; }

@@ -33,8 +33,7 @@ Function::Function(const char* name, PycpNativeFunction func)
 
 Object* Function::__string__(){
 	// 匿名函数（name 为空或匿名占位名）输出 "@anonymous"。
-	if (name == nullptr || name[0] == '\0' ||
-	    std::string(name) == ANONYMOUS_FUNCTION) {
+	if (name.empty() || name == ANONYMOUS_FUNCTION) {
 		return String::FromCString("@anonymous");
 	}
 	// 普通函数："<function \"name\" at 0xADDR>"。

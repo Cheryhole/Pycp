@@ -27,11 +27,11 @@ Object* ListIterator::__next__() {
 	return elem;
 }
 
-Object* ListIterator::__members__() {
-	List* lst = static_cast<List*>(Object::__members__());
+Object* ListIterator::__introspect__() {
+	List* lst = static_cast<List*>(Object::__introspect__());
 	std::vector<std::string> extra = {
 		"__next__", "__iterator__",
-		"__get_attribute__", "__set_attribute__", "__members__",
+		"__get_attribute__", "__set_attribute__", "__introspect__",
 	};
 	for (const auto& n : extra) {
 		bool found = false;
@@ -76,11 +76,11 @@ Object* StringIterator::__next__() {
 	return String::FromCString(one.c_str());
 }
 
-Object* StringIterator::__members__() {
-	List* lst = static_cast<List*>(Object::__members__());
+Object* StringIterator::__introspect__() {
+	List* lst = static_cast<List*>(Object::__introspect__());
 	std::vector<std::string> extra = {
 		"__next__",
-		"__get_attribute__", "__set_attribute__", "__members__",
+		"__get_attribute__", "__set_attribute__", "__introspect__",
 	};
 	for (const auto& n : extra) {
 		bool found = false;

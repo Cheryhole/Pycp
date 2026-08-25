@@ -49,7 +49,7 @@ public:
 
 	// 覆盖基类虚函数：返回该模块所有可用成员名（成员字典 key +
 	// 命名空间中非 private 的公开名称）的 List。
-	Object* __members__() override;
+	Object* __introspect__() override;
 
 	Object* __string__();
 	// GC 子引用遍历：枚举命名空间（namespace_）中的值，供标记-清除从
