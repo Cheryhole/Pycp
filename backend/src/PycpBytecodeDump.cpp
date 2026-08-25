@@ -48,6 +48,7 @@ const char* op_name(Op op) {
 		case Op::MAKE_CLASS:    return "MAKE_CLASS";
 		case Op::LOAD_ATTR:     return "LOAD_ATTR";
 		case Op::STORE_ATTR:    return "STORE_ATTR";
+		case Op::BUILD_MAP:     return "BUILD_MAP";
 		default:                return "UNKNOWN";
 	}
 }

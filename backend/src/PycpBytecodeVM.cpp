@@ -1,5 +1,6 @@
 #include "PycpBytecodeVM.hpp"
 #include "PycpBoolean.hpp"
+#include "PycpMap.hpp"
 
 namespace Pycp::BC {
 
@@ -892,6 +893,32 @@ Object* VM::execute(CodeObject* co,
 				}
 				push(list);
 				Decref(list); // push 已 Incref
+				break;
+			}
+
+			case Op::BUILD_MAP: {
+				// 操作数 = 键值对个数。栈上每对为 key value（k 紧邻 v，
+				// 先压 key 后压 value，故栈顶依次为 ... k1 v1 k2 v2）。
+				// 逆序弹出时按 v=pop(); k=pop(); 还原源码顺序。
+				std::size_t n = static_cast<std::size_t>(ins.operand);
+				if (stack.size() < 2 * n)
+					throw VMError(cur_file(), cur_line(), "build map stack underflow.");
+				std::vector<std::pair<Object*, Object*>> pairs(n);
+				for (std::size_t i = 0; i < n; ++i) {
+					Object* v = pop();
+					Object* k = pop();
+					pairs[n - 1 - i] = {k, v};
+				}
+				// 构造 Map 并填充：__set_item__ 内部对键/值 Incref（Map 持有），
+				// 随后释放弹出的 2n 份栈引用。
+				Map* m = Map::New();
+				for (auto& kv : pairs) {
+					m->__set_item__(kv.first, kv.second);
+					Decref(kv.first);
+					Decref(kv.second);
+				}
+				push(m);
+				Decref(m); // push 已 Incref
 				break;
 			}
 

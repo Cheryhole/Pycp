@@ -16,6 +16,14 @@ extern bool g_lexer_error;
 
 std::string _string_buffer; // 用于存储字符串内容
 int _comment_return_state = 0; // 记录进入块注释前的状态（0=INITIAL），注释结束后恢复
+
+// 括号嵌套深度与"表达式上下文"标志（list/map 跨行支持）：
+//   brk_depth   : 当前处于多少个未闭合的 ( [ { 之内。>0 时换行被抑制（隐式行续接）。
+//   brk_expr_ctx: 仅用于 INITIAL 状态下区分 { 是 map literal（紧跟表达式）还是
+//                 code_block（紧跟语句）。map 起始 { 进入 BRACKET_BODY 抑制换行，
+//                 code_block 的 { 保持原 EXPECT_ELIF 流程（顶层换行仍为语句分隔符）。
+int brk_depth = 0;
+int brk_expr_ctx = 0;
 %}
 
 %option yylineno
@@ -27,17 +35,32 @@ int _comment_return_state = 0; // 记录进入块注释前的状态（0=INITIAL�
 %x EXPECT_ELIF
 %x COMMENT
 %x MEMBER_ACCESS
+%s BRACKET_BODY
 
 %%
 
+<BRACKET_BODY>"{"	{ brk_depth++; return OP_LBRACE; }
+<BRACKET_BODY>"}"	{ brk_depth--; if (brk_depth == 0) { BEGIN(INITIAL); brk_expr_ctx = 0; } return OP_RBRACE; }
+<BRACKET_BODY>"["	{ brk_depth++; return OP_LBRACKET; }
+<BRACKET_BODY>"]"	{ brk_depth--; if (brk_depth == 0) { BEGIN(INITIAL); brk_expr_ctx = 0; } return OP_RBRACKET; }
+<BRACKET_BODY>"("	{ brk_depth++; return OP_LPARENTHESES; }
+<BRACKET_BODY>")"	{ brk_depth--; if (brk_depth == 0) { BEGIN(INITIAL); brk_expr_ctx = 0; } return OP_RPARENTHESES; }
+<BRACKET_BODY>\n	{ /* 括号内换行被忽略：实现 list/map 跨行定义（Python 风格隐式行续接） */ }
+<BRACKET_BODY>\r\n	{ /* 忽略换行 */ }
+<BRACKET_BODY>\r	{ /* 忽略换行 */ }
+<BRACKET_BODY>"//"[^\n]*	{ /* 忽略单行注释 */ }
+<BRACKET_BODY>"/*"	{ _comment_return_state = BRACKET_BODY; BEGIN(COMMENT); }
+<BRACKET_BODY>[ \t]+	{ /* 忽略空白 */ }
+<BRACKET_BODY>":"	{ return OP_COLON; }
+
 func     { return KW_FUNC; }
-return   { return KW_RETURN; }
-if       { return KW_IF; }
-elif     { return KW_ELIF; }
+return   { brk_expr_ctx = 1; return KW_RETURN; }
+if       { brk_expr_ctx = 1; return KW_IF; }
+elif     { brk_expr_ctx = 1; return KW_ELIF; }
 else     { return KW_ELSE; }
-None     { return KW_NONE; }
-True     { return KW_TRUE; }
-False    { return KW_FALSE; }
+None     { brk_expr_ctx = 0; return KW_NONE; }
+True     { brk_expr_ctx = 0; return KW_TRUE; }
+False    { brk_expr_ctx = 0; return KW_FALSE; }
 import   { return KW_IMPORT; }
 from     { return KW_FROM; }
 as       { return KW_AS; }
@@ -46,17 +69,20 @@ inherits { return KW_INHERITS; }
 repeat   { return KW_REPEAT; }
 to       { return KW_TO; }
 break    { return KW_BREAK; }
+delete   { return KW_DELETE; }
 by       { return KW_BY; }
 for      { return KW_FOR; }
-in       { return KW_IN; }
+in       { brk_expr_ctx = 1; return KW_IN; }
 
 [a-zA-Z_][a-zA-Z0-9_]* { // identifier
 	Pycplval.text = new std::string(Pycptext);
+	brk_expr_ctx = 0;
 	return IDENTIFIER;
 }
 
 [0-9]+ { // integer
 	Pycplval.text = new std::string(Pycptext); 
+	brk_expr_ctx = 0;
 	return LT_INTEGER;
 }
 "//"[^\n]*	{ /* 单行注释：跳过到行尾，换行仍由 NEWLINE 规则处理 */ }
@@ -71,16 +97,16 @@ in       { return KW_IN; }
 	return 0;
 }
 
-"+"    { return OP_PLUS; }
-"-"    { return OP_MINUS; }
-"**"   { return OP_POWER; }
-"*"    { return OP_MULTIPLY; }
-"/"    { return OP_DIVIDE; }
-"("    { return OP_LPARENTHESES; }
+"+"    { brk_expr_ctx = 1; return OP_PLUS; }
+"-"    { brk_expr_ctx = 1; return OP_MINUS; }
+"**"   { brk_expr_ctx = 1; return OP_POWER; }
+"*"    { brk_expr_ctx = 1; return OP_MULTIPLY; }
+"/"    { brk_expr_ctx = 1; return OP_DIVIDE; }
+"("    { brk_depth = 1; brk_expr_ctx = 1; BEGIN(BRACKET_BODY); return OP_LPARENTHESES; }
 ")"    { return OP_RPARENTHESES; }
-"["    { return OP_LBRACKET; }
+"["    { brk_depth = 1; brk_expr_ctx = 0; BEGIN(BRACKET_BODY); return OP_LBRACKET; }
 "]"    { return OP_RBRACKET; }
-"{"    { return OP_LBRACE; }
+"{"    { if (brk_expr_ctx != 0) { brk_depth = 1; brk_expr_ctx = 0; BEGIN(BRACKET_BODY); } return OP_LBRACE; }
 "}"    { BEGIN(EXPECT_ELIF); return OP_RBRACE; }
 
 <EXPECT_ELIF>"elif"/[^a-zA-Z0-9_]	{ BEGIN(INITIAL); return KW_ELIF; }
@@ -94,19 +120,20 @@ in       { return KW_IN; }
 <EXPECT_ELIF>[a-zA-Z_][a-zA-Z0-9_]*	{ BEGIN(INITIAL); yyless(0); return NEWLINE; }
 <EXPECT_ELIF>.	{ BEGIN(INITIAL); unput(Pycptext[0]); return NEWLINE; }
 <EXPECT_ELIF><<EOF>>	{ BEGIN(INITIAL); return NEWLINE; }
-"="    { return OP_EQUALS; }
-"=="   { return OP_EQ; }
-"!="   { return OP_NE; }
-"<"    { return OP_LT; }
-">"    { return OP_GT; }
-"<="   { return OP_LE; }
-">="   { return OP_GE; }
-","    { return OP_COMMA; }
+"="    { brk_expr_ctx = 1; return OP_EQUALS; }
+"=="   { brk_expr_ctx = 1; return OP_EQ; }
+"!="   { brk_expr_ctx = 1; return OP_NE; }
+"<"    { brk_expr_ctx = 1; return OP_LT; }
+">"    { brk_expr_ctx = 1; return OP_GT; }
+"<="   { brk_expr_ctx = 1; return OP_LE; }
+">="   { brk_expr_ctx = 1; return OP_GE; }
+","    { brk_expr_ctx = 1; return OP_COMMA; }
+":"    { return OP_COLON; }
 "."    { BEGIN(MEMBER_ACCESS); return OP_DOT; }
 "@"    { return OP_AT; }
 
-<MEMBER_ACCESS>[a-zA-Z_][a-zA-Z0-9_]* { Pycplval.text = new std::string(Pycptext); BEGIN(INITIAL); return IDENTIFIER; }
-<MEMBER_ACCESS>[^a-zA-Z0-9_] { BEGIN(INITIAL); yyless(0); }
+<MEMBER_ACCESS>[a-zA-Z_][a-zA-Z0-9_]* { Pycplval.text = new std::string(Pycptext); brk_expr_ctx = 0; BEGIN(brk_depth > 0 ? BRACKET_BODY : INITIAL); return IDENTIFIER; }
+<MEMBER_ACCESS>[^a-zA-Z0-9_] { BEGIN(brk_depth > 0 ? BRACKET_BODY : INITIAL); yyless(0); }
 
 \"   { 
 	_string_buffer.clear();
@@ -114,7 +141,8 @@ in       { return KW_IN; }
 }
 <STRING>\" {
 	Pycplval.text = new std::string(_string_buffer);
-	BEGIN(INITIAL);
+	BEGIN(brk_depth > 0 ? BRACKET_BODY : INITIAL);
+	brk_expr_ctx = 0;
 	return LT_STRING;
 }
 

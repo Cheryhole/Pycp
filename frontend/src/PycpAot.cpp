@@ -132,6 +132,11 @@ std::size_t estimate_stack_depth(const Pycp::BC::CodeObject& co) {
 				depth = (depth > n) ? (depth - n) + 1 : 1;
 				break;
 			}
+			case Pycp::BC::Op::BUILD_MAP: {
+				std::size_t n = static_cast<std::size_t>(ins.operand);
+				depth = (depth > 2 * n) ? (depth - 2 * n) + 1 : 1;
+				break;
+			}
 			case Pycp::BC::Op::GET_ITEM:
 				// 弹 obj + key 压 1，净 -1。
 				if (depth > 0) --depth;
@@ -388,6 +393,32 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 				}
 				break;
 			}
+
+			case Pycp::BC::Op::BUILD_MAP: {
+				// 栈上每对 key value 紧邻（先压 key 后压 value）。逆序弹栈：
+				// 先弹 value 再弹 key，放入 ks/vs 数组还原源码顺序，随后构造
+				// Map 并逐对填充（__set_item__ 内部 Incref 键/值），再释放
+				// 每份栈引用。新建 Map 为 Owned（refcount=1），由栈接管。
+				std::size_t n = static_cast<std::size_t>(ins.operand);
+				if (n > 0) {
+					os << "    { Pycp::Object* ks[" << n << "]; Pycp::Object* vs[" << n << "];\n";
+					for (std::size_t i = 0; i < n; ++i) {
+						os << "      vs[" << (n - 1 - i) << "] = st.back(); st.pop_back();\n";
+						os << "      ks[" << (n - 1 - i) << "] = st.back(); st.pop_back();\n";
+					}
+					os << "      Pycp::Map* m = Pycp::Map::New();\n";
+					for (std::size_t i = 0; i < n; ++i) {
+						os << "      m->__set_item__(ks[" << i << "], vs[" << i << "]);\n";
+						os << "      Pycp::Decref(ks[" << i << "]); Pycp::Decref(vs[" << i << "]);\n";
+					}
+					os << "      st.push_back(m); }\n";
+				} else {
+					os << "    { Pycp::Map* m = Pycp::Map::New();\n";
+					os << "      st.push_back(m); }\n";
+				}
+				break;
+			}
+
 			case Pycp::BC::Op::GET_ITEM: {
 				// 弹 key + obj；GetItem 返回 Borrowed（元素由 list 持有），
 				// push(res) 使栈持有 1 份引用，故不 Decref(res)。

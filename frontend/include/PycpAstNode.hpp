@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 
 namespace Pycp::Ast {
 
@@ -42,7 +43,9 @@ enum class NodeType : uint16_t {
 	INDEX_EXPRESSION = 27,
 	REPEAT_STATEMENT = 28,
 	BREAK_STATEMENT = 29,
-	FOREACH_STATEMENT = 30
+	FOREACH_STATEMENT = 30,
+	DELETE_STATEMENT = 31,
+	MAP_LITERAL = 32
 };
 
 enum class UnaryOp : uint16_t {
@@ -396,6 +399,22 @@ struct ListLiteral : Expression {
 };
 
 // ============================================================
+// MapLiteral 节点（map 字面量：{k1: v1, k2: v2} 或空 {}）
+// ============================================================
+//   pairs : 键值对表达式列表（每对为 key/value 表达式，可为空）。
+//           每个 pair 的 key/value 为普通表达式，运行时可哈希性由
+//           Map::__set_item__ 校验。
+struct MapLiteral : Expression {
+	std::vector<std::pair<Expression*, Expression*>>* pairs;
+
+	explicit MapLiteral(std::vector<std::pair<Expression*, Expression*>>* p, int line = -1);
+	~MapLiteral() override;
+
+	NodeType get_type() const override { return NodeType::MAP_LITERAL; }
+	std::string to_string() const override;
+};
+
+// ============================================================
 // IndexExpression 节点（下标访问/赋值：obj[key] / obj[key] = value）
 // ============================================================
 //   target : 被访问的对象表达式
@@ -538,6 +557,20 @@ struct BreakStatement : Statement {
 	~BreakStatement() override;
 
 	NodeType get_type() const override { return NodeType::BREAK_STATEMENT; }
+	std::string to_string() const override;
+};
+
+// ============================================================
+// DeleteStatement 节点（delete obj / delete obj.attr / delete obj[key]）
+// ============================================================
+//   target : 待删除的目标表达式（标识符 / 属性访问 / 下标访问）。
+struct DeleteStatement : Statement {
+	Expression* target;
+
+	explicit DeleteStatement(Expression* t, int line = -1);
+	~DeleteStatement() override;
+
+	NodeType get_type() const override { return NodeType::DELETE_STATEMENT; }
 	std::string to_string() const override;
 };
 

@@ -97,6 +97,7 @@ enum class Op : uint8_t {
 	BUILD_LIST  = 0x55,  // 操作数: 元素个数    -> 弹栈顶 n 个元素构造 List 压栈
 	GET_ITEM    = 0x56,  // 无操作数           -> obj key -> obj[key]（转调 GetItem）
 	SET_ITEM    = 0x57,  // 无操作数           -> obj key value -> obj[key]=value（转调 SetItem）
+	BUILD_MAP   = 0x58,  // 操作数: 键值对个数  -> 弹栈顶 2n 个元素（k,v 交替）构造 Map 压栈
 
 	// ---- 其他 ----
 	HALT          = 0x00, // 模块执行结束

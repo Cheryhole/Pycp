@@ -36,6 +36,8 @@ extern void Pycp_delete_buffer(YY_BUFFER_STATE);
 	std::vector<std::string>* identifiers;
 	std::vector<std::string*>* string_ptrs;   // parameter names (owning pointers)
 	std::vector<Pycp::Ast::Expression*>* expressions; // call arguments
+	std::vector<std::pair<Pycp::Ast::Expression*, Pycp::Ast::Expression*>>* pair_list; // map 键值对列表
+	std::pair<Pycp::Ast::Expression*, Pycp::Ast::Expression*>* key_value_pair;
 	// if 语句可选后缀：elif 分支列表 + 可选 else 代码块
 	IfSuffix if_suffix;
 }
@@ -47,6 +49,7 @@ extern void Pycp_delete_buffer(YY_BUFFER_STATE);
 // PycpParser.hpp 的翻译单元中均可见。
 %code requires {
 	#include <vector>
+	#include <utility>
 	#include "PycpConfig.hpp"
 	#include "PycpAstNode.hpp"
 	// if 语句的可选后缀：承载 elif 分支列表与可选的 else 代码块。
@@ -60,13 +63,13 @@ extern void Pycp_delete_buffer(YY_BUFFER_STATE);
 %token NEWLINE
 %token <text> LT_INTEGER LT_STRING IDENTIFIER
 %token KW_FUNC KW_RETURN KW_IF KW_ELIF KW_ELSE KW_NONE KW_IMPORT KW_AS KW_CLASS KW_TRUE KW_FALSE
-%token KW_FROM KW_INHERITS KW_REPEAT KW_TO KW_BREAK KW_BY
+%token KW_FROM KW_INHERITS KW_REPEAT KW_TO KW_BREAK KW_BY KW_DELETE
 %token KW_FOR KW_IN
 %token OP_PLUS OP_MINUS OP_MULTIPLY OP_DIVIDE OP_POWER
 %token OP_LPARENTHESES OP_RPARENTHESES
 %token OP_LBRACKET OP_RBRACKET
 %token OP_LBRACE OP_RBRACE
-%token OP_EQUALS OP_COMMA
+%token OP_EQUALS OP_COMMA OP_COLON
 %token OP_LT OP_GT OP_LE OP_GE OP_EQ OP_NE
 %token OP_DOT OP_AT
 
@@ -91,6 +94,9 @@ extern void Pycp_delete_buffer(YY_BUFFER_STATE);
 %type <string_ptrs> parameter_list
 %type <statements> code_block
 %type <expressions> arguments
+%type <pair_list> map_literal
+%type <pair_list> map_pairs
+%type <key_value_pair> map_pair
 
 %type <node> class_def_statement
 %type <node> class_expr
@@ -108,6 +114,7 @@ extern void Pycp_delete_buffer(YY_BUFFER_STATE);
 %type <if_suffix> opt_elif_else
 %type <node> repeat_statement
 %type <node> break_statement
+%type <node> delete_statement
 %type <node> for_statement
 
 %type <node> expression
@@ -218,9 +225,23 @@ statement: assignment_statement {
 		| for_statement {
 			$$ = $1;
 		}
+		| delete_statement {
+			$$ = $1;
+		}
 		| expression {
 			$$ = new ExpressionStatement(
 				static_cast<Expression*>($1),
+				Pycplineno
+			);
+		}
+;
+
+// ============================================================
+// delete 语句：delete obj / delete obj.attr / delete obj[key]
+// ============================================================
+delete_statement: KW_DELETE expression {
+			$$ = new DeleteStatement(
+				static_cast<Expression*>($2),
 				Pycplineno
 			);
 		}
@@ -277,6 +298,45 @@ arguments: %empty {
 		| arguments OP_COMMA expression {
 				$1->push_back(static_cast<Expression*>($3));
 				$$ = $1;
+		}
+		| arguments OP_COMMA {
+				// 尾逗号（Python 风格）：f(a, ) / [a, ]
+				$$ = $1;
+		}
+;
+
+// map 字面量：{k1: v1, k2: v2, ...} 或空 {}。
+// 每个键值对 key/value 均为普通表达式（键的可哈希性由运行时 SetItem 校验）。
+// 跨行定义由 lexer 的 BRACKET_BODY 状态抑制括号内换行实现，此处无需 newlines。
+map_literal: %empty {
+				$$ = new std::vector<std::pair<Expression*, Expression*>>();
+		}
+		| map_pairs {
+				$$ = $1;
+		}
+;
+
+map_pairs: map_pair {
+				$$ = new std::vector<std::pair<Expression*, Expression*>>();
+				$$->push_back(*$1);
+				delete $1;
+		}
+		| map_pairs OP_COMMA map_pair {
+				$1->push_back(*$3);
+				delete $3;
+				$$ = $1;
+		}
+		| map_pairs OP_COMMA {
+				// 尾逗号（Python 风格）：{k: v, }
+				$$ = $1;
+		}
+;
+
+map_pair: expression OP_COLON expression {
+				$$ = new std::pair<Expression*, Expression*>(
+					static_cast<Expression*>($1),
+					static_cast<Expression*>($3)
+				);
 		}
 ;
 
@@ -875,6 +935,13 @@ primary_expression: LT_INTEGER {
 			// 列表字面量：[a, b, c] 或空 []
 			$$ = new ListLiteral(
 				static_cast<std::vector<Expression*>*>($2),
+				Pycplineno
+			);
+		}
+		| OP_LBRACE map_literal OP_RBRACE {
+			// map 字面量：{k: v, ...} 或空 {}
+			$$ = new MapLiteral(
+				static_cast<std::vector<std::pair<Expression*, Expression*>>*>($2),
 				Pycplineno
 			);
 		}

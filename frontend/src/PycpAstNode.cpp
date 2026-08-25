@@ -459,6 +459,37 @@ std::string ListLiteral::to_string() const {
 }
 
 // ============================================================
+// MapLiteral 实现
+// ============================================================
+MapLiteral::MapLiteral(std::vector<std::pair<Expression*, Expression*>>* p, int line)
+	: pairs(p) {
+	lineno = line;
+}
+
+MapLiteral::~MapLiteral() {
+	if (pairs != nullptr) {
+		for (auto& kv : *pairs) {
+			delete kv.first;
+			delete kv.second;
+		}
+		delete pairs;
+	}
+}
+
+std::string MapLiteral::to_string() const {
+	std::string result = "{";
+	if (pairs != nullptr) {
+		for (std::size_t i = 0; i < pairs->size(); ++i) {
+			if (i > 0) result += ", ";
+			result += (*pairs)[i].first->to_string();
+			result += ": ";
+			result += (*pairs)[i].second->to_string();
+		}
+	}
+	return result + "}";
+}
+
+// ============================================================
 // IndexExpression 实现
 // ============================================================
 IndexExpression::IndexExpression(Expression* t, Expression* idx, int line)
@@ -606,6 +637,23 @@ BreakStatement::~BreakStatement() = default;
 
 std::string BreakStatement::to_string() const {
 	return "<Break>";
+}
+
+// ============================================================
+// DeleteStatement 实现
+// ============================================================
+DeleteStatement::DeleteStatement(Expression* t, int line)
+	: target(t) {
+	lineno = line;
+}
+
+DeleteStatement::~DeleteStatement() {
+	delete target;
+}
+
+std::string DeleteStatement::to_string() const {
+	std::string t = (target != nullptr) ? target->to_string() : "?";
+	return "<Delete " + t + ">";
 }
 
 // ============================================================

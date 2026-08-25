@@ -380,6 +380,20 @@ static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 			em.emit(Op::BUILD_LIST, static_cast<int32_t>(n));
 			break;
 		}
+		case NodeType::MAP_LITERAL: {
+			MapLiteral* ml = static_cast<MapLiteral*>(e);
+			// 每对键值先压 key 再压 value（栈序 ... k1 v1 k2 v2），
+			// 最后 BUILD_MAP n（VM 按 v=pop(); k=pop(); 逆序还原）。
+			std::size_t n = (ml->pairs != nullptr) ? ml->pairs->size() : 0;
+			if (ml->pairs != nullptr) {
+				for (auto& kv : *(ml->pairs)) {
+					compile_expr(em, kv.first, scope);
+					compile_expr(em, kv.second, scope);
+				}
+			}
+			em.emit(Op::BUILD_MAP, static_cast<int32_t>(n));
+			break;
+		}
 		case NodeType::INDEX_EXPRESSION: {
 			IndexExpression* ie = static_cast<IndexExpression*>(e);
 			compile_expr(em, ie->target, scope);
@@ -722,6 +736,39 @@ static void compile_stmt(Emitter& em, Statement* s, Scope& scope, bool top_level
 				em.patch_jump(b, loop_end);
 			}
 			em.loop_stack.pop_back();
+			break;
+		}
+		case NodeType::DELETE_STATEMENT: {
+			// delete 语句三种形态：
+			//   delete obj        -> obj.__delete__()
+			//   delete obj.attr   -> obj.__delete_attribute__("attr")
+			//   delete obj[key]   -> obj.__delete_item__(key)
+			DeleteStatement* ds = static_cast<DeleteStatement*>(s);
+			Expression* t = ds->target;
+			if (t->get_type() == NodeType::ATTRIBUTE_EXPRESSION) {
+				AttributeExpression* ae = static_cast<AttributeExpression*>(t);
+				compile_expr(em, ae->target, scope);
+				em.emit(Op::LOAD_ATTR,
+				        static_cast<int32_t>(em.intern_name("__delete_attribute__")));
+				// 属性名作为字符串实参压栈。
+				em.emit(Op::LOAD_CONST,
+				        static_cast<int32_t>(em.intern_string(*ae->attr)));
+				em.emit(Op::CALL, 1);
+			} else if (t->get_type() == NodeType::INDEX_EXPRESSION) {
+				IndexExpression* ie = static_cast<IndexExpression*>(t);
+				compile_expr(em, ie->target, scope);
+				em.emit(Op::LOAD_ATTR,
+				        static_cast<int32_t>(em.intern_name("__delete_item__")));
+				compile_expr(em, ie->index, scope);
+				em.emit(Op::CALL, 1);
+			} else {
+				// 标识符/其他表达式：delete obj -> obj.__delete__()
+				compile_expr(em, t, scope);
+				em.emit(Op::LOAD_ATTR,
+				        static_cast<int32_t>(em.intern_name("__delete__")));
+				em.emit(Op::CALL, 0);
+			}
+			em.emit(Op::POP_TOP); // 丢弃返回值（None）
 			break;
 		}
 		default:
