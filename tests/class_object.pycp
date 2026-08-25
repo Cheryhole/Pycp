@@ -1,0 +1,74 @@
+import Pycp
+import io
+from classtools import super, public, private
+
+class FileIO inherits Pycp.Object{
+	@private
+	// 约定私有成员加一个下划线
+	_filename = Pycp.String("")
+
+	mode = Pycp.String("")
+
+	@public
+	func __initialize__(self, filename, mode){
+		super().__initialize__(self)
+		self._filename = filename
+		self.mode = mode
+	}
+
+	func call_test(self, str){
+		return self._test(str)
+	}
+
+	@private
+	func _test(self, str){
+		io.stdout.write(str)
+		return str
+	}
+
+}
+
+
+// 匿名对象写法，支持继承
+BetterObject = class inherits Pycp.Object{
+	@private
+	// 如果对魔术方法修饰为private，应warning
+	func __initialize__(self){
+		super().__initialize__(self)
+		io.stdout.write("BetterObject initialized.\n")
+	}
+}
+
+class o1 inherits Pycp.Object{
+	mem1 = Pycp.String("")
+	mem2 = Pycp.String("")
+	_mem = 0
+
+	func __initialize__(self){
+		super().__initialize__(self)
+		io.stdout.write("o1 initialized.")
+	}
+
+	@private
+	func a(self){
+		io.print("o1.a called.")
+	}
+}
+
+class o2 inherits o1{
+	mem3 = Pycp.String("")
+	
+	func __initialize__(self){
+		super().__initialize__(self)
+		io.stdout.write("o2 initialized.\n")
+	}
+}
+
+io.print(Pycp.introspect(o1))
+io.print(Pycp.introspect(o2))
+o = o2()
+io.print(Pycp.introspect(o))
+
+
+
+

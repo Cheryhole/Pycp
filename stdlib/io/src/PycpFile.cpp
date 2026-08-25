@@ -543,12 +543,12 @@ Object* File::__get_attribute__(const std::string& attr_name) {
     throw AttributeError("file \"" + name_ + "\" has no attribute '" + attr_name + "'");
 }
 
-Object* File::__members__() {
+Object* File::__introspect__() {
 	// File 对象的成员名：只读属性 + 公开方法（含魔术方法）。
 	std::vector<std::string> names = {
 		"closed", "name", "mode",
 		"write", "read", "readline", "readlines", "close", "open",
-		"__string__", "__get_attribute__", "__members__"
+		"__string__", "__get_attribute__", "__introspect__"
 	};
 	return BuildNameList(names);
 }

@@ -40,7 +40,7 @@ Object* Module::__get_attribute__(const std::string& name) {
 	auto it = namespace_.find(name);
 	if (it == namespace_.end()) {
 		// 3) 魔术方法回退（与 Object/List/Instance 一致）：允许通过
-		//    属性访问调用 __members__ 等内建魔术方法。将其包装为
+		//    属性访问调用 __introspect__ 等内建魔术方法。将其包装为
 		//    BoundMethod（self = 模块对象），使调用时 receiver 自动绑定，
 		//    与 GetAttr 的 Module 分支（不绑定普通模块函数）区分开。
 		if (Object* magic = GetMagicMethodFunction(name)) {
@@ -65,11 +65,11 @@ Object* Module::__get_attribute__(const std::string& name) {
 	return it->second;
 }
 
-Object* Module::__members__() {
+Object* Module::__introspect__() {
 	// 先收集成员字典 members_ 中的 key，再补充命名空间中可被外部访问
 	// 的公开名称（与 __get_attribute__ 的可见性保持一致：private 符号
 	// 对模块外部不可见，故不列入成员列表）。
-	List* lst = static_cast<List*>(Object::__members__());
+	List* lst = static_cast<List*>(Object::__introspect__());
 	std::vector<std::string> exported;
 	for (const auto& kv : namespace_) {
 		if (kv.second == nullptr) continue;
@@ -95,7 +95,7 @@ Object* Module::__members__() {
 Object* Module::__string__(){
   // 默认表示："<name at 0xADDR>"（作为所有未显式定义 __string__ 的
   // 对象的兜底输出；匿名对象 name 为 @anonymous）。
-  return String::FromCString(("<Module \"" + std::string(get_name()) + "\">").c_str());
+  return String::FromCString(("<module \"" + std::string(get_name()) + "\">").c_str());
 }
 
 void Module::foreach_ref(const std::function<void(Object*)>& visit) {

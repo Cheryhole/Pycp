@@ -91,13 +91,13 @@ public:
 
     Object* __get_attribute__(const std::string& name) override;
     Object* __string__() override;
-    Object* __members__() override;
+    Object* __introspect__() override;
     void foreach_ref(const std::function<void(Object*)>& visit) override;
 };
 
 // File 实例方法的原生实现函数（PycpNativeFunction 签名）。
 // 从 PycpFile.cpp 暴露，供 io.cpp 把 write/read/readline/readlines/close/
-// open 注册进 File 类型类（BuiltinTypeClass）的 methods_，使 io.File.__members__()
+// open 注册进 File 类型类（BuiltinTypeClass）的 methods_，使 io.File.__introspect__()
 // 返回方法名而不是空结果。argv[0] 为 self（File*）。
 PycpNativeFunction File_write_fn();
 PycpNativeFunction File_read_fn();
