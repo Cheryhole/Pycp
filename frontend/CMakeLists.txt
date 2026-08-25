@@ -53,15 +53,11 @@ set(MAIN_SOURCE
     ${CMAKE_CURRENT_SOURCE_DIR}/../PycpMain.cpp
 )
 
-# linenoise 行编辑库（BSD 许可，单文件，无外部依赖）：提供 REPL 方向键/历史。
-# 仅用于无参数 REPL 路径。
-set(LINENOISE_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/linenoise/linenoise.c
+# 行编辑库：统一使用 cpp-linenoise（C++17 头文件库，跨平台，原生支持 Windows 控制台）。
+# 仅用于无参数 REPL 路径，header-only，无需编译源码。
+set(LINENOISE_INCLUDE_DIR
+    ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/cpp-linenoise
 )
-
-# linenoise.c 使用第三方风格写法，关闭若干告警以免引入新的全局编译警告。
-set_source_files_properties(${LINENOISE_SOURCES}
-    PROPERTIES COMPILE_FLAGS "-Wno-unused-parameter -Wno-sign-compare -Wno-implicit-fallthrough -Wno-old-style-cast -Wno-unused-function")
 
 include_directories(include)
 
@@ -138,7 +134,6 @@ add_executable(pycp
     ${AOT_SOURCES}
     ${BISON_PycpParser_OUTPUTS}
     ${FLEX_PycpLexer_OUTPUTS}
-    ${LINENOISE_SOURCES}
 )
 
 # =====================================================================
@@ -153,8 +148,8 @@ target_include_directories(pycp
     # backend 头文件（Pycp.hpp / PycpBytecode.hpp / PycpBytecodeVM.hpp 等）
     ${CMAKE_CURRENT_SOURCE_DIR}/../backend/include
 
-    # linenoise 头文件（REPL 行编辑）
-    ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/linenoise
+    # cpp-linenoise 头文件（REPL 行编辑，header-only）
+    ${LINENOISE_INCLUDE_DIR}
 )
 
 # =====================================================================

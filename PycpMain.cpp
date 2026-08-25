@@ -23,6 +23,7 @@
 //     PycpRuntime，但不需要 Python 或其他外部解释器）。
 // =============================================================
 
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -43,7 +44,7 @@
 #include "PycpException.hpp"
 #include "PycpConfig.hpp"    // 集中管理的常量（扩展名/输出命名/版本等）
 
-#include "linenoise.h"       // REPL 行编辑（方向键/历史），third_party/linenoise
+#include "linenoise.hpp"     // REPL 行编辑（方向键/历史），third_party/cpp-linenoise (C++17, 跨平台)
 
 #include <map>
 
@@ -269,17 +270,15 @@ void run_repl() {
 	bool continuation = false;
 
 	while (true) {
-		char* raw = linenoise(continuation ? "... " : ">>> ");
-		if (raw == nullptr) {
-			// Ctrl-D (EOF)：退出 REPL，退出码 0。
+		std::string line;
+		if (linenoise::Readline(continuation ? "... " : ">>> ", line)) {
+			// Ctrl-D / Ctrl-C（quit）：退出 REPL，退出码 0。
 			std::cout << std::endl;
 			break;
 		}
-		std::string line(raw);
-		linenoiseFree(raw);
 
 		// 历史记录：每读入一行（不含换行）即单独加入历史，供上箭头逐行
-		// 回退。不可把含换行的完整多行 buffer 整体入历史——linenoise 对
+		// 回退。不可把含换行的完整多行 buffer 整体入历史——cpp-linenoise 对
 		// 含换行的历史项在上箭头调出时会折叠为 "[... N pasted lines ...]"
 		// 占位符。空白行（主提示符直接回车）不产生历史项。
 		{
@@ -291,7 +290,7 @@ void run_repl() {
 				}
 			}
 			if (!line_blank) {
-				linenoiseHistoryAdd(line.c_str());
+				linenoise::AddHistory(line.c_str());
 			}
 		}
 
