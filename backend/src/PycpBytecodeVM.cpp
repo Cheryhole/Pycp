@@ -580,18 +580,20 @@ Object* VM::execute(CodeObject* co,
 					push(elem); Decref(elem);
 				} catch (const StopIteration&) {
 					Decref(it);
-					pc = pc + static_cast<std::size_t>(ins.operand) - 1;
-					if (pc >= pc_end)
+					const int64_t target = static_cast<int64_t>(pc) + static_cast<int32_t>(ins.operand);
+					if (target < 0 || static_cast<std::size_t>(target) >= pc_end)
 						throw VMError(cur_file(), cur_line(), "jump out of range.");
+					pc = static_cast<std::size_t>(target) - 1; // target=0 时 size_t 回绕，++pc 后到指令 0
 				}
 				break;
 			}
 
 			// ---- 控制流 ----
 			case Op::JUMP: {
-				pc = pc + static_cast<std::size_t>(ins.operand) - 1;
-				if (pc >= pc_end)
+				const int64_t target = static_cast<int64_t>(pc) + static_cast<int32_t>(ins.operand);
+				if (target < 0 || static_cast<std::size_t>(target) >= pc_end)
 					throw VMError(cur_file(), cur_line(), "jump out of range.");
+				pc = static_cast<std::size_t>(target) - 1; // target=0 时 size_t 回绕，++pc 后到指令 0
 				break;
 			}
 			case Op::JUMP_IF_FALSE: {
@@ -599,9 +601,10 @@ Object* VM::execute(CodeObject* co,
 				bool f = IsFalse(cond);
 				Decref(cond);
 				if (f) {
-					pc = pc + static_cast<std::size_t>(ins.operand) - 1;
-					if (pc >= pc_end)
+					const int64_t target = static_cast<int64_t>(pc) + static_cast<int32_t>(ins.operand);
+					if (target < 0 || static_cast<std::size_t>(target) >= pc_end)
 						throw VMError(cur_file(), cur_line(), "jump out of range.");
+					pc = static_cast<std::size_t>(target) - 1; // target=0 时 size_t 回绕，++pc 后到指令 0
 				}
 				break;
 			}
@@ -610,18 +613,20 @@ Object* VM::execute(CodeObject* co,
 				bool f = IsFalse(cond);
 				Decref(cond);
 				if (!f) {
-					pc = pc + static_cast<std::size_t>(ins.operand) - 1;
-					if (pc >= pc_end)
+					const int64_t target = static_cast<int64_t>(pc) + static_cast<int32_t>(ins.operand);
+					if (target < 0 || static_cast<std::size_t>(target) >= pc_end)
 						throw VMError(cur_file(), cur_line(), "jump out of range.");
+					pc = static_cast<std::size_t>(target) - 1; // target=0 时 size_t 回绕，++pc 后到指令 0
 				}
 				break;
 			}
 			case Op::BREAK: {
 				// 由 Codegen 回填为当前最内层循环 end，语义同 JUMP，
 				// 天然仅退出一层循环（无需 VM 维护循环栈）。
-				pc = pc + static_cast<std::size_t>(ins.operand) - 1;
-				if (pc >= pc_end)
+				const int64_t target = static_cast<int64_t>(pc) + static_cast<int32_t>(ins.operand);
+				if (target < 0 || static_cast<std::size_t>(target) >= pc_end)
 					throw VMError(cur_file(), cur_line(), "jump out of range.");
+				pc = static_cast<std::size_t>(target) - 1; // target=0 时 size_t 回绕，++pc 后到指令 0
 				break;
 			}
 

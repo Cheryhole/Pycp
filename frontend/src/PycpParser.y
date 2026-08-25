@@ -992,6 +992,7 @@ void Pycperror(Node*& _, const char *s) {
 Node* parse(const std::string& text){
 	Node* _final_asttree = nullptr;
 	g_lexer_error = false;
+	Pycplineno = 1; // 每个文件独立计数，避免多文件 import 时行号累积。
 
 	YY_BUFFER_STATE buffer = Pycp_scan_string(text.c_str());
 
@@ -1027,10 +1028,10 @@ Node* parsef(const std::string& path){
 // 注意：调用方需自行在调用前重置 Pycp_parse_error_count 与
 // g_current_source_path（见 ModuleLoader::compile_statement），本函数与
 // parse() 对称地重置词法错误标志。
-Node* parse_statement(const std::string& text){
+Node* parse_statement(const std::string& text, int initial_line){
 	Node* _final_asttree = nullptr;
 	g_lexer_error = false;
-	Pycplineno = 1; // 重置行号，避免同进程内多次解析累积导致报错行号偏大。
+	Pycplineno = initial_line; // 支持 REPL 会话级连续行号：起始行由调用方（如会话计数）指定。
 
 	YY_BUFFER_STATE buffer = Pycp_scan_string(text.c_str());
 

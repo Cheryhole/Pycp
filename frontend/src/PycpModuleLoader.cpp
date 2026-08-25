@@ -13,7 +13,7 @@
 // 由 Flex/Bison 生成的解析器提供
 extern Pycp::Ast::Node* parsef(const std::string& path);
 extern Pycp::Ast::Node* parse(const std::string& src);
-extern Pycp::Ast::Node* parse_statement(const std::string& src);
+extern Pycp::Ast::Node* parse_statement(const std::string& src, int initial_line = 1);
 extern int Pycp_parse_error_count;
 extern std::string g_current_source_path;
 
@@ -90,7 +90,8 @@ BC::Module ModuleLoader::compile_string(const std::string& src,
 }
 
 BC::Module ModuleLoader::compile_statement(const std::string& src,
-                                           const std::string& name) {
+                                           const std::string& name,
+                                           int initial_line) {
 	// 单语句解析 ABI：解析【一段完整语句】（可跨多行，如类/函数/列表定义），
 	// 整体作为独立 Program 编译并执行。REPL 逐条输入模型下，每次只传入当前
 	// 完整 buffer（不携带历史行），由调用方保证 buffer 已由续行启发式判定为
@@ -99,7 +100,7 @@ BC::Module ModuleLoader::compile_statement(const std::string& src,
 	Pycp_parse_error_count = 0;
 	g_current_source_path = name;
 
-	Pycp::Ast::Node* ast = parse_statement(src);
+	Pycp::Ast::Node* ast = parse_statement(src, initial_line);
 	if (ast == nullptr || Pycp_parse_error_count > 0) {
 		throw Pycp::Exception("");
 	}

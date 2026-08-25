@@ -427,6 +427,8 @@ cmake --build build -j
 
 ## 最近更新
 
+- **VM 跳转越界检查修复「跳回指令 0」边界**：当循环恰好是代码对象的第一条指令时（REPL 中先 `import io` 再单独粘贴 `repeat if True{...}`、或文件/函数体以循环开头），循环末尾向后跳转的目标为指令 0。此前 VM 五处跳转 opcode（`FOR_ITER`/`JUMP`/`JUMP_IF_FALSE`/`JUMP_IF_TRUE`/`BREAK`）把 int64 中间结果强转 `size_t` 后再判越界，向后跳回指令 0 时中间值 `-1` 回绕成 `0xFFFF...F`，恒 `>= pc_end` 而误报 `jump out of range`。现改为在 int64 域计算并校验最终目标 `target ∈ [0, pc_end)`，再赋 `pc = target - 1`（`target=0` 时 `size_t` 回绕，主循环 `++pc` 后合法到达指令 0）；真正越界的跳转仍正确报错，字节码格式与 codegen 不变。
+- **REPL 会话级连续行号**：REPL 错误行号不再每次输入从 1 重新计数，而是按整个会话的物理输入行连续递增（含空行、续行、编译失败的行），对齐 Python 交互模式。实现上为 `parse_statement`/`compile_statement` 增加 `initial_line` 参数，由 REPL 主循环维护会话行号计数并传入；词法/语法/语义/运行时错误均自动获得正确的会话行号。同时修复文件模式 `parse()` 不重置行号导致的 import 子模块报错行号累积问题（此前 2 行的子模块错误会报 `line 5`，现正确报 `line 2`）。
 - **运行时类型命名去 `Object` 后缀**：`ListObject`→`List`、`ClassObject`→`Class`、
   `InstanceObject`→`Instance`、`ModuleObject`→`Module`、`FileObject`→`File`，ABI 工厂/
   类型操作函数统一改为对应类型的静态方法（`Integer::FromLong`、`String::FromCString`、
@@ -437,6 +439,10 @@ cmake --build build -j
 - **解释执行 bug 修复**：修复 `STORE_ATTR` 未释放 `pop` 传入值的引用计数导致的退出时
   double free；`Module` 新增 `foreach_ref` 遍历命名空间使模块级对象在 GC 标记阶段可达，
   避免误回收。
+- **向后跳转修复**：修复 VM 中 `FOR_ITER`/`JUMP`/`JUMP_IF_FALSE`/`JUMP_IF_TRUE`/`BREAK`
+  将负偏移 operand（循环回跳）强转为无符号导致越界抛 `jump out of range` 的问题；现改用
+  有符号算术计算目标 pc，使 `repeat if True` 等恒真无限循环及 while/range/foreach/break
+  控制流正常执行。
 
 ## 贡献指南
 

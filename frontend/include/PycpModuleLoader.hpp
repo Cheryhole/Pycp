@@ -50,10 +50,13 @@ public:
 	// 供 REPL 逐条输入模型使用：每次只传入当前完整 buffer（不携带历史行），
 	// 与 compile_string 不同之处在于调用方语义为「一条语句」而非「整段程序」，
 	// 二者底层均置 repl_eval=true 以支持顶层表达式回显。
-	//   src  : 单条语句源码文本（可跨多行）
-	//   name : 用于报错显示的源名称（默认 REPL_SOURCE_NAME，即 <stdin>）
+	//   src         : 单条语句源码文本（可跨多行）
+	//   name        : 用于报错显示的源名称（默认 REPL_SOURCE_NAME，即 <stdin>）
+	//   initial_line: 本次解析的起始行号（默认 1）。REPL 传入会话累计行号，
+	//                 使错误显示的行号在整个会话中连续递增。
 	static BC::Module compile_statement(const std::string& src,
-	                                    const std::string& name = REPL_SOURCE_NAME);
+	                                    const std::string& name = REPL_SOURCE_NAME,
+	                                    int initial_line = 1);
 
 	// 根据模块名在 entry_dir 下解析为绝对文件路径。
 	//   成功返回绝对路径；失败返回空字符串。

@@ -23,6 +23,7 @@
 //     PycpRuntime，但不需要 Python 或其他外部解释器）。
 // =============================================================
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -268,6 +269,10 @@ void run_repl() {
 
 	std::string buffer;
 	bool continuation = false;
+	// 会话级行号计数：下一条物理输入行将显示的行号（从 1 开始，每读入一行 +1，
+	// 含空行、续行、编译失败的行），使 REPL 错误行号在整个会话中连续递增，
+	// 对齐 Python 交互模式的计数方式。
+	int next_line = 1;
 
 	while (true) {
 		std::string line;
@@ -296,6 +301,7 @@ void run_repl() {
 
 		buffer += line;
 		buffer += '\n';
+		++next_line; // 每个物理输入行（含空行/续行/失败行）都推进会话行号。
 
 		// 整段 buffer 全为空白（空格/制表符/换行/回车）时安全忽略，
 		// 不进入编译，不打印错误，回到主提示符。覆盖主提示符空行与
@@ -329,8 +335,12 @@ void run_repl() {
 		//（VM 在析构时统一释放），故此处用裸指针，切勿 delete。
 		Pycp::BC::Module* mod = nullptr;
 		try {
+			// 该输入块首行对应的会话行号 = 已累计的下一条行号 - buffer 内行数。
+			int first_line = next_line -
+				static_cast<int>(std::count(buffer.begin(), buffer.end(), '\n'));
 			mod = new Pycp::BC::Module(
-				Pycp::ModuleLoader::compile_statement(buffer, Pycp::REPL_SOURCE_NAME));
+				Pycp::ModuleLoader::compile_statement(
+					buffer, Pycp::REPL_SOURCE_NAME, first_line));
 		} catch (Pycp::Exception&) {
 			// 语法错误：解析器已向 stderr 输出了 File/line/msg，故不重复打印。
 			// 丢弃已累积的输入，回到主提示符。
