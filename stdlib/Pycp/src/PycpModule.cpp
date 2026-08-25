@@ -5,6 +5,7 @@
 #include "PycpInteger.hpp"
 #include "PycpBoolean.hpp"
 #include "PycpList.hpp"      // List_length_fn / List_append_fn
+#include "PycpMap.hpp"       // Map_length_fn
 #include "PycpNone.hpp"
 #include "PycpGC.hpp"
 #include "PycpException.hpp"
@@ -58,16 +59,28 @@ Object* _builtin_list_ctor(Object*, Object** argv, std::size_t argc) {
 	return r;
 }
 
-// get_members(obj)：返回包含 obj 所有成员名称的 List。
-Object* _builtin_get_members(Object*, Object** argv, std::size_t argc) {
-	if (argc != 1) throw TypeError("get_members() expects exactly 1 argument.");
-	if (argv[0] == nullptr) throw TypeError("get_members() argument is null.");
-	return argv[0]->__members__();
+// Map()：Map 类型构造器。
+//   - 无参数：返回空 Map。
+//   - 1 参数：调用对象的 __map__ 转换（Map 幂等；List 从二元组构造）。
+Object* _builtin_map_ctor(Object*, [[maybe_unused]] Object** argv, std::size_t argc) {
+	if (argc == 0) {
+		// 空构造：调用方应按约定提供非空 argv 数组（元素为 null）。
+		return Map::New();
+	}
+	// 不再支持 Pycp.Map(other) 转换：__map__ 已改为成员视图语义。
+	throw TypeError("Map() expects 0 arguments (use Pycp.Map()).");
+}
+
+// introspect(obj)：返回包含 obj 所有成员名称（含方法）的 List。
+Object* _builtin_introspect(Object*, Object** argv, std::size_t argc) {
+	if (argc != 1) throw TypeError("introspect() expects exactly 1 argument.");
+	if (argv[0] == nullptr) throw TypeError("introspect() argument is null.");
+	return argv[0]->__introspect__();
 }
 
 // 将类对象以指定名字放入模块命名空间（构造 BuiltinTypeClass ->
 // Incref 进 map -> 释放 Owned）。返回 cls 以便调用方 add_method 注册
-// 类型方法，使 Pycp.X.__members__() 能枚举到（而非空列表）。
+// 类型方法，使 Pycp.X.__introspect__() 能枚举到（而非空列表）。
 BuiltinTypeClass* set_type_class(Module* mod, const char* name, PycpNativeFunction ctor) {
 	auto* ns = mod->get_namespace();
 	BuiltinTypeClass* cls = New<BuiltinTypeClass>(name, ctor);
@@ -213,11 +226,12 @@ Module* make_pycp_module() {
 	// 内置类型类：Pycp.String(x) / Pycp.Integer(x)。
 	// 调用时走类实例化路径（BuiltinTypeClass::instantiate），把参数
 	// 传给构造回调，返回内置 String / Integer 对象。
-	// 注册类型方法，使 Pycp.X.__members__() 枚举到（与实例 __members__ 一致）。
+	// 注册类型方法，使 Pycp.X.__introspect__() 枚举到（与实例 __introspect__ 一致）。
 	BuiltinTypeClass* string_cls = set_type_class(mod, "String", _builtin_string_ctor);
 	BuiltinTypeClass* integer_cls = set_type_class(mod, "Integer", _builtin_integer_ctor);
 	BuiltinTypeClass* list_cls    = set_type_class(mod, "List",   _builtin_list_ctor);
 	BuiltinTypeClass* boolean_cls = set_type_class(mod, "Boolean", _builtin_boolean_ctor);
+	BuiltinTypeClass* map_cls     = set_type_class(mod, "Map",    _builtin_map_ctor);
 
 	// List 的公开方法（真实实例方法）：length / append。
 	list_cls->add_method("length", New<Function>("length", List_length_fn()));
@@ -226,6 +240,14 @@ Module* make_pycp_module() {
 	add_magic_methods(list_cls, {
 		"__iterator__", "__list__", "__addition__", "__string__",
 		"__get_item__", "__set_item__",
+	});
+
+	// Map 的公开方法（真实实例方法）：length。
+	map_cls->add_method("length", New<Function>("length", Map_length_fn()));
+	// Map 魔术方法（Map 本身不可哈希，故不注册 __hash__）。
+	add_magic_methods(map_cls, {
+		"__map__", "__boolean__", "__string__",
+		"__get_item__", "__set_item__", "__delete_item__",
 	});
 
 	// String 魔术方法（无真实公开非魔术方法）。
@@ -259,18 +281,8 @@ Module* make_pycp_module() {
 	set_func(mod, "private", _builtin_private);
 	set_func(mod, "public",  _builtin_public);
 
-	// get_members(obj)：返回对象所有成员名称的 List。
-	set_func(mod, "get_members", _builtin_get_members);
-
-	// 全局布尔常量：Pycp.True / Pycp.False（作为模块命名空间常量值，
-	// 访问即得到常驻 Boolean 实例，与关键字 True/False 是同一对象）。
-	{
-		auto* ns = mod->get_namespace();
-		(*ns)["True"] = Boolean::True();
-		Incref(Boolean::True());
-		(*ns)["False"] = Boolean::False();
-		Incref(Boolean::False());
-	}
+	// introspect(obj)：返回对象所有成员名称（含方法）的 List。
+	set_func(mod, "introspect", _builtin_introspect);
 
 	return mod;
 }

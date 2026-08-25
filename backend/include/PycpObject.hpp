@@ -56,7 +56,7 @@ class PYCP_API Object{
 
 	protected:
 		// 成员字典：name -> Object*（类似 Python 的 __dict__）。
-		// 供 __get_attribute__ / __set_attribute__ / __members__ 使用。
+		// 供 __get_attribute__ / __set_attribute__ / __introspect__ 使用。
 		std::unordered_map<std::string, Object*> members_;
 
 	public:
@@ -130,6 +130,32 @@ class PYCP_API Object{
 	// 默认抛 TypeError；List 返回自身（幂等）。
 	virtual Object* __list__();
 
+	// 成员字典视图（类似 Python 的 __dict__）。
+	// 返回绑定本对象的 Map 视图，实时反映/修改对象成员
+	// （经 __get_attribute__ / __set_attribute__ / __delete_attribute__）。
+	// 默认实现：返回 owner=this 的 Map 视图（仅含 members_）。
+	virtual Object* __map__();
+
+	// 数据成员键值对（用于 __map__ 视图遍历/字符串化）。
+	// 默认返回 members_ 中所有项；Instance override 合并 fields_+动态成员，
+	// 且排除类方法（仅反映实例数据，对齐 Python __dict__）。
+	virtual std::vector<std::pair<std::string, Object*>> member_pairs() const;
+
+	// 哈希值（Pycp.Integer）。默认抛 TypeError（不可哈希类型）。
+	// 可哈希类型（Integer/String）override 返回对象哈希。
+	virtual Object* __hash__();
+
+	// 删除协议（delete 关键字）。
+	// __delete__()：delete obj 触发（默认抛 TypeError，供用户自定义清理逻辑，
+	//   不会触发 C++ 析构，内存仍由 GC 管理）。
+	// __delete_attribute__(name)：delete obj.attr 触发（默认从 members_ 删除，
+	//   不存在抛 AttributeError）。Instance override 优先从 fields_ 删除。
+	// __delete_item__(key)：delete obj[key] 触发（默认抛 TypeError，Map/List 改
+	//   为按 key/索引删除）。
+	virtual Object* __delete__();
+	virtual void __delete_attribute__(const std::string& name);
+	virtual Object* __delete_item__(Object* key);
+
 	// 迭代协议。
 	// __iterator__()：返回一个全新的迭代器（默认不可迭代，抛 TypeError）。
 	//   List/String 可迭代，每次调用返回新的独立迭代器实例。
@@ -138,9 +164,9 @@ class PYCP_API Object{
 	virtual Object* __iterator__();
 	virtual Object* __next__();
 
-	// 属性名枚举（Pycp.get_members(obj)）：返回本对象所有成员名称的
-	// List。默认返回 members_ 的 key；子类可 override 添加额外成员名。
-	virtual Object* __members__();
+	// 属性名枚举（Pycp.introspect(obj)）：返回本对象所有成员名称的
+	// List（含属性与方法）。默认返回 members_ 的 key；子类可 override 添加额外成员名。
+	virtual Object* __introspect__();
 
 	// GC 子引用遍历：枚举本对象持有的 Object* 子引用，供标记-清除与
 	// Decref 递归释放统一使用（替代旧 Type 枚举的 switch 分发）。
@@ -152,6 +178,12 @@ class PYCP_API Object{
 
 class Integer;
 class String;
+
+// 引用计数操作（C-ABI 别名 PYCP_Incref/PYCP_Decref），声明于 PycpGC.hpp。
+void Decref(Object* obj);
+// 对象相等判定辅助：调用 a->__equal__(b)，读取返回 Integer 0/1 后释放临时结果。
+// 完整内联定义见 PycpInteger.hpp（依赖 Integer 完整类型）。
+bool object_equal(Object* a, Object* b);
 
 } // namespace Pycp
 

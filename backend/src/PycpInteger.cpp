@@ -57,6 +57,11 @@ Object* Integer::__string__(){
 	return New<String>(std::to_string(this->_value));
 }
 
+Object* Integer::__hash__(){
+	// 哈希值即整数本身（对齐 Python：hash(42) == 42）。
+	return Integer::FromLong(this->_value);
+}
+
 Object* Integer::__boolean__(){
 	// 非零为 True，零为 False。
 	return this->_value == 0 ? Boolean::False() : Boolean::True();
@@ -145,10 +150,11 @@ Object* Integer::__less_equal__(Object* other){
 
 Object* Integer::__equal__(Object* other){
 	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
-		throw TypeError("Unsupported to compare.");
+		// 不同类型直接判不等（对齐 Python: 42 == "x" -> False）。
+		return Boolean::False();
 	}
 	return this->_value == static_cast<Integer*>(other)->_value
-		? instances[1] : instances[0];
+		? Boolean::True() : Boolean::False();
 }
 
 Object* Integer::__not_equal__(Object* other){
@@ -175,15 +181,16 @@ Object* Integer::__greater_equal__(Object* other){
 		? instances[1] : instances[0];
 }
 
-Object* Integer::__members__() {
+Object* Integer::__introspect__() {
 	// 先收集基类 members_ 中的 key，再添加 integer 特有的魔术方法名。
-	List* lst = static_cast<List*>(Object::__members__());
+	List* lst = static_cast<List*>(Object::__introspect__());
 	std::vector<std::string> extra = {
 		"__integer__", "__string__", "__boolean__", "__negation__", "__addition__",
 		"__subtraction__", "__multiplication__", "__division__", "__power__",
 		"__less_than__", "__less_equal__", "__equal__", "__not_equal__",
 		"__greater_than__", "__greater_equal__",
-		"__get_attribute__", "__set_attribute__", "__members__",
+		"__get_attribute__", "__set_attribute__", "__introspect__",
+		"__hash__",
 	};
 	for (const auto& n : extra) {
 		bool found = false;

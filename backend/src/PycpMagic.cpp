@@ -24,10 +24,13 @@ Object* _magic0(Object* receiver, const std::string& m) {
 	if (m == "__string__")    return receiver->__string__();
 	if (m == "__boolean__")   return receiver->__boolean__();
 	if (m == "__list__")      return receiver->__list__();
+	if (m == "__map__")       return receiver->__map__();
+	if (m == "__hash__")      return receiver->__hash__();
 	if (m == "__iterator__")  return receiver->__iterator__();
 	if (m == "__next__")      return receiver->__next__();
 	if (m == "__negation__")  return receiver->__negation__();
-	if (m == "__members__")   return receiver->__members__();
+	if (m == "__introspect__")   return receiver->__introspect__();
+	if (m == "__delete__")    return receiver->__delete__();
 	throw AttributeError("unknown magic method '" + m + "'");
 }
 
@@ -46,6 +49,8 @@ Object* _magic1(Object* receiver, const std::string& m, Object* arg) {
 	if (m == "__greater_equal__")  return receiver->__greater_equal__(arg);
 	if (m == "__get_item__")       return receiver->__get_item__(arg);
 	if (m == "__get_attribute__")  return receiver->__get_attribute__(AsString(arg));
+	if (m == "__delete_attribute__") return (receiver->__delete_attribute__(AsString(arg)), None::instance);
+	if (m == "__delete_item__")    return receiver->__delete_item__(arg);
 	throw AttributeError("unknown magic method '" + m + "'");
 }
 
@@ -62,7 +67,8 @@ Object* _magic2(Object* receiver, const std::string& m, Object* arg1, Object* ar
 bool is_zero_arg_magic(const std::string& m) {
 	return m == "__integer__" || m == "__string__" || m == "__boolean__" ||
 	       m == "__list__" || m == "__iterator__" || m == "__next__" ||
-	       m == "__negation__" || m == "__members__";
+	       m == "__negation__" || m == "__introspect__" ||
+	       m == "__map__" || m == "__hash__" || m == "__delete__";
 }
 
 bool is_one_arg_magic(const std::string& m) {
@@ -72,7 +78,8 @@ bool is_one_arg_magic(const std::string& m) {
 	       m == "__less_equal__" || m == "__equal__" ||
 	       m == "__not_equal__" || m == "__greater_than__" ||
 	       m == "__greater_equal__" || m == "__get_item__" ||
-	       m == "__get_attribute__";
+	       m == "__get_attribute__" || m == "__delete_attribute__" ||
+	       m == "__delete_item__";
 }
 
 bool is_two_arg_magic(const std::string& m) {

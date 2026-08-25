@@ -10,6 +10,7 @@
 #include "PycpException.hpp"
 #include "PycpIterator.hpp"
 #include "PycpMagic.hpp"
+#include "PycpMap.hpp"
 
 #include <sstream>
 
@@ -130,14 +131,14 @@ Object* List::__iterator__() {
 	return Pycp::New<ListIterator>(this);
 }
 
-Object* List::__members__() {
+Object* List::__introspect__() {
 	// 先收集基类 members_ 中的 key，再添加 list 特有的方法名和魔术方法名。
-	List* lst = static_cast<List*>(Object::__members__());
+	List* lst = static_cast<List*>(Object::__introspect__());
 	std::vector<std::string> extra = {
 		"length", "append",
 		"__iterator__", "__list__", "__boolean__", "__addition__", "__string__",
-		"__get_item__", "__set_item__",
-		"__get_attribute__", "__set_attribute__", "__members__",
+		"__get_item__", "__set_item__", "__delete_item__",
+		"__get_attribute__", "__set_attribute__", "__introspect__",
 	};
 	for (const auto& n : extra) {
 		// 避免重复（若已在 members_ 中则跳过）。
@@ -153,6 +154,20 @@ Object* List::__members__() {
 		if (!found) lst->append(String::FromCString(n.c_str()));
 	}
 	return lst;
+}
+
+Object* List::__map__() {
+	// 返回绑定本列表的成员字典视图（仅含动态 members_）。
+	return Map::NewView(this);
+}
+
+Object* List::__delete_item__(Object* key) {
+	// 按下标删除元素（支持负索引）。
+	std::size_t idx = normalize_index(key);
+	Object* removed = items_[idx];
+	items_.erase(items_.begin() + static_cast<std::ptrdiff_t>(idx));
+	if (removed != nullptr) Decref(removed);
+	return None::instance;
 }
 
 Object* List::__addition__(Object* other) {

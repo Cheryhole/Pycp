@@ -8,6 +8,7 @@
 #include "PycpMagic.hpp"
 
 #include <iostream>
+#include <functional>
 
 namespace Pycp {
 
@@ -57,6 +58,12 @@ Object* String::__boolean__(){
 	return _value.empty() ? Boolean::False() : Boolean::True();
 }
 
+Object* String::__hash__(){
+	// 对底层 std::string 取哈希，转 int64（对齐 Python 字符串哈希语义）。
+	std::size_t h = std::hash<std::string>{}(this->_value);
+	return Integer::FromLong(static_cast<long long>(h));
+}
+
 Object* String::__addition__(Object* other){
 	if (other == nullptr || !other->is_type("String")){
 		throw TypeError("Unsupported to add.");
@@ -93,6 +100,15 @@ Object* String::__get_item__(Object* key) {
 	return String::FromCString(one.c_str());
 }
 
+Object* String::__equal__(Object* other) {
+	if (other == nullptr || !other->is_type("String")) {
+		// 不同类型直接判不等（对齐 Python: "x" == 1 -> False）。
+		return Boolean::False();
+	}
+	return _value == static_cast<String*>(other)->_value
+		? Boolean::True() : Boolean::False();
+}
+
 Object* String::__list__() {
 	// Pycp.List("abc") -> ["a", "b", "c"]：逐字符转 List。
 	List* lst = Pycp::New<List>();
@@ -108,13 +124,15 @@ Object* String::__iterator__() {
 	return Pycp::New<StringIterator>(this);
 }
 
-Object* String::__members__() {
+Object* String::__introspect__() {
 	// 先收集基类 members_ 中的 key，再添加 string 特有的魔术方法名。
-	List* lst = static_cast<List*>(Object::__members__());
+	List* lst = static_cast<List*>(Object::__introspect__());
 	std::vector<std::string> extra = {
 		"__integer__", "__string__", "__boolean__", "__addition__", "__multiplication__",
+		"__equal__",
 		"__get_item__", "__list__", "__iterator__",
-		"__get_attribute__", "__set_attribute__", "__members__",
+		"__get_attribute__", "__set_attribute__", "__introspect__",
+		"__hash__",
 	};
 	for (const auto& n : extra) {
 		bool found = false;

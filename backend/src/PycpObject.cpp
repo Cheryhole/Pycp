@@ -2,10 +2,12 @@
 #include "PycpString.hpp"
 #include "PycpList.hpp"
 #include "PycpBoolean.hpp"
+#include "PycpMap.hpp"
 #include "PycpABI.hpp"
 #include "PycpMagic.hpp"
 
 #include <sstream>
+#include <unordered_set>
 
 namespace Pycp{
 
@@ -146,6 +148,63 @@ Object* Object::__list__(){
   throw TypeError("Unsupported to convert to list.");
 }
 
+Object* Object::__map__(){
+  // 返回绑定本对象的成员字典视图（仅含 members_）。
+  return Map::NewView(this);
+}
+
+std::vector<std::pair<std::string, Object*>> Object::member_pairs() const {
+	// 合并数据成员（members_）与方法名（来自 __introspect__()，含魔术方法
+	// 与类型特有方法），使 __map__ 视图同时包含属性与方法（对齐 Instance/Class）。
+	// 方法名对应 value 填 nullptr，视图读取时经 __get_attribute__ 动态取可调用对象。
+	std::vector<std::pair<std::string, Object*>> out;
+	std::unordered_set<std::string> seen;
+	out.reserve(members_.size());
+	for (const auto& kv : members_) {
+		if (kv.second == nullptr) continue;
+		if (seen.insert(kv.first).second) {
+			out.emplace_back(kv.first, kv.second);
+		}
+	}
+	// 收集方法名：__introspect__() 为虚调用，子类已正确枚举各自方法名。
+	Object* mlist = const_cast<Object*>(this)->__introspect__();
+	if (mlist != nullptr) {
+		List* lst = static_cast<List*>(mlist);
+		for (std::size_t i = 0; i < lst->size(); ++i) {
+			Object* name_obj = lst->at(i);
+			if (name_obj == nullptr) continue;
+			std::string name = AsString(name_obj);
+			if (seen.insert(name).second) {
+				out.emplace_back(name, nullptr);
+			}
+		}
+		Decref(mlist);
+	}
+	return out;
+}
+
+Object* Object::__hash__(){
+  throw TypeError("unhashable type: " + type_name_);
+}
+
+Object* Object::__delete__(){
+  throw TypeError("object does not support deletion.");
+}
+
+void Object::__delete_attribute__(const std::string& name){
+  // 默认从成员字典删除（释放旧引用）；不存在抛 AttributeError。
+  auto it = members_.find(name);
+  if (it == members_.end() || it->second == nullptr) {
+    throw AttributeError("'" + name + "' not found.");
+  }
+  Decref(it->second);
+  members_.erase(it);
+}
+
+Object* Object::__delete_item__([[maybe_unused]] Object* key) {
+  throw TypeError("object does not support item deletion.");
+}
+
 Object* Object::__iterator__(){
   throw TypeError("object is not iterable");
 }
@@ -154,8 +213,8 @@ Object* Object::__next__(){
   throw TypeError("object is not an iterator");
 }
 
-Object* Object::__members__(){
-  // 默认返回成员字典中所有 key 的名称列表。
+Object* Object::__introspect__(){
+  // 默认返回成员字典中所有 key 的名称列表（含已设置的成员，可能含方法）。
   List* lst = Pycp::New<List>();
   for (const auto& kv : members_) {
     lst->append(String::FromCString(kv.first.c_str()));

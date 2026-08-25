@@ -58,13 +58,15 @@ public:
 	// 魔术方法。
 	Object* __get_item__(Object* key) override;
 	Object* __set_item__(Object* key, Object* value) override;
+	Object* __delete_item__(Object* key) override;
 	Object* __list__() override;
+	Object* __map__() override;  // 返回成员字典视图
 	Object* __addition__(Object* other) override;
 	Object* __boolean__() override;
 	Object* __string__() override;
 	Object* __get_attribute__(const std::string& name) override;
 	Object* __iterator__() override;
-	Object* __members__() override;
+	Object* __introspect__() override;
 
 	// GC 子引用遍历：枚举 items_ 中所有元素。
 	void foreach_ref(const std::function<void(Object*)>& visit) override;
@@ -72,7 +74,7 @@ public:
 
 // List 实例方法的原生实现函数访问器（PycpNativeFunction 签名），供
 // stdlib/Pycp 把 length/append 注册进 List 类型类 BuiltinTypeClass 的
-// methods_，使 Pycp.List.__members__() 返回方法名。argv[0] 为 self（List*）。
+// methods_，使 Pycp.List.__introspect__() 返回方法名。argv[0] 为 self（List*）。
 PycpNativeFunction List_length_fn();
 PycpNativeFunction List_append_fn();
 

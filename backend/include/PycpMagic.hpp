@@ -31,11 +31,11 @@ namespace Pycp {
 // 调用方只需按普通属性处理（GetAttr 会包装成 BoundMethod）。
 Pycp::Object* GetMagicMethodFunction(const std::string& name);
 
-// 判断 name 是否为已识别的魔术方法名（供 __members__ 枚举）。
+// 判断 name 是否为已识别的魔术方法名（供 __introspect__ 枚举）。
 bool IsMagicMethodName(const std::string& name);
 
 // 把一组成员名构造成一个 List（每元素为单字符/字符串 String）。
-// 供各类型的 __members__ 使用（返回 Owned Object*，即 List）。
+// 供各类型的 __introspect__ 使用（返回 Owned Object*，即 List）。
 Object* BuildNameList(const std::vector<std::string>& names);
 
 // 处理 __name__ 属性访问：返回该对象类型名（type_name()）对应的

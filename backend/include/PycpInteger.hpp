@@ -43,7 +43,8 @@ class PYCP_API Integer : public Object{
 		Object* __not_equal__(Object*) override;
 		Object* __greater_than__(Object*) override;
 		Object* __greater_equal__(Object*) override;
-		Object* __members__() override;
+		Object* __introspect__() override;
+		Object* __hash__() override;
 
 		static void Initialize();
 		static void Finalize();
@@ -52,5 +53,15 @@ class PYCP_API Integer : public Object{
 };
 
 } // namespace Pycp
+
+// 对象相等判定辅助：调用 a->__equal__(b)，读取返回的 Integer 0/1 后释放该
+// 临时结果（避免每次比较泄漏一个 Integer 对象）。放在 Integer 完整类型可见
+// 处定义，调用方无需手动 Decref。
+inline bool Pycp::object_equal(Pycp::Object* a, Pycp::Object* b) {
+	Pycp::Object* r = a->__equal__(b);
+	int64_t v = static_cast<Pycp::Integer*>(r)->get_value();
+	Pycp::Decref(r);
+	return v != 0;
+}
 
 #endif //PYCP_INTEGER_HPP

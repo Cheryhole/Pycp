@@ -116,6 +116,15 @@ class IndexError : public Exception {
 				: Exception(file_, lineno_, "IndexError: " + msg) {}
 };
 
+// 键错误：映射（Map）键不存在
+class KeyError : public Exception {
+	public:
+		explicit KeyError(const std::string& msg)
+				: Exception("KeyError: " + msg) {}
+		KeyError(const std::string& file_, int lineno_, const std::string& msg)
+				: Exception(file_, lineno_, "KeyError: " + msg) {}
+};
+
 // 属性错误：对象不存在指定属性 / 方法
 class AttributeError : public Exception {
 	public:
