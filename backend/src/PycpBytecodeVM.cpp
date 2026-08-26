@@ -204,34 +204,18 @@ Object* VM::exec_module(Module* m) {
 }
 
 Pycp::Module* VM::load_module(const std::string& name) {
-	// 命中缓存直接返回
+	// 命中 VM 局部缓存（含入口占坑、已加载的 registry 子模块）直接返回。
 	auto it = module_cache_.find(name);
 	if (it != module_cache_.end()) {
 		return it->second;
 	}
 
-	// 尝试加载动态库扩展（stdlib/io.so、脚本目录 foo.so 等）。
-	// 搜索目录取入口文件所在目录（与 .pycp 的 resolve 目录一致）。
-	{
-		std::string search_dir;
-		if (module_ != nullptr && !module_->source_path.empty()) {
-			std::size_t slash = module_->source_path.find_last_of("/\\");
-			if (slash != std::string::npos)
-				search_dir = module_->source_path.substr(0, slash);
-		}
-		Pycp::Module* extmod = LoadNativeModule(name, search_dir);
-		if (extmod != nullptr) {
-			GC_AddRoot(extmod);
-			// module_cache_ 持久持有该模块对象，需将其引用计数计入，
-			// 否则后续（如 ~VM 清理命名空间）的 Decref 会把 rc 减到 0 误删，
-			// 导致 module_cache_ 持有悬垂指针（use-after-free）。
-			Incref(extmod);
-			module_cache_[name] = extmod;
-			// 标记为常驻模块：其生命周期跨 VM 实例，~VM 不应清理其
-			// 命名空间内容（如 Pycp.Object 类），交由 Finalize 统一回收。
-			resident_modules_.insert(name);
-			return extmod;
-		}
+	// 内建动态库（io/Pycp/classtools 等）与 AOT 编译的 .pycp 子模块
+	// （进程内统一符号 PycpModule_<name>）统一经 ABI 入口 ImportModule 处理，
+	// 命中进程级缓存直接返回。返回 nullptr 表示非上述来源，回退 registry。
+	Pycp::Module* imported = Pycp::ImportModule(name);
+	if (imported != nullptr) {
+		return imported;
 	}
 
 	// 未命中：需从注册表查找模块并执行其顶层

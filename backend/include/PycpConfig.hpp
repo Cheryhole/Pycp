@@ -40,7 +40,10 @@ constexpr uint16_t BYTECODE_VERSION_MINOR = 0;
 // =============================================================
 // AOT 生成符号前缀（跨模块链接约定）
 // =============================================================
-constexpr const char* AOT_MODULE_INIT_PREFIX = "pycp_module_"; // 模块初始化函数前缀
+// 模块初始化函数前缀（AOT 生成的 .pycp 子模块入口符号为 PycpModule_<name>，
+// 无哈希、按模块名唯一）。Pycp::ImportModule 经 dlsym(RTLD_DEFAULT,
+// "PycpModule_<name>") 链接，使解释器与 AOT 共用统一导入入口。
+constexpr const char* AOT_MODULE_INIT_PREFIX = "PycpModule_"; // 模块初始化函数前缀
 constexpr const char* AOT_FN_PREFIX          = "pycp_fn_";      // 代码对象翻译函数前缀
 constexpr const char* AOT_ENTRY_FN_NAME      = "pycp_main";     // 入口函数名
 

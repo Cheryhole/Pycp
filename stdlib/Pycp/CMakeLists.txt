@@ -6,7 +6,7 @@
 #   Pycp.Integer(x)：内置类型类，调用时返回整数（语义对齐 Python int(x)）。
 #
 # 产物：动态库 Pycp（Pycp.so / Pycp.dll / Pycp.dylib），输出到 build/stdlib/。
-# 入口：导出统一符号 PycpModuleInit（extern "C"），import Pycp 时动态加载。
+# 入口：导出符号 PycpModule_Pycp（按模块名命名，extern "C"），import Pycp 时动态加载。
 # 依赖：PycpRuntime。
 # =====================================================================
 

@@ -5,7 +5,7 @@
 # 支持 .write / .readline 方法）。
 #
 # 产物：动态库 io（io.so / io.dll / io.dylib），输出到 build/stdlib/。
-# 入口：导出统一符号 PycpModuleInit（extern "C"），import io 时动态加载。
+# 入口：导出符号 PycpModule_io（按模块名命名，extern "C"），import io 时动态加载。
 # 依赖：PycpRuntime。
 # =====================================================================
 

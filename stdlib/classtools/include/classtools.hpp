@@ -17,8 +17,8 @@
 // `from classtools import super, public, private` 将这些运行时对象绑定到
 // 当前命名空间，之后即可作为普通标识符使用。
 //
-// 动态库导出统一入口符号 PycpModuleInit（extern "C"），由运行时
-// VM::load_module 经 LoadNativeModule 的 dlsym("PycpModuleInit") 调用。
+// 动态库导出入口符号 PycpModule_classtools（extern "C"，按模块名导出），由运行时
+// VM::load_module 经 LoadNativeModule 的 dlsym("PycpModule_classtools") 调用。
 // =============================================================
 
 namespace Pycp {
@@ -29,7 +29,7 @@ class Module; // 前置声明（完整定义见 backend/include/PycpModule.hpp�
 constexpr const char* MODULE_NAME = "classtools";
 
 // 动态库入口（extern "C" 定义于 classtools.cpp）。
-extern "C" Module* PycpModuleInit();
+extern "C" Module* PycpModule_classtools();
 
 } // namespace Pycp
 

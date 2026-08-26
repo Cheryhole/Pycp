@@ -5,7 +5,7 @@
 # 本模块仅提供空命名空间，使 `from classtools import ...` 加载不报错。
 #
 # 产物：动态库 classtools（classtools.so / .dll / .dylib），输出到 build/stdlib/。
-# 入口：导出统一符号 PycpModuleInit（extern "C"），import classtools 时动态加载。
+# 入口：导出符号 PycpModule_classtools（按模块名命名，extern "C"），import classtools 时动态加载。
 # 依赖：PycpRuntime。
 # =====================================================================
 

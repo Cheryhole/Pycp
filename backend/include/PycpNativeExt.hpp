@@ -7,7 +7,7 @@
 // import 语句可导入 C++ 编写的动态库（Linux .so / Windows .dll /
 // macOS .dylib），扩展导出一个入口符号：
 //
-//   extern "C" Pycp::Module* PycpModuleInit_<name>();
+//   extern "C" Pycp::Module* PycpModule_<name>();
 //
 // 返回一个已构建好的 Module（Owned，refcount=1），其命名空间
 // 内可放置 Function（复用 PycpNativeFunction 签名）等对象。

@@ -157,34 +157,6 @@ if(BUILD_RUNTIME_SHARED)
 endif()
 
 # =====================================================================
-# Python 绑定：直接嵌入目标文件（无外部依赖）
-# ---------------------------------------------------------------------
-# 绑定是动态模块，依赖 shared OBJECT；仅当动态库启用时才可构建。
-# =====================================================================
-if(BUILD_PYTHON_BINDING)
-    if(NOT BUILD_RUNTIME_SHARED)
-        message(WARNING "BUILD_PYTHON_BINDING requires BUILD_RUNTIME_SHARED=ON; skipping.")
-    else()
-        find_package(Python REQUIRED COMPONENTS Interpreter Development)
-        find_package(pybind11 CONFIG REQUIRED)
-
-        pybind11_add_module(PycpRuntime4Python
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpRuntime4Python.cpp
-            $<TARGET_OBJECTS:PycpRuntime_obj_shared>
-        )
-        target_include_directories(PycpRuntime4Python PRIVATE ${PYCP_INCLUDE_DIR})
-
-        set_target_properties(PycpRuntime4Python PROPERTIES
-            PREFIX ""
-            SUFFIX ".pyd"
-            OUTPUT_NAME "PycpRuntime4Python"
-            LIBRARY_OUTPUT_DIRECTORY ${OUTPUT_DIR}
-            RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_DIR}
-        )
-    endif()
-endif()
-
-# =====================================================================
 # 测试程序
 # ---------------------------------------------------------------------
 # 依赖静态 OBJECT；仅当静态库启用时才可构建。

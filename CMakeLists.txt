@@ -319,6 +319,7 @@ set(PYCP_AOT_HEADERS
     PycpFunction.hpp
     PycpNone.hpp
     PycpInteger.hpp
+    PycpBoolean.hpp
     PycpString.hpp
     PycpList.hpp
     PycpManager.hpp

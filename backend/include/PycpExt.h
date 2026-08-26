@@ -7,9 +7,10 @@
 // 扩展是一个动态库（Linux .so / Windows .dll / macOS .dylib），
 // 通过 import <name> 被加载。扩展必须导出一个入口符号：
 //
-//   extern "C" Pycp::Module* PycpModuleInit();
+//   extern "C" Pycp::Module* PycpModule_<name>();
 //
-// （所有动态库统一使用符号名 PycpModuleInit，运行时靠文件名区分模块。）
+// （符号名 = "PycpModule_" + 模块名，运行时按导入名 dlsym 查找，与
+// AOT 子模块符号命名统一，如 myext 库导出 PycpModule_myext。）
 // 该函数返回一个已构建好的 Module（Owned，refcount=1），其
 // 命名空间内放置导出的函数（Function，复用 PycpNativeFunction 签名）。
 //
@@ -43,16 +44,15 @@
 #include "PycpNativeExt.hpp"
 
 // 导出模块入口函数签名（extern "C"，避免 name mangling）。
-// 统一符号名 PycpModuleInit（靠文件名区分模块），name 参数仅用于
-// 模块对象命名，不再拼入符号名。
-// Windows 下需显式 __declspec(dllexport) 才能让扩展 DLL 导出该符号，
-// 否则 GetProcAddress 找不到 PycpModuleInit。
+// 符号名 = "PycpModule_" + name（name 拼入符号名），与运行时按导入名
+// dlsym 查找的约定一致。Windows 下需显式 __declspec(dllexport) 才能让
+// 扩展 DLL 导出该符号，否则 GetProcAddress 找不到 PycpModule_<name>。
 #ifdef _WIN32
   #define PYCP_EXPORT_MODULE(name) \
-	extern "C" __declspec(dllexport) Pycp::Module* PycpModuleInit()
+	extern "C" __declspec(dllexport) Pycp::Module* PycpModule_##name()
 #else
   #define PYCP_EXPORT_MODULE(name) \
-	extern "C" Pycp::Module* PycpModuleInit()
+	extern "C" Pycp::Module* PycpModule_##name()
 #endif
 
 // 将函数 fn 以名字 fname 放入模块命名空间 ns。

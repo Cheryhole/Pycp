@@ -20,12 +20,11 @@
 
 namespace Pycp {
 
-// 原生扩展入口符号约定：所有动态库导出统一符号
-//   extern "C" Module* PycpModuleInit();
-// （靠文件名区分模块，dlsym 统一查 "PycpModuleInit"）。
+// 原生扩展入口符号约定：每个动态库按其模块名导出符号
+//   extern "C" Module* PycpModule_<name>();
+// （如 io 库导出 PycpModule_io，Pycp 库导出 PycpModule_Pycp）。LoadNativeModule
+// 按导入名 name 拼出 "PycpModule_<name>" 经 dlsym 解析，与 AOT 子模块符号命名统一。
 namespace {
-constexpr const char* ENTRY_SYMBOL = "PycpModuleInit";
-
 // 模块初始化入口函数指针类型。
 using NativeModuleInitFn = Module* (*)();
 
@@ -129,16 +128,17 @@ Module* LoadNativeModule(const std::string& name,
 	}
 #endif
 
-	// 解析入口符号 PycpModuleInit（统一符号名）。
+	// 解析入口符号 PycpModule_<name>（按导入名拼接，与 AOT 子模块命名统一）。
+	const std::string entry_symbol = std::string("PycpModule_") + name;
 	NativeModuleInitFn init = nullptr;
 #if defined(_WIN32)
 	// GetProcAddress 返回 FARPROC（通用函数指针），先转 void* 再转具体签名，
 	// 消除 -Wcast-function-type（Windows 下标准做法）。
 	init = reinterpret_cast<NativeModuleInitFn>(
 		reinterpret_cast<void*>(
-			GetProcAddress(static_cast<HMODULE>(handle), ENTRY_SYMBOL)));
+			GetProcAddress(static_cast<HMODULE>(handle), entry_symbol.c_str())));
 #else
-	init = reinterpret_cast<NativeModuleInitFn>(dlsym(handle, ENTRY_SYMBOL));
+	init = reinterpret_cast<NativeModuleInitFn>(dlsym(handle, entry_symbol.c_str()));
 #endif
 	if (init == nullptr) {
 #if defined(_WIN32)
@@ -147,7 +147,7 @@ Module* LoadNativeModule(const std::string& name,
 		dlclose(handle);
 #endif
 		throw ImportError("Extension '" + path + "' has no entry symbol '" +
-		                  ENTRY_SYMBOL + "'");
+		                  entry_symbol + "'");
 	}
 
 	// 调用入口，跨 ABI 边界保护异常。

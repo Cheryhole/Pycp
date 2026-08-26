@@ -145,9 +145,9 @@ Module* make_io_module() {
 
 } // anonymous namespace
 
-// 动态库入口（统一符号名 PycpModuleInit，靠文件名区分模块）。
-// 由 VM::load_module 经 LoadNativeModule 的 dlsym("PycpModuleInit") 调用。
-extern "C" Module* PycpModuleInit() {
+// 动态库入口（符号名 PycpModule_io，按模块名导出）。
+// 由 VM::load_module 经 LoadNativeModule 的 dlsym("PycpModule_io") 调用。
+extern "C" Module* PycpModule_io() {
 	return make_io_module();
 }
 

@@ -11,8 +11,8 @@
 //   - io.input(prompt)：单参数，打印提示（不换行）后读取一行，
 //     返回截止至换行符之前的字符串（对齐 Python3 input）。
 //
-// 动态库导出统一入口符号 PycpModuleInit（extern "C"），由运行时
-// VM::load_module 经 LoadNativeModule 的 dlsym("PycpModuleInit") 调用，
+// 动态库导出入口符号 PycpModule_io（extern "C"，按模块名导出），由运行时
+// VM::load_module 经 LoadNativeModule 的 dlsym("PycpModule_io") 调用，
 // 返回构建好的 Module。
 // =============================================================
 
@@ -27,7 +27,7 @@ class Module; // 前置声明（完整定义见 runtime 的 backend/include/Pycp
 constexpr const char* MODULE_NAME = "io";
 
 // 动态库入口（extern "C" 定义于 io.cpp）。
-extern "C" Module* PycpModuleInit();
+extern "C" Module* PycpModule_io();
 
 } // namespace Pycp
 

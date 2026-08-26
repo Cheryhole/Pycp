@@ -3,7 +3,6 @@
 
 #include <cstdio>
 #include <fstream>
-#include <set>
 #include <sstream>
 #include <stdexcept>
 
@@ -54,21 +53,11 @@ std::string cpp_string_literal(const std::string& s) {
 	return out;
 }
 
-// 模块名 -> 唯一 C++ 标识符后缀（FNV-1a 哈希，8 位十六进制）。
-std::string module_hash(const std::string& name) {
-	uint64_t h = 1469598103934665603ULL;
-	for (unsigned char c : name) {
-		h ^= c;
-		h *= 1099511628211ULL;
-	}
-	char buf[17];
-	std::snprintf(buf, sizeof(buf), "%016llx", static_cast<unsigned long long>(h));
-	return std::string(buf);
-}
-
-// 模块初始化函数符号名。
+// 模块初始化函数符号名（无哈希，按模块名唯一）。Pycp::ImportModule 经
+// dlsym(RTLD_DEFAULT, "PycpModule_<name>") 链接，使解释器与 AOT 共用
+// 统一导入入口。
 std::string module_init_symbol(const std::string& name) {
-	return std::string(Pycp::AOT_MODULE_INIT_PREFIX) + module_hash(name);
+	return std::string(Pycp::AOT_MODULE_INIT_PREFIX) + name;
 }
 
 // 计算单个代码对象指令流的最大可能栈深（保守顺序扫描）。
@@ -159,11 +148,8 @@ std::size_t estimate_stack_depth(const Pycp::BC::CodeObject& co) {
 
 // 单个 CodeObject 翻译为一个 native 函数体。
 //   self == nullptr 时 env->globals 指向 g_mod_ns（模块命名空间）。
-//   all_deps : 全部 .pycp 依赖模块名集合，用于区分「内建库导入」与
-//              「.pycp 依赖模块导入」（LOAD_MODULE 生成不同的加载代码）。
 void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
-                   const Pycp::BC::CodeObject& co, std::size_t co_idx,
-                   const std::set<std::string>& deps) {
+                   const Pycp::BC::CodeObject& co, std::size_t co_idx) {
 	std::size_t nlocals = co.nlocals;
 	std::size_t max_depth = estimate_stack_depth(co);
 	std::size_t nparams = co.nparams;
@@ -252,17 +238,16 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 			case Pycp::BC::Op::LOAD_MODULE: {
 				std::size_t idx = static_cast<std::size_t>(ins.operand);
 				const std::string& dep = module.imports[idx];
-				if (deps.count(dep) > 0) {
-					// .pycp 依赖模块：调用其生成的初始化函数（跨文件链接）。
-					os << "    { Pycp::Module* m = "
-					   << module_init_symbol(dep) << "();\n";
-					os << "      Pycp::Incref(m); st.push_back(m); }\n";
-				} else {
-					// 内建库（io/Pycp/classtools 等）：经 LoadNativeModule 加载并缓存。
-					os << "    { Pycp::Module* m = pycp_load_native("
-					   << cpp_string_literal(dep) << ");\n";
-					os << "      Pycp::Incref(m); st.push_back(m); }\n";
-				}
+				// 所有 import（内建库与 .pycp 子模块）统一经 ABI 入口
+				// Pycp::ImportModule 加载（内部含进程级缓存、内建库 dlsym、
+				// .pycp 子模块 PycpModule_<name> 链接），无需生成侧分流。
+				// ImportModule 返回常驻 Borrowed 对象，此处 Incref 平衡后续
+				// 栈弹出时的 Decref。
+				os << "    { Pycp::Module* m = Pycp::ImportModule("
+				   << cpp_string_literal(dep) << ");\n";
+				os << "      if (m == nullptr) throw Pycp::ImportError(\"No module named \" + std::string("
+				   << cpp_string_literal(dep) << "));\n";
+				os << "      Pycp::Incref(m); st.push_back(m); }\n";
 				break;
 			}
 			case Pycp::BC::Op::GET_ATTR: {
@@ -498,9 +483,9 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 						std::string attr_name = parent_ref.substr(dot + 1);
 						os << "      { Pycp::Object* mobj = Pycp::Environment_Lookup(env.get(), "
 						   << cpp_string_literal(mod_name) << ");\n";
-						// Pycp 可能尚未被当前模块显式 import：经加载辅助取。
+						// Pycp 可能尚未被当前模块显式 import：经统一导入入口取。
 						if (mod_name == "Pycp") {
-							os << "        if (mobj == nullptr) mobj = pycp_load_native(\"Pycp\");\n";
+							os << "        if (mobj == nullptr) mobj = Pycp::ImportModule(\"Pycp\");\n";
 						}
 						os << "        if (mobj != nullptr && dynamic_cast<Pycp::Module*>(mobj) != nullptr) {\n";
 						os << "          Pycp::Module* mo = static_cast<Pycp::Module*>(mobj);\n";
@@ -672,16 +657,17 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 
 // 生成单个模块的 .cpp 内容（不含 main）。
 //   is_entry : 是否入口模块（入口模块额外生成 main）。
-//   all_deps : 全部依赖模块名列表（含入口自身为空串除外），供入口生成
-//              被导入模块初始化函数的 extern 声明（跨文件链接）。
 std::string emit_module_cpp(const Pycp::BC::Module& module,
                             const std::string& modname,
                             bool is_entry,
-                            const std::string& entry_name,
-                            const std::vector<std::string>& all_deps) {
+                            const std::string& entry_name) {
 	if (module.code_objects.empty()) {
 		throw std::runtime_error("AOT: empty module (no code objects).");
 	}
+
+	// 会话内唯一自增 id（用于生成模块注册器的唯一类型/变量名）。
+	static std::size_t aot_reg_id = 0;
+	std::size_t reg_id = aot_reg_id++;
 
 	std::ostringstream os;
 
@@ -715,14 +701,6 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	os << "#include <iostream>\n";
 	os << "#include <cstddef>\n\n";
 
-	// ---- 被导入模块初始化函数的 extern 声明（仅入口模块需要跨文件链接）----
-	if (is_entry) {
-		for (const std::string& dep : all_deps) {
-			os << "Pycp::Module* " << module_init_symbol(dep) << "();\n";
-		}
-		if (!all_deps.empty()) os << "\n";
-	}
-
 	// ---- 全局状态 ----
 	os << "// 全局常量池对象（对应 .pycp 编译期常量池，模块初始化时预构造）\n";
 	os << "static Pycp::Object* g_c[" << (module.const_pool.empty() ? 1 : module.const_pool.size()) << "];\n\n";
@@ -730,19 +708,6 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	os << "static std::unordered_map<std::string, Pycp::Object*> g_globals;\n\n";
 	os << "// 模块命名空间指针（指向本模块 Module 的 namespace）\n";
 	os << "static std::unordered_map<std::string, Pycp::Object*>* g_mod_ns = nullptr;\n\n";
-
-	// ---- 内建库加载辅助（LOAD_MODULE 遇到非 .pycp 依赖时调用）----
-	os << "// 加载内建库/动态库模块（io/Pycp/classtools 等），带缓存。\n";
-	os << "static std::unordered_map<std::string, Pycp::Module*> g_native_mods;\n";
-	os << "static Pycp::Module* pycp_load_native(const std::string& name) {\n";
-	os << "    auto it = g_native_mods.find(name);\n";
-	os << "    if (it != g_native_mods.end()) return it->second;\n";
-	os << "    Pycp::Module* m = Pycp::LoadNativeModule(name, \".\");\n";
-	os << "    if (m == nullptr) throw Pycp::ImportError(\"native module '\" + name + \"' not found\");\n";
-	os << "    Pycp::GC_AddRoot(m);\n";
-	os << "    g_native_mods[name] = m;\n";
-	os << "    return m;\n";
-	os << "}\n\n";
 
 	// ---- 辅助函数：环境/栈清理 ----
 	os << "static void pycp_cleanup_env(std::shared_ptr<Pycp::BC::Environment>& env, std::vector<Pycp::Object*>& st) {\n";
@@ -760,11 +725,10 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	os << "\n";
 
 	// ---- 各代码对象翻译 ----
-	std::set<std::string> deps(all_deps.begin(), all_deps.end());
 	for (std::size_t i = 1; i < module.code_objects.size(); ++i) {
-		emit_function(os, module, module.code_objects[i], i, deps);
+		emit_function(os, module, module.code_objects[i], i);
 	}
-	emit_function(os, module, module.code_objects[0], 0, deps);
+	emit_function(os, module, module.code_objects[0], 0);
 
 	// ---- 常量池预构造 ----
 	os << "static void pycp_init_consts() {\n";
@@ -800,9 +764,20 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	os << "    g_globals.clear();\n";
 	os << "}\n\n";
 
+	// ---- 模块注册器（静态初始化阶段，main 之前登记本模块初始化函数）----
+	// 供 Pycp::ImportModule 经注册表「直接调用」PycpModule_<name>，无需 dlsym。
+	os << "// 静态初始化阶段注册本模块初始化函数，供 Pycp::ImportModule 经注册表调用。\n";
+	os << "extern \"C\" Pycp::Module* " << module_init_symbol(modname) << "();\n";  // 前向声明
+	os << "namespace { struct PycpAotReg_" << reg_id << " {\n";
+	os << "  PycpAotReg_" << reg_id << "() {\n";
+	os << "    Pycp::RegisterAotModule(" << cpp_string_literal(modname) << ", &"
+	   << module_init_symbol(modname) << ");\n";
+	os << "  }\n";
+	os << "}; PycpAotReg_" << reg_id << " _pycp_aot_reg_" << reg_id << "; }\n\n";
+
 	// ---- 模块初始化函数（非 static，供跨模块调用）----
 	os << "// 初始化并返回本模块的 Module（懒执行，首次调用运行顶层）。\n";
-	os << "Pycp::Module* " << module_init_symbol(modname) << "() {\n";
+	os << "extern \"C\" Pycp::Module* " << module_init_symbol(modname) << "() {\n";
 	os << "    static Pycp::Module* mod = nullptr;\n";
 	os << "    static bool done = false;\n";
 	os << "    if (!done) {\n";
@@ -848,25 +823,18 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 std::string EmitCpp(const Pycp::BC::Module& module,
                     const std::string& entry_name) {
 	// 单模块模式：视为入口模块（模块名为空，无依赖）。
-	std::vector<std::string> no_deps;
-	return emit_module_cpp(module, "", /*is_entry=*/true, entry_name, no_deps);
+	return emit_module_cpp(module, "", /*is_entry=*/true, entry_name);
 }
 
 std::map<std::string, std::string> EmitCppAll(
     const std::map<std::string, Pycp::BC::Module>& modules,
     const std::string& entry_name) {
-	// 收集所有依赖模块名（除入口模块外的所有模块）。
-	std::vector<std::string> all_deps;
-	for (const auto& kv : modules) {
-		if (kv.first != entry_name) all_deps.push_back(kv.first);
-	}
-
 	std::map<std::string, std::string> result;
 	for (const auto& kv : modules) {
 		const std::string& modname = kv.first;
 		bool is_entry = (modname == entry_name);
 		result[modname] = emit_module_cpp(kv.second, modname, is_entry,
-		                                  Pycp::AOT_ENTRY_FN_NAME, all_deps);
+		                                  Pycp::AOT_ENTRY_FN_NAME);
 	}
 	return result;
 }

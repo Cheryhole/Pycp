@@ -1,6 +1,8 @@
 #include "PycpABI.hpp"
 #include "PycpClass.hpp"
 #include "PycpFunction.hpp"
+#include "PycpNativeExt.hpp"
+#include <map>
 
 namespace Pycp {
 
@@ -272,6 +274,68 @@ void Environment_Store(BC::Environment* env, const std::string& name,
 	}
 
 	Decref(value);
+}
+
+// =============================================================
+// 模块导入（类似 CPython 的 PyImport_ImportModule）
+// =============================================================
+// AOT 编译的 .pycp 子模块注册表
+//   frontend AOT 在生成的 .cpp 中，于文件作用域（静态初始化阶段，main
+//   之前）把各模块初始化函数指针登记进此表；ImportModule 据此「直接调用」
+//   对应 PycpModule_<name>（对标用户要求的「直接调用 PycpModule_Initialize」），
+//   不依赖 dlsym 与符号导出（避免主可执行文件动态符号表不可见的问题）。
+// =============================================================
+using AotModuleInitFn = Module* (*)();
+static std::map<std::string, AotModuleInitFn>& aot_module_registry() {
+	static std::map<std::string, AotModuleInitFn> reg;
+	return reg;
+}
+
+void RegisterAotModule(const std::string& name, AotModuleInitFn init) {
+	aot_module_registry()[name] = init;
+}
+
+// =============================================================
+// 模块导入（类似 CPython 的 PyImport_ImportModule）
+// 统一入口：进程级缓存 → 内建动态库 → AOT .pycp 子模块（注册表）。
+// 返回 nullptr 表示既非内建也非 AOT 子模块，调用方回退到自身机制
+// （如 VM::load_module 的 registry 路径）。
+// =============================================================
+Module* ImportModule(const std::string& name) {
+	// 进程级缓存（跨 VM 实例、跨 AOT 调用共享）。
+	static std::map<std::string, Module*> g_import_cache;
+	auto it = g_import_cache.find(name);
+	if (it != g_import_cache.end()) {
+		return it->second;
+	}
+
+	// 1) 内建动态库（io/Pycp/classtools 等）。搜索目录取 cwd；stdlib 由
+	//    LoadNativeModule 内部按可执行文件目录兜底。
+	Module* m = LoadNativeModule(name, ".");
+	if (m != nullptr) {
+		// 模块对象常驻进程：AddRoot 防止 GC 回收，Incref 抵消后续
+		// （如 ~VM）的 Decref，避免 use-after-free。
+		GC_AddRoot(m);
+		Incref(m);
+		g_import_cache[name] = m;
+		return m;
+	}
+
+	// 2) AOT 编译的 .pycp 子模块：经注册表「直接调用」PycpModule_<name>。
+	//    无哈希、按模块名唯一，由 frontend AOT 在静态初始化阶段登记。
+	auto ait = aot_module_registry().find(name);
+	if (ait != aot_module_registry().end()) {
+		Module* sub = ait->second();
+		if (sub != nullptr) {
+			// 生成函数内部已 GC_AddRoot（幂等），此处仅登记缓存。
+			GC_AddRoot(sub);
+			g_import_cache[name] = sub;
+			return sub;
+		}
+	}
+
+	// 3) 既非内建也非 AOT 子模块：交回调用方处理（如解释器 registry）。
+	return nullptr;
 }
 
 } // namespace Pycp

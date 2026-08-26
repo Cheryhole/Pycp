@@ -88,6 +88,35 @@ PYCP_API bool IsFalse(Object* v);
 PYCP_API Object* Call(Object* callable, Object** argv, std::size_t argc);
 
 // =============================================================
+// 模块导入（类似 CPython 的 PyImport_ImportModule）
+// =============================================================
+//
+// 按模块名加载并返回 Pycp::Module*（Borrowed，不增引用；调用方负责
+// 视需要 Incref）。统一处理：
+//   1) 进程级缓存命中直接返回；
+//   2) 内建动态库（io/Pycp/classtools 等）→ LoadNativeModule；
+//   3) AOT 编译的 .pycp 子模块 → dlsym(RTLD_DEFAULT, "PycpModule_<name>")
+//      调用其生成的初始化函数（无哈希、按模块名唯一）。
+// 命中后模块对象经 GC_AddRoot + Incref 常驻进程，跨 VM 实例存活，
+// 由 Finalize 统一回收。
+//
+// 返回 nullptr 表示「既不是内建库也不是 AOT 子模块」（如解释器路径下
+// 仅注册于 registry 的 .pycp 子模块），调用方（VM::load_module）应回退
+// 到其 registry 路径。寻不到任何来源时由调用方抛出 ImportError。
+//
+// from-import 的属性提取由调用方负责（本函数只管模块对象加载），
+// 职责与 PyImport_ImportModule 对齐。
+PYCP_API Module* ImportModule(const std::string& name);
+
+// AOT 编译的 .pycp 子模块在生成的 .cpp 静态初始化阶段，把自己的初始化函数
+// 指针登记进进程级注册表。ImportModule 据此「直接调用」对应 PycpModule_<name>
+// （对标「直接调用 PycpModule_Initialize」），不依赖 dlsym/符号导出。
+//   name : 模块名（与 ImportModule 的 name 一致，无哈希）
+//   init : 形如 Pycp::Module* (*)() 的初始化函数（返回模块对象，懒执行顶层）
+using AotModuleInitFn = Module* (*)();
+PYCP_API void RegisterAotModule(const std::string& name, AotModuleInitFn init);
+
+// =============================================================
 // 执行环境（Environment）接口 —— VM 与 AOT 统一使用
 // =============================================================
 
