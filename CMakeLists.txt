@@ -122,6 +122,18 @@ set(LEXER_SOURCES
     ${PYCP_FRONTEND_DIR}/src/escape_handler.cpp
 )
 
+set(PREPROCESSOR_SOURCES
+    ${PYCP_FRONTEND_DIR}/src/preprocessor/PycpPreprocessor.cpp
+)
+
+set(PREPROCESSOR_BISON_INPUT
+    ${PYCP_FRONTEND_DIR}/src/preprocessor/PycpPreprocessorParser.y
+)
+
+set(PREPROCESSOR_FLEX_INPUT
+    ${PYCP_FRONTEND_DIR}/src/preprocessor/PycpPreprocessorLexer.l
+)
+
 # 主程序入口：位于项目顶层目录
 set(MAIN_SOURCE
     ${CMAKE_CURRENT_SOURCE_DIR}/PycpMain.cpp
@@ -178,6 +190,42 @@ add_flex_bison_dependency(
 )
 
 # =====================================================================
+# 预处理指令解析器（Flex/Bison，独立于主解析器）
+# ---------------------------------------------------------------------
+# 生成 PycpPreprocessorParser.cpp/.hpp 与 PycpPreprocessorLexer.cpp/.hpp，
+# 由 PREPROCESSOR_SOURCES 中的 PycpPreprocessor.cpp 驱动（接口文件）。
+# =====================================================================
+bison_target(
+    PycpPreprocessorParser
+
+    ${PREPROCESSOR_BISON_INPUT}
+
+    ${PYCP_GENERATED_DIR}/PycpPreprocessorParser.cpp
+
+    DEFINES_FILE
+    ${PYCP_GENERATED_DIR}/PycpPreprocessorParser.hpp
+
+    COMPILE_FLAGS
+    "-v -Wcounterexamples"
+)
+
+flex_target(
+    PycpPreprocessorLexer
+
+    ${PREPROCESSOR_FLEX_INPUT}
+
+    ${PYCP_GENERATED_DIR}/PycpPreprocessorLexer.cpp
+
+    DEFINES_FILE
+    ${PYCP_GENERATED_DIR}/PycpPreprocessorLexer.hpp
+)
+
+add_flex_bison_dependency(
+    PycpPreprocessorLexer
+    PycpPreprocessorParser
+)
+
+# =====================================================================
 # 可执行文件
 # =====================================================================
 # 行编辑库（提供 REPL 方向键/历史，仅用于无参数 REPL 路径）。
@@ -192,8 +240,11 @@ add_executable(pycp
     ${AOT_SOURCES}
     ${LOADER_SOURCES}
     ${LEXER_SOURCES}
+    ${PREPROCESSOR_SOURCES}
     ${BISON_PycpParser_OUTPUTS}
     ${FLEX_PycpLexer_OUTPUTS}
+    ${BISON_PycpPreprocessorParser_OUTPUTS}
+    ${FLEX_PycpPreprocessorLexer_OUTPUTS}
 )
 
 # =====================================================================

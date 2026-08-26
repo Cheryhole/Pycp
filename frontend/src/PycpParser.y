@@ -5,6 +5,7 @@
 #include <string>
 #include "PycpAstNode.hpp"
 #include "PycpLexer.hpp"
+#include "preprocessor/PycpPreprocessor.hpp"
 
 using namespace Pycp::Ast;
 
@@ -1016,7 +1017,14 @@ Node* parsef(const std::string& path){
 
 	file.close();
 
-	return parse(text);
+	// 文本层预处理（# replace / # define / 行指令保留）：
+	// 失败时错误已按 "File \"<path>\", line <n>" 两行格式输出，返回 nullptr 中止。
+	std::string processed;
+	if (!Pycp::Preprocessor::process(text, path, processed)) {
+		return nullptr;
+	}
+
+	return parse(processed);
 }
 
 // 单语句解析 ABI（REPL 逐条执行 / 外部复用）。

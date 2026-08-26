@@ -36,6 +36,7 @@
 #include "PycpCodegen.hpp"
 #include "PycpAot.hpp"
 #include "PycpModuleLoader.hpp"
+#include "preprocessor/PycpPreprocessor.hpp"
 
 #include "Pycp.hpp"          // 运行时（Object/GC/ABI/Manager）
 #include "PycpBytecode.hpp"  // 字节码格式 / 序列化
@@ -70,6 +71,7 @@ struct Options {
 	bool interpret = true;   // -i（默认解释执行）
 	bool emit_cpp = false;   // --emit-cpp
 	bool dump = false;       // -d / --dump
+	bool preprocess = false; // -p / --preprocess
 	bool show_help = false;
 };
 
@@ -84,9 +86,14 @@ void print_help(const char* prog) {
 		<< "  -c, --compile     Compile <input_file> (.pycp) to bytecode (.cpycp)\n"
 		<< "  -b, --bytecode    Generate .cpycp bytecode file (alias of -c)\n"
 		<< "      --emit-cpp    Translate .pycp to C++ source file(s)\n"
-		<< "  -o, --output <f>  Output path (used with -c/-b/--emit-cpp)\n"
+		<< "  -o, --output <f>  Output path (used with -c/-b/--emit-cpp/-p)\n"
 		<< "  -d, --dump        Dump bytecode (constant pool, symbols, code objects,\n"
-		<< "                    instructions & line numbers) of .pycp or .cpycp\n\n"
+		<< "                    instructions & line numbers) of .pycp or .cpycp\n"
+		<< "  -p, --preprocess  Preprocess a .pycp file (no execution): writes\n"
+		<< "                    <input-basename>.pp.pycp in the input directory\n"
+		<< "                    (or -o <file>). Directives: # replace NAME with VALUE,\n"
+		<< "                    # define NAME [VALUE], # stop replacing NAME, # undefine NAME;\n"
+		<< "                    code can use #lineno / #filename (line & path)\n\n"
 		<< "Import & modules:\n"
 		<< "  * import foo / import foo as bar  loads foo.pycp from the entry\n"
 		<< "    file's directory and binds a module object in the current scope.\n"
@@ -134,6 +141,10 @@ bool parse_args(int argc, char** argv, Options& opt) {
 			opt.dump = true;
 			opt.compile = false;
 			opt.interpret = false;
+		} else if (arg == "-p" || arg == "--preprocess") {
+			opt.preprocess = true;
+			opt.compile = false;
+			opt.interpret = false;
 		} else if (!arg.empty() && arg[0] == '-') {
 			std::cerr << "Error: unknown option '" << arg << "'." << std::endl;
 			return false;
@@ -152,6 +163,14 @@ std::string default_output(const std::string& input, const std::string& suffix) 
 	std::size_t dot = base.find_last_of('.');
 	if (dot != std::string::npos) base = base.substr(0, dot);
 	return base + suffix;
+}
+
+// 预处理默认输出：输入同目录的 <basename>.pp.pycp（-p 无 -o 时使用）。
+std::string preprocess_output(const std::string& input) {
+	std::size_t slash = input.find_last_of("/\\");
+	const std::string dir = (slash == std::string::npos)
+		? std::string() : input.substr(0, slash + 1);
+	return dir + default_output(input, Pycp::EXT_PP_PYCP);
 }
 
 // 读取整个文件为字节流
@@ -440,7 +459,36 @@ int main(int argc, char** argv) {
 	try {
 		Pycp::Initialize();
 
-		if (opt.dump) {
+		if (opt.preprocess) {
+			// 预处理查看：仅支持 .pycp 源码文本（.cpycp 字节码无法预处理）。
+			if (has_suffix(opt.input_file, Pycp::EXT_CPYCP)) {
+				std::cerr << "Error: -p/--preprocess only works on .pycp source files "
+				             "(got " << opt.input_file << ")." << std::endl;
+				ret = 1;
+			} else {
+				std::ifstream f(opt.input_file);
+				if (!f) throw Pycp::Exception("Cannot open file: " + opt.input_file);
+				std::string text((std::istreambuf_iterator<char>(f)),
+				                 std::istreambuf_iterator<char>());
+				f.close();
+
+				std::string processed;
+				if (!Pycp::Preprocessor::process(text, opt.input_file, processed)) {
+					ret = 1; // 错误已按两行格式输出
+				} else {
+					// 默认写到输入同目录的 <basename>.pp.pycp（-o 可覆盖），
+					// 不再直接打印到 console。
+					const std::string out = opt.output_file.empty()
+						? preprocess_output(opt.input_file)
+						: opt.output_file;
+					std::ofstream of(out, std::ios::binary);
+					if (!of) throw Pycp::Exception("Cannot write file: " + out);
+					of << processed;
+					std::cout << "Preprocessed source: " << out << std::endl;
+				}
+			}
+		}
+		else if (opt.dump) {
 			// 字节码查看：.pycp（解析+编译）或 .cpycp（反序列化）后输出详情。
 			// 加载逻辑（按后缀获取 Module）保留在前端；具体的格式化打印
 			// 由后端 Pycp::BC::DumpModule 实现。

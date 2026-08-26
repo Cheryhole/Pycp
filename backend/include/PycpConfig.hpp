@@ -18,9 +18,10 @@ constexpr const char* PYCP_VERSION = "1.0.0";
 // =============================================================
 // 文件扩展名（源文件 / 字节码 / 生成 C++ 产物）
 // =============================================================
-constexpr const char* EXT_PYCP  = ".pycp";   // Pycp 源文件
-constexpr const char* EXT_CPYCP = ".cpycp";  // 序列化字节码
-constexpr const char* EXT_CPP   = ".cpp";    // AOT 生成的 C++ 源码
+constexpr const char* EXT_PYCP  = ".pycp";    // Pycp 源文件
+constexpr const char* EXT_CPYCP = ".cpycp";   // 序列化字节码
+constexpr const char* EXT_CPP   = ".cpp";     // AOT 生成的 C++ 源码
+constexpr const char* EXT_PP_PYCP = ".pp.pycp"; // 预处理输出的源文件
 
 // =============================================================
 // AOT 输出命名约定
