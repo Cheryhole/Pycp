@@ -980,10 +980,9 @@ void Pycperror(Node*& _, const char *s) {
 		return;
 	}
 	++Pycp_parse_error_count;
-	// Bison reports an internal "syntax error" first; replace it with a
-	// meaningful, newline-focused English diagnostic.
+	// Bison 内部默认 "syntax error" 统一规范为 Python 风格的语法错误文案。
 	if (std::strcmp(s, "syntax error") == 0) {
-		s = "newline is the only valid separator between statements";
+		s = "SyntaxError: invalid syntax";
 	}
 	// 两行格式：File "<file>", line <lineno>\n<error>
 	std::cerr << "File \"" << g_current_source_path << "\", line " << Pycplineno << "\n" << s << std::endl;
