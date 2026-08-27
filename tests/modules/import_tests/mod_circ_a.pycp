@@ -1,0 +1,6 @@
+// 导入图辅助模块 A：定义顶层常量，可被入口经 mod.xxx 访问。
+import io
+import Pycp
+
+A_VAL = "A"
+A_TAG = 1  // 整数 companion，便于入口做整数断言

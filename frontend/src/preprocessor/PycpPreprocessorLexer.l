@@ -9,7 +9,10 @@
 // 而是"值模式"（VAL start condition）下一次性匹配的整行剩余文本——
 // 这样避免了 `[^\n]+` 贪婪吞掉关键字/标识符的问题：
 //   - 读到 "with" 后进入 VAL 模式（replace 的值）；
-//   - 读到 # define 的宏名后进入 VAL 模式（define 的可选值，可为空）。
+//   - 读到 # define 的宏名后进入 VAL 模式（define 的可选值，可为空）；
+//   - 读到 "to" 后进入 VAL 模式（set 的值）；
+//   - 读到 "send" 的 kind 后进入 VAL 模式（send 的消息文本，可为带插值字符串）；
+//   - 未知指令首词（非关键字标识符）后整行进入 VAL 模式，交由 bison 报 unknown。
 // 命名前缀统一为 Pycpp，与 bison 端（%define api.prefix {Pycpp}）对齐。
 
 #include <string>
@@ -27,7 +30,7 @@ std::string PpTrim(const char* s, int len) {
 }
 } // namespace
 
-static int pp_prev_token = 0;    // 上一个返回的 token（用于 define 后进入值模式）
+static int pp_prev_token = 0;    // 上一个返回的 token（用于 define/set/send 后进入值模式）
 static int pp_at_line_start = 1; // 当前是否为指令行首 token（未知指令首词后整行作值）
 %}
 
@@ -47,6 +50,19 @@ static int pp_at_line_start = 1; // 当前是否为指令行首 token（未知�
 "replacing"         { pp_at_line_start = 0; pp_prev_token = PP_REPLACING; return PP_REPLACING; }
 "undefine"          { pp_at_line_start = 0; pp_prev_token = PP_UNDEFINE; return PP_UNDEFINE; }
 "with"              { pp_at_line_start = 0; pp_prev_token = PP_WITH; BEGIN(VAL); return PP_WITH; }
+"set"               { pp_at_line_start = 0; pp_prev_token = PP_SET; return PP_SET; }
+"to"                { pp_at_line_start = 0; pp_prev_token = PP_TO; BEGIN(VAL); return PP_TO; }
+"if"                { pp_at_line_start = 0; pp_prev_token = PP_IF; return PP_IF; }
+"elif"              { pp_at_line_start = 0; pp_prev_token = PP_ELIF; return PP_ELIF; }
+"else"              { pp_at_line_start = 0; pp_prev_token = PP_ELSE; return PP_ELSE; }
+"end"               { pp_at_line_start = 0; pp_prev_token = PP_END; return PP_END; }
+"send"              { pp_at_line_start = 0; pp_prev_token = PP_SEND; return PP_SEND; }
+"error"             { pp_at_line_start = 0; pp_prev_token = PP_ERROR; BEGIN(VAL); return PP_ERROR; }
+"warning"           { pp_at_line_start = 0; pp_prev_token = PP_WARNING; BEGIN(VAL); return PP_WARNING; }
+"message"           { pp_at_line_start = 0; pp_prev_token = PP_MESSAGE; BEGIN(VAL); return PP_MESSAGE; }
+"defined"           { pp_at_line_start = 0; pp_prev_token = PP_DEFINED; return PP_DEFINED; }
+"not"               { pp_at_line_start = 0; pp_prev_token = PP_NOT; return PP_NOT; }
+
 
 [a-zA-Z_][a-zA-Z0-9_]* {
     if (pp_at_line_start) BEGIN(VAL); // 未知指令首词：整行剩余文本作值，bison 报 unknown

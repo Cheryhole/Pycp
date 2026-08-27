@@ -1,0 +1,17 @@
+// 场景：跨模块函数调用（模块属性链）。
+// 主模块 import 辅助模块后调用其函数，验证跨模块调用正常。
+import io
+import Pycp
+import mod_chain_helper
+
+func main() {
+	// 跨模块调用辅助模块函数
+	r = mod_chain_helper.mod_chain_helper_double(21)
+	if (r != 42) {
+		io.print("module_attr_chain: double mismatch got " + Pycp.String(r))
+		return None
+	}
+	io.print("IMPORT TEST PASS: module_attr_chain")
+}
+
+main()

@@ -1,0 +1,29 @@
+import io
+
+// 单行注释：这是行注释
+/* 多行注释：这是
+   跨越多行的块注释
+*/
+
+a = 1 // 行尾注释
+b = 2 /* 行内块注释 */ + 3
+
+// 注释不影响换行分隔
+c = a + b
+
+/* 块注释出现在语句之间 */
+if c > 0 {
+    io.print("positive") // if 体内的行注释
+} elif c == 0 /* 注释在 elif 行 */ {
+    io.print("zero")
+} else {
+    io.print("negative")
+}
+
+// 字符串内的 // 与 /* 不应被当作注释
+s = "hello // not comment /* still not */ end"
+
+io.print(a)
+io.print(b)
+io.print(c)
+io.print(s)

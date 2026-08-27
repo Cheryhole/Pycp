@@ -91,8 +91,14 @@ void print_help(const char* prog) {
 		<< "                    instructions & line numbers) of .pycp or .cpycp\n"
 		<< "  -p, --preprocess  Preprocess a .pycp file (no execution): writes\n"
 		<< "                    <input-basename>.pp.pycp in the input directory\n"
-		<< "                    (or -o <file>). Directives: # replace NAME with VALUE,\n"
-		<< "                    # define NAME [VALUE], # stop replacing NAME, # undefine NAME;\n"
+		<< "                    (or -o <file>). Directives:\n"
+		<< "                    # replace NAME with VALUE   (text substitution)\n"
+		<< "                    # define NAME [VALUE]      (macro def for #if defined)\n"
+		<< "                    # stop replacing NAME / # undefine NAME\n"
+		<< "                    # set lineno to N / # set filename to \"PATH\"\n"
+		<< "                    # expand NAME             (expand file at NAME path)\n"
+		<< "                    # if/#elif/#else/#end      (conditional incl., nestable)\n"
+		<< "                    # send error/warning/message \"TEXT\"\n"
 		<< "                    code can use #lineno / #filename (line & path)\n\n"
 		<< "Import & modules:\n"
 		<< "  * import foo / import foo as bar  loads foo.pycp from the entry\n"
@@ -477,7 +483,6 @@ int main(int argc, char** argv) {
 					ret = 1; // 错误已按两行格式输出
 				} else {
 					// 默认写到输入同目录的 <basename>.pp.pycp（-o 可覆盖），
-					// 不再直接打印到 console。
 					const std::string out = opt.output_file.empty()
 						? preprocess_output(opt.input_file)
 						: opt.output_file;

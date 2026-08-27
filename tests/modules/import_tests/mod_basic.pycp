@@ -1,0 +1,21 @@
+// 被 basic_import 依赖的模块：提供顶层变量、函数、类。
+
+mod_basic_value = 42
+
+func mod_basic_add(a, b) {
+	return a + b
+}
+
+class mod_basic_Point {
+	x = None
+	y = None
+
+	func __initialize__(self, x, y) {
+		self.x = x
+		self.y = y
+	}
+
+	func sum(self) {
+		return self.x + self.y
+	}
+}

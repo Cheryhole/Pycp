@@ -1,0 +1,29 @@
+// 场景：普通 import foo，访问其顶层变量、函数、类实例。
+import io
+import Pycp
+import mod_basic
+
+func main() {
+	// 顶层变量
+	if (mod_basic.mod_basic_value != 42) {
+		io.print("basic_import: value mismatch")
+		return None
+	}
+
+	// 顶层函数
+	if (mod_basic.mod_basic_add(3, 4) != 7) {
+		io.print("basic_import: add mismatch")
+		return None
+	}
+
+	// 类实例化并调用方法
+	p = mod_basic.mod_basic_Point(10, 20)
+	if (p.sum() != 30) {
+		io.print("basic_import: Point.sum mismatch")
+		return None
+	}
+
+	io.print("IMPORT TEST PASS: basic_import")
+}
+
+main()

@@ -14,10 +14,22 @@ extern std::string g_current_source_path;
 // 词法错误标志（定义于 PycpParser.y）。lexer 出错后置位并停止扫描。
 extern bool g_lexer_error;
 
+// bison %locations 支持（PycpParser.y 已声明 %locations）：
+// 每个 token 匹配完成后、动作执行前，把当前行号写入全局位置 Pycpylloc。
+// 单行 token 的 first_line == last_line == 该 token 所在行；bison 侧语义动作
+// 通过 @$.first_line 取得规则首符号的起始行，不受归约时刻 lookahead 影响。
+extern PYCPLTYPE Pycplloc;
+#define YY_USER_ACTION \
+	Pycplloc.first_line = Pycplineno; \
+	Pycplloc.last_line = Pycplineno; \
+	Pycplloc.first_column = 0; \
+	Pycplloc.last_column = 0;
+
 std::string _string_buffer; // 用于存储字符串内容
 int _comment_return_state = 0; // 记录进入块注释前的状态（0=INITIAL），注释结束后恢复
 
-// # 行指令（# <lineno> "<filename>"，C #line 语义）解析辅助状态：
+// 行指令（预处理产物，形如 "// __pycp_pp# <lineno> \"<filename>\""，C #line 语义）
+// 解析辅助状态：
 //   _line_directive_line  : 指令所在行的真实行号（诊断用）
 //   _line_directive_lineno: 指令指定的目标行号（其后第一个 token 从此行号开始计数）
 //   _line_directive_has_num/_line_directive_has_file : 行号/文件名参数是否齐全
@@ -46,7 +58,6 @@ int brk_expr_ctx = 0;
 %x EXPECT_ELIF
 %x COMMENT
 %x MEMBER_ACCESS
-%x LINE_DIRECTIVE
 %s BRACKET_BODY
 
 %%
@@ -97,10 +108,30 @@ in       { brk_expr_ctx = 1; return KW_IN; }
 	brk_expr_ctx = 0;
 	return LT_INTEGER;
 }
-^[ \t]*#	{ _line_directive_line = Pycplineno; _line_directive_lineno = 0;
-		  _line_directive_has_num = 0; _line_directive_has_file = 0;
-		  _line_ret_state = 0; BEGIN(LINE_DIRECTIVE); }
-"//"[^\n]*	{ /* 单行注释：跳过到行尾，换行仍由 NEWLINE 规则处理 */ }
+<*>"//"[ \t]*"__pycp_pp#"[^\n]*\n	{ /* line directive: // __pycp_pp# <lineno> "<file>"; consume whole line, set Pycplineno after '\n' auto-increment. <*> so it works after '}' (EXPECT_ELIF) etc. */
+	const char* p = Pycptext + 2;   /* 跳过 "//" */
+	while (*p == ' ' || *p == '\t') ++p;   /* 跳过 "//" 后空白 */
+	p += 10;   /* 越过 "__pycp_pp#" 标记 */
+	while (*p == ' ' || *p == '\t') ++p;   /* 跳过标记后空白 */
+	int n = 0; bool ok = false;
+	std::string file;
+	while (*p >= '0' && *p <= '9') { n = n * 10 + (*p - '0'); ++p; ok = true; }
+	while (*p == ' ' || *p == '\t') ++p;   /* 跳过行号后空白 */
+	if (*p == '"') {
+		++p;
+		while (*p && *p != '"' && *p != '\n') {
+			if (*p == '\\' && p[1]) { ++p; }   /* 处理转义（\" 与 \\） */
+			file += *p;
+			++p;
+		}
+		if (ok) {
+			Pycplineno = n;
+			g_current_source_path = file;
+		}
+	}
+	/* 整行（含换行）已消费，不产生 token。 */
+}
+<*>"//"[^\n]*	{ /* 单行（行内）注释：跳过到行尾，换行仍由 NEWLINE 规则处理 */ }
 "/*"	{ _comment_return_state = INITIAL; BEGIN(COMMENT); }
 <COMMENT>"*/"	{ BEGIN(_comment_return_state); }
 <COMMENT>([^*]|\n)+	{ /* 吞掉块注释内容（含换行） */ }
@@ -126,7 +157,6 @@ in       { brk_expr_ctx = 1; return KW_IN; }
 
 <EXPECT_ELIF>"elif"/[^a-zA-Z0-9_]	{ BEGIN(INITIAL); return KW_ELIF; }
 <EXPECT_ELIF>"else"/[^a-zA-Z0-9_]	{ BEGIN(INITIAL); return KW_ELSE; }
-<EXPECT_ELIF>"//"[^\n]*	{ /* 单行注释：跳过到行尾 */ }
 <EXPECT_ELIF>"/*"	{ _comment_return_state = EXPECT_ELIF; BEGIN(COMMENT); }
 <EXPECT_ELIF>\n	{ /* 忽略换行 */ }
 <EXPECT_ELIF>\r\n	{ /* 忽略换行 */ }
@@ -160,7 +190,7 @@ in       { brk_expr_ctx = 1; return KW_IN; }
 		g_current_source_path = _string_buffer;
 		_line_directive_has_file = 1;
 		_line_ret_state = 0;
-		BEGIN(LINE_DIRECTIVE);
+		BEGIN(INITIAL);
 	} else {
 		Pycplval.text = new std::string(_string_buffer);
 		BEGIN(brk_depth > 0 ? BRACKET_BODY : INITIAL);
@@ -193,49 +223,6 @@ in       { brk_expr_ctx = 1; return KW_IN; }
 <STRING>\n {
 	std::cerr << "File \"" << g_current_source_path 
 		<< "\", line " << Pycplineno << "\nUnterminated string." << std::endl;
-	g_lexer_error = true;
-	return 0;
-}
-
-<LINE_DIRECTIVE>[ \t]+	{ /* 忽略空白 */ }
-<LINE_DIRECTIVE>[0-9]+	{
-	// 手动累计避免 stoi 溢出异常；[0-9]+ 保证纯数字。
-	int n = 0;
-	for (const char *p = Pycptext; *p != '\0'; ++p) n = n * 10 + (*p - '0');
-	_line_directive_lineno = n;
-	_line_directive_has_num = 1;
-}
-<LINE_DIRECTIVE>\"	{ _string_buffer.clear(); _line_ret_state = 1; BEGIN(STRING); }
-<LINE_DIRECTIVE>\n|\r\n|\r	{
-	if (!_line_directive_has_num || !_line_directive_has_file) {
-		std::cerr << "File \"" << g_current_source_path << "\", line "
-			<< _line_directive_line
-			<< "\ninvalid line directive: expected '# <lineno> \"<filename>\"'" << std::endl;
-		g_lexer_error = true;
-		return 0;
-	}
-	// flex 在 action 前已按匹配文本中的换行自动递增 yylineno，
-	// 此时 Pycplineno 已是下一行行号；直接赋值为目标行号即实现 C #line 语义。
-	Pycplineno = _line_directive_lineno;
-	_line_ret_state = 0;
-	BEGIN(INITIAL);
-}
-<LINE_DIRECTIVE><<EOF>>	{
-	if (!_line_directive_has_num || !_line_directive_has_file) {
-		std::cerr << "File \"" << g_current_source_path << "\", line "
-			<< _line_directive_line
-			<< "\ninvalid line directive: expected '# <lineno> \"<filename>\"'" << std::endl;
-		g_lexer_error = true;
-		return 0;
-	}
-	Pycplineno = _line_directive_lineno;
-	_line_ret_state = 0;
-	return 0;
-}
-<LINE_DIRECTIVE>.	{
-	std::cerr << "File \"" << g_current_source_path << "\", line "
-		<< _line_directive_line
-		<< "\ninvalid line directive: unexpected character: " << Pycptext << std::endl;
 	g_lexer_error = true;
 	return 0;
 }

@@ -46,6 +46,12 @@ extern void Pycp_delete_buffer(YY_BUFFER_STATE);
 %define api.prefix {Pycp}
 %parse-param { Pycp::Ast::Node*& _final_asttree }
 
+// 启用位置跟踪（%locations）：每个符号携带 first_line/last_line/first_column/last_column。
+// 语义动作统一使用 @$.first_line 记录语句/表达式行号——它是【规则内第一个符号】的
+// 起始行，不受 bison 归约时刻 lookahead 已读入的影响（此前直接用 @$.first_line 会在
+// 归约时被后续换行等 lookahead 推进，导致行号 +1 偏移，例如 import 报 48 而非 47）。
+%locations
+
 // 该块内容会注入生成的头文件，确保 IfSuffix 在 union 与所有包含
 // PycpParser.hpp 的翻译单元中均可见。
 %code requires {
@@ -232,7 +238,7 @@ statement: assignment_statement {
 		| expression {
 			$$ = new ExpressionStatement(
 				static_cast<Expression*>($1),
-				Pycplineno
+				@$.first_line
 			);
 		}
 ;
@@ -243,7 +249,7 @@ statement: assignment_statement {
 delete_statement: KW_DELETE expression {
 			$$ = new DeleteStatement(
 				static_cast<Expression*>($2),
-				Pycplineno
+				@$.first_line
 			);
 		}
 ;
@@ -351,7 +357,7 @@ function_def_statement: KW_FUNC IDENTIFIER OP_LPARENTHESES parameter_list OP_RPA
 				*$4,                                  // params
 				new Program($6),                     // body
 				*($2),                               // name
-				Pycplineno
+				@$.first_line
 			);
 			delete $4; // 参数已移动进 FunctionExpression
 			delete $2;
@@ -359,7 +365,7 @@ function_def_statement: KW_FUNC IDENTIFIER OP_LPARENTHESES parameter_list OP_RPA
 			$$ = new AssignmentStatement(
 				new IdentifierExpression(new std::string(func->name)),
 				static_cast<Expression*>(func),
-				Pycplineno
+				@$.first_line
 			);
 		}
 	| OP_AT decorator_expr opt_newlines KW_FUNC IDENTIFIER OP_LPARENTHESES parameter_list OP_RPARENTHESES code_block {
@@ -367,7 +373,7 @@ function_def_statement: KW_FUNC IDENTIFIER OP_LPARENTHESES parameter_list OP_RPA
 				*$7,                                  // params
 				new Program($9),                     // body
 				*($5),                               // name
-				Pycplineno,
+				@$.first_line,
 				static_cast<Expression*>($2)          // decorator
 			);
 			delete $7; // 参数已移动进 FunctionExpression
@@ -376,7 +382,7 @@ function_def_statement: KW_FUNC IDENTIFIER OP_LPARENTHESES parameter_list OP_RPA
 			$$ = new AssignmentStatement(
 				new IdentifierExpression(new std::string(func->name)),
 				static_cast<Expression*>(func),
-				Pycplineno
+				@$.first_line
 			);
 		}
 ;
@@ -387,7 +393,7 @@ function_expr: KW_FUNC OP_LPARENTHESES parameter_list OP_RPARENTHESES code_block
 				*$3,                       // params
 				new Program($5),           // body
 				Pycp::ANONYMOUS_FUNCTION,  // name（config 常量）
-				Pycplineno
+				@$.first_line
 			);
 			delete $3; // 参数已移动进 FunctionExpression
 		}
@@ -424,7 +430,7 @@ class_def_statement: KW_CLASS IDENTIFIER opt_inherits OP_LBRACE class_body OP_RB
 				}
 			}
 			delete members;
-			$$ = new ClassDefinition($2, $3, vars, methods, Pycplineno);
+			$$ = new ClassDefinition($2, $3, vars, methods, @$.first_line);
 		}
 ;
 
@@ -445,7 +451,7 @@ class_expr: KW_CLASS opt_inherits OP_LBRACE class_body OP_RBRACE {
 			}
 			delete members;
 			// 匿名类：name 为 nullptr，Codegen 使用 ANONYMOUS_CLASS 内部名。
-			$$ = new ClassExpression($2, vars, methods, Pycplineno);
+			$$ = new ClassExpression($2, vars, methods, @$.first_line);
 		}
 ;
 
@@ -530,11 +536,11 @@ class_member_with_modifier: OP_AT decorator_expr opt_newlines member_variable {
 // 前者解析为 IdentifierExpression，后者解析为链式 AttributeExpression，
 // 复用现有属性访问表达式语义（运行时 LOAD_VAR + LOAD_ATTR 求值）。
 decorator_expr: IDENTIFIER {
-		$$ = new IdentifierExpression($1, Pycplineno);
+		$$ = new IdentifierExpression($1, @$.first_line);
 	}
 	| decorator_expr OP_DOT IDENTIFIER {
 		$$ = new AttributeExpression(
-			static_cast<Expression*>($1), $3, Pycplineno);
+			static_cast<Expression*>($1), $3, @$.first_line);
 	}
 ;
 
@@ -547,10 +553,10 @@ opt_newlines: %empty
 // 无初始值则 value 为 nullptr，初始化由 __initialize__ 负责；
 // 有初始值则实例化时自动求值并赋值给实例字段。
 member_variable: IDENTIFIER {
-			$$ = new MemberVariable($1, nullptr, Pycplineno);
+			$$ = new MemberVariable($1, nullptr, @$.first_line);
 		}
 		| IDENTIFIER OP_EQUALS expression {
-			$$ = new MemberVariable($1, static_cast<Expression*>($3), Pycplineno);
+			$$ = new MemberVariable($1, static_cast<Expression*>($3), @$.first_line);
 		}
 ;
 
@@ -560,11 +566,11 @@ method_definition: KW_FUNC IDENTIFIER OP_LPARENTHESES parameter_list OP_RPARENTH
 				*$4,                                  // params
 				new Program($6),                     // body
 				*($2),                               // name
-				Pycplineno
+				@$.first_line
 			);
 			delete $4;
 			delete $2;
-			$$ = new MethodDefinition(func, Pycplineno);
+			$$ = new MethodDefinition(func, @$.first_line);
 		}
 ;
 
@@ -582,11 +588,11 @@ if_statement: KW_IF expression code_block opt_elif_else {
 				new IfBranch(
 					static_cast<Expression*>($2),
 					new Program($3),
-					Pycplineno
+					@$.first_line
 				),
 				$4.elif_branches,   // elif 分支列表（可能为空）
 				$4.else_body,       // else 代码块（可能为空指针）
-				Pycplineno
+				@$.first_line
 			);
 		}
 ;
@@ -615,7 +621,7 @@ elif_clauses: KW_ELIF expression code_block {
 			$$->push_back(new IfBranch(
 				static_cast<Expression*>($2),
 				new Program($3),
-				Pycplineno,
+				@$.first_line,
 				/*is_elif=*/true
 			));
 		}
@@ -623,7 +629,7 @@ elif_clauses: KW_ELIF expression code_block {
 			$1->push_back(new IfBranch(
 				static_cast<Expression*>($3),
 				new Program($4),
-				Pycplineno,
+				@$.first_line,
 				/*is_elif=*/true
 			));
 			$$ = $1;
@@ -652,7 +658,7 @@ repeat_statement: KW_REPEAT KW_IF expression code_block {
 				static_cast<Expression*>($3),
 				nullptr,
 				new Program($4),
-				Pycplineno
+				@$.first_line
 			);
 		}
 		| KW_REPEAT expression code_block {
@@ -662,7 +668,7 @@ repeat_statement: KW_REPEAT KW_IF expression code_block {
 				static_cast<Expression*>($2), nullptr, nullptr, nullptr, nullptr,
 				nullptr,
 				new Program($3),
-				Pycplineno
+				@$.first_line
 			);
 		}
 		| KW_REPEAT expression KW_AS IDENTIFIER code_block {
@@ -672,7 +678,7 @@ repeat_statement: KW_REPEAT KW_IF expression code_block {
 				static_cast<Expression*>($2), nullptr, nullptr, nullptr, nullptr,
 				$4,
 				new Program($5),
-				Pycplineno
+				@$.first_line
 			);
 		}
 		| KW_REPEAT KW_FROM expression KW_TO expression code_block {
@@ -684,7 +690,7 @@ repeat_statement: KW_REPEAT KW_IF expression code_block {
 				nullptr, nullptr,
 				nullptr,
 				new Program($6),
-				Pycplineno
+				@$.first_line
 			);
 		}
 		| KW_REPEAT KW_FROM expression KW_TO expression KW_AS IDENTIFIER code_block {
@@ -696,7 +702,7 @@ repeat_statement: KW_REPEAT KW_IF expression code_block {
 				nullptr, nullptr,
 				$7,
 				new Program($8),
-				Pycplineno
+				@$.first_line
 			);
 		}
 		| KW_REPEAT KW_FROM expression KW_TO expression KW_BY expression code_block {
@@ -708,7 +714,7 @@ repeat_statement: KW_REPEAT KW_IF expression code_block {
 				static_cast<Expression*>($7), nullptr,
 				nullptr,
 				new Program($8),
-				Pycplineno
+				@$.first_line
 			);
 		}
 		| KW_REPEAT KW_FROM expression KW_TO expression KW_BY expression KW_AS IDENTIFIER code_block {
@@ -720,14 +726,14 @@ repeat_statement: KW_REPEAT KW_IF expression code_block {
 				static_cast<Expression*>($7), nullptr,
 				$9,
 				new Program($10),
-				Pycplineno
+				@$.first_line
 			);
 		}
 ;
 
 // break 语句：退出当前一层循环（无代码块，独立语句）。
 break_statement: KW_BREAK {
-			$$ = new BreakStatement(Pycplineno);
+			$$ = new BreakStatement(@$.first_line);
 		}
 ;
 
@@ -739,7 +745,7 @@ for_statement: KW_FOR IDENTIFIER KW_IN expression code_block {
 				$2,
 				static_cast<Expression*>($4),
 				new Program($5),
-				Pycplineno
+				@$.first_line
 			);
 		}
 ;
@@ -747,17 +753,17 @@ for_statement: KW_FOR IDENTIFIER KW_IN expression code_block {
 // import 语句：import foo 或 import foo as bar
 // 模块名暂为单标识符（不含点，对应"仅入口目录查找"的第一阶段实现）。
 import_statement: KW_IMPORT IDENTIFIER {
-			$$ = new ImportStatement($2, nullptr, Pycplineno);
+			$$ = new ImportStatement($2, nullptr, @$.first_line);
 		}
 		| KW_IMPORT IDENTIFIER KW_AS IDENTIFIER {
-			$$ = new ImportStatement($2, $4, Pycplineno);
+			$$ = new ImportStatement($2, $4, @$.first_line);
 		}
 ;
 
 // from ... import ... 语句：from module import name1, name2, ...
 // 名称均为普通标识符（含 super/private/public，它们不再是关键字）。
 from_import_statement: KW_FROM IDENTIFIER KW_IMPORT from_import_names {
-		$$ = new FromImportStatement($2, $4, Pycplineno);
+		$$ = new FromImportStatement($2, $4, @$.first_line);
 	}
 ;
 
@@ -775,7 +781,7 @@ from_import_names: IDENTIFIER {
 return_statement: KW_RETURN expression {
 		$$ = new ReturnStatement(
 			static_cast<Expression*>($2),
-			Pycplineno
+			@$.first_line
 		);
 };
 
@@ -785,7 +791,7 @@ assignment_statement: primary_expression OP_EQUALS expression {
 		$$ = new AssignmentStatement(
 			static_cast<Expression*>($1),
 			static_cast<Expression*>($3),
-			Pycplineno
+			@$.first_line
 		);
 	}
 ;
@@ -801,7 +807,7 @@ comparison_expression: additive_expression
 			BinaryOp::LESS_THAN,
 			static_cast<Expression*>($1),
 			static_cast<Expression*>($3),
-			Pycplineno
+			@$.first_line
 		);
 	}
 	| comparison_expression OP_GT additive_expression {
@@ -809,7 +815,7 @@ comparison_expression: additive_expression
 			BinaryOp::GREATER_THAN,
 			static_cast<Expression*>($1),
 			static_cast<Expression*>($3),
-			Pycplineno
+			@$.first_line
 		);
 	}
 	| comparison_expression OP_LE additive_expression {
@@ -817,7 +823,7 @@ comparison_expression: additive_expression
 			BinaryOp::LESS_EQUAL,
 			static_cast<Expression*>($1),
 			static_cast<Expression*>($3),
-			Pycplineno
+			@$.first_line
 		);
 	}
 	| comparison_expression OP_GE additive_expression {
@@ -825,7 +831,7 @@ comparison_expression: additive_expression
 			BinaryOp::GREATER_EQUAL,
 			static_cast<Expression*>($1),
 			static_cast<Expression*>($3),
-			Pycplineno
+			@$.first_line
 		);
 	}
 	| comparison_expression OP_EQ additive_expression {
@@ -833,7 +839,7 @@ comparison_expression: additive_expression
 			BinaryOp::EQUAL,
 			static_cast<Expression*>($1),
 			static_cast<Expression*>($3),
-			Pycplineno
+			@$.first_line
 		);
 	}
 	| comparison_expression OP_NE additive_expression {
@@ -841,7 +847,7 @@ comparison_expression: additive_expression
 			BinaryOp::NOT_EQUAL,
 			static_cast<Expression*>($1),
 			static_cast<Expression*>($3),
-			Pycplineno
+			@$.first_line
 		);
 	}
 ;
@@ -852,7 +858,7 @@ additive_expression: multiplicative_expression
 				BinaryOp::PLUS,
 				static_cast<Expression*>($1),
 				static_cast<Expression*>($3),
-				Pycplineno
+				@$.first_line
 			);
 		}
     | additive_expression OP_MINUS multiplicative_expression {
@@ -860,7 +866,7 @@ additive_expression: multiplicative_expression
 				BinaryOp::MINUS,
 				static_cast<Expression*>($1),
 				static_cast<Expression*>($3),
-				Pycplineno
+				@$.first_line
 			);
 		}
     ;
@@ -871,7 +877,7 @@ multiplicative_expression: unary_expression
 				BinaryOp::MULTIPLY,
 				static_cast<Expression*>($1),
 				static_cast<Expression*>($3),
-				Pycplineno
+				@$.first_line
 			);
 		}
     | multiplicative_expression OP_DIVIDE unary_expression {
@@ -879,7 +885,7 @@ multiplicative_expression: unary_expression
 				BinaryOp::DIVIDE,
 				static_cast<Expression*>($1),
 				static_cast<Expression*>($3),
-				Pycplineno
+				@$.first_line
 			);
 		}
     ;
@@ -890,7 +896,7 @@ unary_expression: power_expression
 			$$ = new UnaryExpression(
 				UnaryOp::UMINUS,
 				static_cast<Expression*>($2),
-				Pycplineno
+				@$.first_line
 			);
 		};
 
@@ -900,24 +906,24 @@ power_expression: primary_expression
 				BinaryOp::POWER,
 				static_cast<Expression*>($1),
 				static_cast<Expression*>($3),
-				Pycplineno
+				@$.first_line
 			);
 		};
 
 primary_expression: LT_INTEGER {
-			$$ = new IntegerLiteral($1, Pycplineno);
+			$$ = new IntegerLiteral($1, @$.first_line);
 		}
 		| LT_STRING {
-			$$ = new StringLiteral($1, Pycplineno);
+			$$ = new StringLiteral($1, @$.first_line);
 		}
 		| KW_NONE {
-			$$ = new NoneLiteral(Pycplineno);
+			$$ = new NoneLiteral(@$.first_line);
 		}
 		| KW_TRUE {
-			$$ = new BooleanLiteral(true, Pycplineno);
+			$$ = new BooleanLiteral(true, @$.first_line);
 		}
 		| KW_FALSE {
-			$$ = new BooleanLiteral(false, Pycplineno);
+			$$ = new BooleanLiteral(false, @$.first_line);
 		}
 		| OP_LPARENTHESES expression OP_RPARENTHESES {
 			$$ = $2;
@@ -926,18 +932,18 @@ primary_expression: LT_INTEGER {
 			// 列表字面量：[a, b, c] 或空 []
 			$$ = new ListLiteral(
 				static_cast<std::vector<Expression*>*>($2),
-				Pycplineno
+				@$.first_line
 			);
 		}
 		| OP_LBRACE map_literal OP_RBRACE {
 			// map 字面量：{k: v, ...} 或空 {}
 			$$ = new MapLiteral(
 				static_cast<std::vector<std::pair<Expression*, Expression*>>*>($2),
-				Pycplineno
+				@$.first_line
 			);
 		}
 		| IDENTIFIER {
-			$$ = new IdentifierExpression($1, Pycplineno);
+			$$ = new IdentifierExpression($1, @$.first_line);
 		}
 		| function_expr {
 			$$ = $1;
@@ -949,7 +955,7 @@ primary_expression: LT_INTEGER {
 			$$ = new CallExpression(
 				static_cast<Expression*>($1),
 				*$3,                 // arguments
-				Pycplineno
+				@$.first_line
 			);
 			delete $3; // 实参已移动进 CallExpression
 		}
@@ -957,7 +963,7 @@ primary_expression: LT_INTEGER {
 			$$ = new AttributeExpression(
 				static_cast<Expression*>($1),
 				$3,
-				Pycplineno
+				@$.first_line
 			);
 		}
 		| primary_expression OP_LBRACKET expression OP_RBRACKET {
@@ -965,7 +971,7 @@ primary_expression: LT_INTEGER {
 			$$ = new IndexExpression(
 				static_cast<Expression*>($1),
 				static_cast<Expression*>($3),
-				Pycplineno
+				@$.first_line
 			);
 		}
 ;

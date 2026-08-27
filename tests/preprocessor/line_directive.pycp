@@ -1,0 +1,4 @@
+// __pycp_pp# 200 "original_source.pycp"
+import io
+
+io.print(100)

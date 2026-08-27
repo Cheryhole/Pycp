@@ -1,0 +1,22 @@
+import io
+import Pycp
+
+class new_tp{
+	v_ = 0
+
+	func __initialize__(self, value){
+		io.print("Initializing, value = " + Pycp.String(value))
+		self.v_ = value
+	}
+
+	func __addition__(self, other){
+		io.print("operator +")
+		return self.v_ + other.v_
+	}
+}
+
+a1 = new_tp(1)
+a2 = new_tp(2)
+a3 = a1 + a2
+io.print(a3)
+

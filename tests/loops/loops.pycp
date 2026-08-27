@@ -1,0 +1,39 @@
+import io
+
+t = 0
+
+// 当if后为假时退出
+repeat if t < 5{
+	io.print("Hello World 1")
+	t = t + 1
+}
+
+io.print("")
+
+// 循环十次
+repeat 10 as i{
+	io.print("Hellos")
+	io.print(i)
+}
+
+// 等价于 while true
+/*
+repeat {
+	io.print("Hellos")
+}
+*/
+
+func return2(){
+	return 2
+}
+
+// for i in range(10, 1, return2())
+repeat from 10 to 1 by -return2() as i{
+	io.print(i)
+}
+
+for i in [1, 2, 3]{
+	io.print(i)
+}
+
+

@@ -1,0 +1,17 @@
+// # send error|warning|message "TEXT"，TEXT 支持 #{lineno}/#{filename}/#{MACRO} 插值，
+// 以及 \#{MACRO} 转义为原样。
+// 用 -p 查看：warning/message 打印到 stderr 不终止；error 终止并报错。
+
+# replace VERSION with 2.0
+
+// 警告（不终止）
+# send warning "compiling at line #{lineno}"
+
+// 消息（不终止）
+# send message "file is #{filename}, version #{VERSION}"
+
+// 转义：\#{VERSION} 应原样保留字面量 \#{}
+# send message "literal escape: \#{VERSION}"
+
+// 错误（终止，应报 unknown preprocessor directive / send error 并退出 1）
+# send error "build failed at line #{lineno}"

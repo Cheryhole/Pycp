@@ -8,7 +8,8 @@ Makefile
 simplebuild.sh
 
 test.*
-test*/
+*.gen.cpp
+*.pp.pycp
 *.pyi
 *.dll
 *.pyd

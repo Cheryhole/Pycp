@@ -1,0 +1,58 @@
+// 条件编译：# if / # elif / # else / # end 支持嵌套与代码块保留/跳过
+// 用 -p 查看预处理输出，验证成立分支保留、不成立分支跳过。
+
+#define DEBUG
+// # define RELEASE   // 注释掉：使嵌套 #else 分支（nested_debug_only）生效
+
+// —— 基础 if / else ——
+#if defined DEBUG
+debug_only = 1
+#else
+release_only = 1
+#end
+
+// —— if 不成立时整块跳过 ——
+#if defined RELEASE_X
+should_be_skipped = 1
+#end
+
+// —— if / elif / else 链：首个成立分支保留，其余跳过 ——
+#if defined MISSING_A
+a_branch = 1
+#elif defined DEBUG
+b_branch = 2
+#elif defined MISSING_C
+c_branch = 3
+#else
+else_branch = 4
+#end
+
+// —— 嵌套条件 ——
+#if defined DEBUG
+  #if defined RELEASE
+  nested_both = 1
+  #else
+  nested_debug_only = 1
+  #end
+#else
+  nested_other = 1
+#end
+
+// —— 反义条件 not defined ——
+#if not defined NOT_DEFINED
+negated_kept = 1
+#end
+
+// —— if 内的普通代码行（非指令）在条件成立时照常宏替换 ——
+#replace GREETING with "hello"
+#if defined DEBUG
+msg = GREETING
+#end
+
+import io
+import Pycp
+io.stdout.write(Pycp.String(debug_only) + "\n")
+io.stdout.write(Pycp.String(b_branch) + "\n")
+io.stdout.write(Pycp.String(nested_debug_only) + "\n")
+io.stdout.write(Pycp.String(negated_kept) + "\n")
+io.stdout.write(msg + "\n")

@@ -1,0 +1,8 @@
+// 嵌套依赖链最底层模块 C：定义被跨层调用的函数与常量。
+// 注意：被导入模块的函数体内不能引用本模块顶层变量（Pycp 限制），
+// 故 area 计算所需的 pi 由调用方经参数传入；顶层 nested_c_pi 供入口访问。
+nested_c_pi = 3
+
+func nested_c_area(r, pi) {
+	return pi * r * r
+}

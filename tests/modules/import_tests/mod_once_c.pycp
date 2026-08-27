@@ -1,0 +1,12 @@
+// 被多处 import 的共享子模块：顶层带副作用（打印副作用计数）。
+// 用于验证多次 import 同一模块时，顶层仅执行一次。
+// 被导入模块可使用原生模块 io / Pycp（已验证可用）。
+import io
+import Pycp
+
+mod_once_c_marker = "MOD_ONCE_C_TOP_EXECUTED"
+once_counter = 0
+
+// 该表达式在顶层执行一次即累加；若被重复执行会重复累加。
+once_counter = once_counter + 1
+io.print("mod_once_c side-effect (count=" + Pycp.String(once_counter) + ")")

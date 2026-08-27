@@ -1,0 +1,11 @@
+// # expand NAME：将 NAME（经 # replace 定义为文件路径）指向的文件完整展开。
+// 用 -p 查看预处理输出，应内联 expand_target.pycp / expand_fallback.pycp 的内容。
+
+#replace MOD_A with "expand_target.pycp"
+#replace MOD_B with "expand_fallback.pycp"
+
+before_expand = 0
+#expand MOD_A
+between = 1
+#expand MOD_B
+after_expand = 2

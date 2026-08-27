@@ -1,0 +1,8 @@
+# replace PI with 3
+
+func circle_area(r){
+	return PI * r * r
+}
+
+
+

@@ -1,0 +1,2 @@
+// 第二个被展开文件，用于测试 # expand 的宏替换透传。
+fallback_value = 99

@@ -1,0 +1,8 @@
+// import_once 的被依赖模块 A。
+// 仅提供可被入口经 mod.xxx 访问的纯参数函数（不在自身引用其他模块）。
+import io
+import Pycp
+
+func mod_once_a_use(x) {
+	return x + 1
+}

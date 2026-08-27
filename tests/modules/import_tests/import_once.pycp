@@ -1,0 +1,23 @@
+// 场景：import_once 主模块。
+// a、b 各自 import 同一个 c；验证 c 的顶层副作用（打印计数）仅执行一次
+// （load_all 按路径去重，模块缓存复用，顶层只跑一遍）。
+// 入口也 import c 以访问其计数器。
+import io
+import Pycp
+import mod_once_a
+import mod_once_b
+import mod_once_c  // a、b 也都 import 了 c
+
+func main() {
+	_ = mod_once_a.mod_once_a_use(1)
+	_ = mod_once_b.mod_once_b_use(2)
+
+	// mod_once_c 顶层 once_counter 应为 1（仅执行一次）。
+	if (mod_once_c.once_counter != 1) {
+		io.print("import_once: c executed " + Pycp.String(mod_once_c.once_counter) + " times, expected 1")
+		return None
+	}
+	io.print("IMPORT TEST PASS: import_once")
+}
+
+main()

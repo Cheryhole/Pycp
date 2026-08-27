@@ -1,0 +1,119 @@
+// __boolean__ 魔术方法与 if 隐式 Boolean 转换验证
+import io
+import Pycp
+
+// 字符串 truthiness
+if "" {
+    io.stdout.write("FAIL empty string is true\n")
+} else {
+    io.stdout.write("str_empty_false_ok\n")
+}
+
+if "hello" {
+    io.stdout.write("str_nonempty_true_ok\n")
+} else {
+    io.stdout.write("FAIL nonempty string is false\n")
+}
+
+// 整型 truthiness
+if 0 {
+    io.stdout.write("FAIL zero is true\n")
+} else {
+    io.stdout.write("int_zero_false_ok\n")
+}
+
+if 42 {
+    io.stdout.write("int_nonzero_true_ok\n")
+} else {
+    io.stdout.write("FAIL 42 is false\n")
+}
+
+// 列表 truthiness
+if [] {
+    io.stdout.write("FAIL empty list is true\n")
+} else {
+    io.stdout.write("list_empty_false_ok\n")
+}
+
+if [1, 2, 3] {
+    io.stdout.write("list_nonempty_true_ok\n")
+} else {
+    io.stdout.write("FAIL nonempty list is false\n")
+}
+
+// Boolean truthiness
+if True {
+    io.stdout.write("bool_true_ok\n")
+} else {
+    io.stdout.write("FAIL True is false\n")
+}
+
+if False {
+    io.stdout.write("FAIL False is true\n")
+} else {
+    io.stdout.write("bool_false_ok\n")
+}
+
+// 自定义类：Object 基类默认 __boolean__ 返回 True
+class Box {
+    func __initialize__(self) {
+        self.x = 0
+    }
+}
+b = Box()
+if b {
+    io.stdout.write("custom_class_true_ok\n")
+} else {
+    io.stdout.write("FAIL custom class is false\n")
+}
+
+// Pycp.Boolean 隐式转换（对齐 __boolean__）
+if Pycp.Boolean("") {
+    io.stdout.write("FAIL Boolean empty string is true\n")
+} else {
+    io.stdout.write("boolean_empty_str_false_ok\n")
+}
+
+if Pycp.Boolean("x") {
+    io.stdout.write("boolean_nonempty_str_true_ok\n")
+} else {
+    io.stdout.write("FAIL Boolean nonempty string is false\n")
+}
+
+if Pycp.Boolean(0) {
+    io.stdout.write("FAIL Boolean 0 is true\n")
+} else {
+    io.stdout.write("boolean_zero_false_ok\n")
+}
+
+if Pycp.Boolean(7) {
+    io.stdout.write("boolean_nonzero_true_ok\n")
+} else {
+    io.stdout.write("FAIL Boolean 7 is false\n")
+}
+
+if Pycp.Boolean([]) {
+    io.stdout.write("FAIL Boolean empty list is true\n")
+} else {
+    io.stdout.write("boolean_empty_list_false_ok\n")
+}
+
+if Pycp.Boolean([1]) {
+    io.stdout.write("boolean_nonempty_list_true_ok\n")
+} else {
+    io.stdout.write("FAIL Boolean nonempty list is false\n")
+}
+
+// Pycp.Boolean(None) 必须返回 False
+none_bool = Pycp.Boolean(None)
+if none_bool {
+    io.stdout.write("FAIL Boolean(None) is true\n")
+} else {
+    io.stdout.write("boolean_none_false_ok\n")
+}
+
+// __boolean__ 作为魔术方法可被属性访问（introspect 可见，人工观察输出）
+io.stdout.write(Pycp.introspect("abc"))
+io.stdout.write("\n")
+
+io.stdout.write("IMPORT TEST PASS\n")

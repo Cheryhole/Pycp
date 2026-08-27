@@ -1,0 +1,30 @@
+// 场景：import Pycp 并使用其类型与函数（String/Integer/get_members）。
+import io
+import Pycp
+
+func main() {
+	// Pycp.String 构造（输出验证，避免 String 比较受限）
+	s = Pycp.String(123)
+	io.print(s)
+
+	// Pycp.Integer 构造（整数比较）
+	i = Pycp.Integer("456")
+	if (i != 456) {
+		io.print("native_Pycp: Integer mismatch got " + Pycp.String(i))
+		return None
+	}
+
+	// Pycp.List 类型存在（输出类型名，不比较对象）
+	io.print(Pycp.List.__name__)
+
+	// Pycp.get_members 返回成员名列表（用 == None 比较，避免魔术方法调用）
+	ms = Pycp.get_members(Pycp.String(1))
+	if (ms == None) {
+		io.print("native_Pycp: get_members returned None")
+		return None
+	}
+
+	io.print("IMPORT TEST PASS: native_Pycp")
+}
+
+main()

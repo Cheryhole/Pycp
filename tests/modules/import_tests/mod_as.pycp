@@ -1,0 +1,13 @@
+// 被 import_as 依赖的模块。
+// 注意：被导入模块内顶层普通变量/函数对"自身函数体"不可见，
+// 故仅提供可被入口经 mod.xxx 访问的符号，以及纯参数函数。
+mod_as_greeting = "hello from mod_as"
+mod_as_greeting_len = 16  // len("hello from mod_as")
+
+func mod_as_repeat(s, n) {
+	result = ""
+	repeat n as i {
+		result = result + s
+	}
+	return result
+}

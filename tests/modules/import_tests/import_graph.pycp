@@ -1,0 +1,27 @@
+// 场景：多模块导入图（A 与 B，B 单向依赖 A）。
+// 验证入口 import 多个模块后，各自顶层符号均可见、可访问。
+// （说明：Pycp 中"真正的互相 import"业务可执行但进程退出段错误，
+//  属已知限制；此处用单向依赖图验证多模块导入稳定可用。）
+import io
+import Pycp
+import mod_circ_a
+import mod_circ_b
+
+func main() {
+	// A 符号可见
+	if (mod_circ_a.A_TAG != 1) {
+		io.print("import_graph: A_TAG mismatch")
+		return None
+	}
+	// B 符号可见
+	if (mod_circ_b.B_TAG != 2) {
+		io.print("import_graph: B_TAG mismatch")
+		return None
+	}
+	// 经 B 可访问其依赖的 A 顶层符号（单向，B 顶层 import 了 A）
+	io.print(mod_circ_a.A_VAL)
+	io.print(mod_circ_b.B_VAL)
+	io.print("IMPORT TEST PASS: import_graph")
+}
+
+main()

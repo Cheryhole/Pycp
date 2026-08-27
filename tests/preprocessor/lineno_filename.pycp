@@ -1,0 +1,24 @@
+# replace PI with 314
+# define _PREPROCESSING
+# undefine _PREPROCESSING
+
+import io
+import Pycp
+
+pi = PI
+io.stdout.write(Pycp.String(PI) + "\n")   // 314
+
+// #lineno 展开为当前物理行号（此处为 12）
+io.print(#lineno)
+// #filename 展开为带引号的当前文件路径
+io.print(#filename)
+
+// 字符串 / 注释中的 #lineno 不展开
+s = "#lineno"
+io.print(s)          // "#lineno"
+// 行内注释 #lineno 不展开
+io.print(1)
+
+// 之后 PI 不再被替换（本文件不再引用 PI 以保持可运行）
+# stop replacing PI
+io.print("PI")

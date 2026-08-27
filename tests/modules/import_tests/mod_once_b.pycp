@@ -1,0 +1,7 @@
+// import_once 的被依赖模块 B。
+import io
+import Pycp
+
+func mod_once_b_use(x) {
+	return x * 2
+}

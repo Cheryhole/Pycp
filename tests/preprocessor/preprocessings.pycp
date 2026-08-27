@@ -1,0 +1,50 @@
+// 这四个预处理指令不可在 REPL模式中使用，否则报错
+// # run by interpreter // default
+// # emit as cpp "pp.gen.cpp"
+// # emit as preprocessed_pycp "pp.pycp"
+// # emit as bytecode "pp.cpycp"
+
+# replace PI with 3.14
+# replace E with 2.718
+// define 仅作为（是否）定义
+# define _PREPROCESSING
+
+# replace MOD_A with "p_imp.pycp"
+# expand MOD_A
+
+# stop replacing PI
+# undefine _PREPROCESSING
+
+/*
+在常规代码中，
+# lineno 和 # filename 
+可以作为直接返回行号、文件名的关键字使用，类似于
+# replace lineno with <lineno> 当前行号
+# replace filename with <filename> 当前文件名
+*/
+
+// 设置编译器属性
+# set lineno to 20
+# set filename to "changed_preprocessing.pycp"
+
+# if defined _PREPROCESSING
+io.print("_PREPROCESSING is defined.")
+// # send error "_PREPROCESSING is defined."
+# elif not defined _PREPROCESSING
+# send warning "_PREPROCESSING is not defined."
+# else
+// 字符串中插入 #{lineno} 转换为行号，#{filename} 为文件名
+// #{MACRO} 为该宏内容
+// \#{MACRO}则不进行转换
+# send message "unknown at line #{lineno}"
+# send message #lineno
+# end
+
+# if not defined _PREPROCESSING
+1
+# end
+
+import ios
+
+io.print(#lineno)
+io.print(#filename)

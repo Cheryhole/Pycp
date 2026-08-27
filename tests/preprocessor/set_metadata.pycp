@@ -1,0 +1,9 @@
+// # set lineno to N / # set filename to "PATH" 仅影响后续行指令的元数据。
+// 用 -p 查看输出，第 1 个被消费指令后插入的行指令应使用 set 的值。
+
+# replace A with 1
+# set lineno to 100
+# set filename to "virtual_file.pycp"
+
+// 此行在输出中应是行指令 "# 100 \"virtual_file.pycp\"" 之后的第 1 行内容
+x = A

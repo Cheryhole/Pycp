@@ -1,0 +1,9 @@
+// 嵌套依赖链中间模块 B。
+// 被导入模块内不引用其他用户模块（其 import 名对自身不可见），
+// 仅提供纯参数函数，跨层组合由入口 main 编排。
+import io
+import Pycp
+
+func nested_b_combine(x) {
+	return x * 2
+}

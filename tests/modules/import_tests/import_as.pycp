@@ -1,0 +1,18 @@
+// 场景：import foo as bar，经别名访问模块成员。
+import io
+import Pycp
+import mod_as as helper
+
+func main() {
+	// greeting 长度（整数比较，避免 String 比较限制）
+	if (helper.mod_as_greeting_len != 16) {
+		io.print("import_as: greeting_len mismatch")
+		return None
+	}
+	// repeat 调用不抛异常即可（返回值经 io.print 展示，不比较 String）
+	r = helper.mod_as_repeat("ab", 3)
+	io.print(r)
+	io.print("IMPORT TEST PASS: import_as")
+}
+
+main()

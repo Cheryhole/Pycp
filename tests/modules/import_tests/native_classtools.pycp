@@ -1,0 +1,25 @@
+// 场景：import classtools，验证模块与 super/private/public 成员可访问。
+import io
+import Pycp
+import classtools
+
+func main() {
+	// classtools.super 是函数（不调用其复杂逻辑，仅验证可访问）
+	if (classtools.super == None) {
+		io.print("native_classtools: super missing")
+		return None
+	}
+	// classtools.private / public 装饰器可访问
+	if (classtools.private == None) {
+		io.print("native_classtools: private missing")
+		return None
+	}
+	if (classtools.public == None) {
+		io.print("native_classtools: public missing")
+		return None
+	}
+
+	io.print("IMPORT TEST PASS: native_classtools")
+}
+
+main()

@@ -1,0 +1,33 @@
+# replace PI with 314
+# replace E with 2718
+# define _PREPROCESSING
+# replace MOD_A with "mod_a.pycp"
+# replace A with B
+# replace B with 1
+
+import io
+import Pycp
+
+pi = PI
+io.stdout.write(Pycp.String(pi) + "\n")
+
+e = E
+io.stdout.write(Pycp.String(e) + "\n")
+
+// APPLE 中的 PI 子串不应替换
+apple = "APPLE"
+io.stdout.write(apple + "\n")
+
+// 字符串字面量内部 PI 不应替换
+s = "PI"
+io.stdout.write(s + "\n")
+
+// 行内注释中的 PI 不应替换 // PI
+r = 100
+io.stdout.write(Pycp.String(r) + "\n")
+
+// 递归展开：A -> B -> 1
+a = A
+io.stdout.write(Pycp.String(a) + "\n")
+
+io.stdout.write(MOD_A + "\n")

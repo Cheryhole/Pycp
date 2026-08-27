@@ -1,0 +1,10 @@
+// 未定义宏条件判断与错误处理边界。
+// 用 -p 查看：# if defined UNKNOWN 为假，块内代码应被跳过。
+
+#if defined UNKNOWN_MACRO
+this_should_be_skipped = 1
+#end
+
+// # end 缺失应报错终止
+#if defined X
+orphan_block = 1

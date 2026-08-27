@@ -78,6 +78,14 @@ Object* _builtin_introspect(Object*, Object** argv, std::size_t argc) {
 	return argv[0]->__introspect__();
 }
 
+// get_members(obj)：返回对象所有成员名称（含方法）的 List。与 introspect
+// 等价（对齐 Python 的 dir(obj)），作为更直观的别名提供给用户与测试。
+Object* _builtin_get_members(Object*, Object** argv, std::size_t argc) {
+	if (argc != 1) throw TypeError("get_members() expects exactly 1 argument.");
+	if (argv[0] == nullptr) throw TypeError("get_members() argument is null.");
+	return argv[0]->__introspect__();
+}
+
 // 将类对象以指定名字放入模块命名空间（构造 BuiltinTypeClass ->
 // Incref 进 map -> 释放 Owned）。返回 cls 以便调用方 add_method 注册
 // 类型方法，使 Pycp.X.__introspect__() 能枚举到（而非空列表）。
@@ -283,6 +291,9 @@ Module* make_pycp_module() {
 
 	// introspect(obj)：返回对象所有成员名称（含方法）的 List。
 	set_func(mod, "introspect", _builtin_introspect);
+
+	// get_members(obj)：introspect 的别名（对齐 Python dir(obj)）。
+	set_func(mod, "get_members", _builtin_get_members);
 
 	return mod;
 }

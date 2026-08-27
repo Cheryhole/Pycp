@@ -1,0 +1,6 @@
+// 真正循环导入的另一端：import 对方。
+import io
+import Pycp
+import mod_circ_x
+
+Y_VAL = "Y"
