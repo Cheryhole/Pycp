@@ -39,10 +39,18 @@ set_target_properties(PycpBuiltin_io_shared PROPERTIES
 )
 
 # 依赖 PycpRuntime（头文件与链接接口均来自 runtime）。
-# Windows 下采用 shared 运行时（PycpRuntime_shared.dll），使扩展 DLL 可解析
-# 运行时导出的 C++ 符号；非 Windows 维持静态链接（靠主程序 -rdynamic 导出符号）。
-if(WIN32 AND BUILD_RUNTIME_SHARED)
+# 构建了 shared 运行时就统一动态链接：全进程只存在一份运行时状态（GC 池、
+# 小整数池、扩展句柄缓存），避免每个扩展 .so 内嵌一份副本。
+if(BUILD_RUNTIME_SHARED)
     target_link_libraries(PycpBuiltin_io_shared PUBLIC PycpRuntime_shared)
+    # rpath：$ORIGIN/../lib 覆盖最终产物目录（dist/stdlib/*.so -> dist/lib），
+    # $ORIGIN/../backend 覆盖构建树（build/stdlib/*.so -> build/backend）。
+    # BUILD_RPATH 排在 CMake 自动追加的链接目录之前，故 dist 产物不会被
+    # 构建树里的旧 .so 抢先命中，保证自包含。
+    set_target_properties(PycpBuiltin_io_shared PROPERTIES
+        BUILD_RPATH "$ORIGIN/../lib;$ORIGIN/../backend"
+        INSTALL_RPATH "$ORIGIN/../lib"
+    )
 else()
     target_link_libraries(PycpBuiltin_io_shared PUBLIC PycpRuntime_static)
 endif()
@@ -52,3 +60,8 @@ if(MSVC)
 else()
     target_compile_options(PycpBuiltin_io_obj PRIVATE -Wall -Wextra -O2)
 endif()
+
+# 注册到全局标准库目标清单：顶层 CMakeLists 的 pycp-dist 目标据此把
+# 本动态库收集到 <dist>/stdlib/。新增 stdlib 子库时照此注册即可，
+# 无需改动顶层构建脚本。
+set_property(GLOBAL APPEND PROPERTY PYCP_STDLIB_TARGETS PycpBuiltin_io_shared)

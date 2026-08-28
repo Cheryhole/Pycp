@@ -149,10 +149,23 @@ if(BUILD_RUNTIME_SHARED)
         target_compile_options(PycpRuntime_obj_shared PRIVATE /W4 /EHsc /utf-8)
     else()
         target_compile_options(PycpRuntime_obj_shared PRIVATE -Wall -Wextra -O2)
-        # MinGW 下导出 DLL 的全部符号（__declspec 未逐符号标注的也一并导出），
-        # 保证主程序与内置扩展 DLL 跨 DLL 解析所有运行时 C++ 符号
-        # （如 Pycp::BC::VM、Pycp::BC::Module 等字节码符号）。
+    endif()
+
+    # MinGW 下导出 DLL 的全部符号（__declspec 未逐符号标注的也一并导出），
+    # 保证主程序与内置扩展 DLL 跨 DLL 解析所有运行时 C++ 符号
+    # （如 Pycp::BC::VM、Pycp::BC::Module 等字节码符号）。
+    # 注意：--export-all-symbols 是 MinGW 专有选项，Linux/macOS 的 ld 不认识
+    # （报 "unrecognized option"），且这两个平台默认即导出全部非 hidden 符号，
+    # 无需额外处理——故必须限定 MINGW，不能写成 else() 分支。
+    if(MINGW)
         target_link_options(PycpRuntime_shared PRIVATE -Wl,--export-all-symbols)
+    endif()
+
+    # 原生扩展加载由 PycpNativeExt.cpp 调用 dlopen/dlsym/dlclose（POSIX），
+    # 与静态库同等对待：glibc < 2.34 的发行版上 dlopen 尚未并入 libc，
+    # 动态库必须显式链接 libdl，否则链接期报 undefined reference。
+    if(UNIX AND NOT APPLE)
+        target_link_libraries(PycpRuntime_shared PUBLIC ${CMAKE_DL_LIBS})
     endif()
 endif()
 

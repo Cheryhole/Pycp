@@ -3,11 +3,17 @@
 # ---------------------------------------------------------------------
 # 统一构建入口：编排 backend 运行时（静态库）、frontend 前端源码
 # （AST / Codegen / AOT / Flex/Bison 生成）与顶层 PycpMain.cpp，
-# 最终产出 pycp 可执行文件。
+# 最终产出 pycp 可执行文件，并由 pycp-dist 目标把所有产物收集到
+# 最终输出目录（默认 build/dist/，自包含可直接运行 / 部署）。
 #
 # 用法：
 #   cmake -S . -B build
 #   cmake --build build
+#
+# 常用配置：
+#   -DPYCP_DIST_DIR=<path>           改最终输出目录位置
+#   -DPYCP_DIST_PLATFORM_SUBDIR=ON   按 <system>-<arch> 分层放置产物
+#   -DBUILD_RUNTIME_SHARED=ON        动态链接运行时（Windows 默认）
 # =====================================================================
 
 cmake_minimum_required(VERSION 3.15)
@@ -57,21 +63,18 @@ message(STATUS "Flex  : ${FLEX_EXECUTABLE}")
 # =====================================================================
 # Backend 运行时（静态库 / 动态库，可在构建时选择）
 # ---------------------------------------------------------------------
-# 通过 BUILD_RUNTIME_STATIC / BUILD_RUNTIME_SHARED 两个布尔选项选择
-# 构建静态库还是动态库（默认静态：static ON、shared OFF）。
-# pycp 可执行文件跟随选择进行链接（shared ON 时动态链接，否则静态）。
-# 产物统一输出到 backend/bin/；关闭非必需的 Python 绑定 / 测试目标。
+# 默认同时构建静态库与动态库（static ON、shared ON），pycp 与三个 stdlib
+# 扩展统一【动态链接】运行时：全进程只存在一份运行时状态（GC 池、小整数池、
+# 扩展句柄缓存），避免每个扩展 .so 内嵌一份副本。静态库仍产出，供 AOT 生成
+# 代码选择静态链接。想退回纯静态，配置 -DBUILD_RUNTIME_SHARED=OFF。
+# 产物统一输出到 build/backend/；关闭非必需的 Python 绑定 / 测试目标。
+# 所有产物最终由 pycp-dist 目标收集到最终输出目录（默认 build/dist）。
 # =====================================================================
 set(BUILD_RUNTIME_STATIC ON CACHE BOOL "Build static PycpRuntime library")
-# Windows 下默认构建 shared 运行时：内置扩展 DLL（io/Pycp/classtools）需解析
-# 运行时 C++ 符号，而 Windows 不导出可执行文件符号。统一链接 PycpRuntime_shared
-# 可让这些符号由 DLL 导出，避开静态模式下 exe 符号不可见的难题。
-# 非 Windows（POSIX）保持默认静态（靠 -rdynamic 导出符号）。
-if(WIN32)
-    set(BUILD_RUNTIME_SHARED ON CACHE BOOL "Build shared PycpRuntime library")
-else()
-    set(BUILD_RUNTIME_SHARED OFF CACHE BOOL "Build shared PycpRuntime library")
-endif()
+# 全平台默认构建 shared 运行时。Windows 下更是刚需：内置扩展 DLL
+# （io/Pycp/classtools）需解析运行时 C++ 符号，而 Windows 不导出可执行文件
+# 符号，必须靠 PycpRuntime_shared.dll 导出。
+set(BUILD_RUNTIME_SHARED ON CACHE BOOL "Build shared PycpRuntime library")
 set(BUILD_PYTHON_BINDING OFF CACHE BOOL "" FORCE)
 set(BUILD_TEST OFF CACHE BOOL "" FORCE)
 
@@ -89,6 +92,10 @@ add_subdirectory(backend)
 # ${CMAKE_BINARY_DIR}/stdlib/，运行时可执行文件旁的 stdlib/ 目录加载。
 # =====================================================================
 add_subdirectory(stdlib)
+
+# 取出各 stdlib 子库注册的全局目标清单（安装与 dist 收集共用）。
+# 新增 stdlib 子库只需在其 CMakeLists 中 set_property 注册，此处无需改动。
+get_property(PYCP_STDLIB_TARGETS GLOBAL PROPERTY PYCP_STDLIB_TARGETS)
 
 # =====================================================================
 # 目录路径
@@ -292,7 +299,7 @@ if(UNIX AND NOT APPLE)
     endif()
 endif()
 
-# 根据选项选择 runtime 库：shared ON 时动态链接，否则静态链接（默认）
+# 根据选项选择 runtime 库：shared ON 时动态链接（默认），否则静态链接
 if(BUILD_RUNTIME_SHARED)
     set(PYCP_RUNTIME_TARGET PycpRuntime_shared)
 else()
@@ -321,11 +328,17 @@ if(WIN32 AND BUILD_RUNTIME_SHARED)
     )
 endif()
 
-# 动态链接时设置 rpath：构建树内指向 backend/bin，安装后用 $ORIGIN
+# 动态链接时确保 shared 运行时被构建（pycp 静态链接时不依赖该目标），
+# 并设置 rpath：
+#   $ORIGIN/lib      -> dist/pycp 与安装目录（库在 <前缀>/lib 下）
+#   $ORIGIN/backend  -> 构建树（build/pycp 对应 build/backend/libPycpRuntime.so）
+# BUILD_RPATH 排在 CMake 自动追加的链接目录之前，故 dist 中的 pycp 不会被
+# 构建树里的旧 .so 抢先命中，dist 保持自包含。
 if(BUILD_RUNTIME_SHARED)
+    add_dependencies(pycp PycpRuntime_shared)
     set_target_properties(pycp PROPERTIES
-        BUILD_RPATH "${PYCP_BACKEND_DIR}/bin"
-        INSTALL_RPATH "$ORIGIN"
+        BUILD_RPATH "$ORIGIN/lib;$ORIGIN/backend"
+        INSTALL_RPATH "$ORIGIN/../lib"
     )
 endif()
 
@@ -340,88 +353,154 @@ endif()
 
 # =====================================================================
 # 安装
+# ---------------------------------------------------------------------
+# 布局与 dist 保持一致：bin/pycp、bin/stdlib/*.so（必须与 exe 同级）、
+# lib/libPycpRuntime.*、include/*.h*。rpath 均为 $ORIGIN/../lib。
 # =====================================================================
 install(TARGETS pycp
     RUNTIME DESTINATION bin
 )
 
-# 动态链接时需同时安装动态库（与 pycp 同目录，配合 $ORIGIN rpath）
 if(BUILD_RUNTIME_SHARED)
     install(TARGETS PycpRuntime_shared
-        LIBRARY DESTINATION bin
+        LIBRARY DESTINATION lib
+        RUNTIME DESTINATION bin   # Windows：DLL 需与 exe 同级才能被找到
     )
 endif()
-
-# =====================================================================
-# SDK 打包：将 runtime 库与 AOT 所需头文件复制到 build/bin/
-# ---------------------------------------------------------------------
-# 形成自包含 SDK 目录，便于编译 AOT 生成的 .cpp：
-#   g++ -std=c++17 -I build/bin <gen>.cpp -L build/bin -lPycpRuntime -o out
-# =====================================================================
-set(PYCP_SDK_DIR ${CMAKE_BINARY_DIR}/bin)
-
-# AOT 生成代码编译所需的头文件（不含 VM/字节码解释专用头）
-set(PYCP_AOT_HEADERS
-    PycpConfig.hpp
-    PycpObject.hpp
-    PycpException.hpp
-    PycpGC.hpp
-    PycpEnvironment.hpp
-    PycpFunction.hpp
-    PycpNone.hpp
-    PycpInteger.hpp
-    PycpBoolean.hpp
-    PycpString.hpp
-    PycpList.hpp
-    PycpManager.hpp
-    PycpModule.hpp
-    PycpClass.hpp
-    PycpBytecode.hpp
-    PycpBytecodeVM.hpp
-    PycpNativeExt.hpp
-    PycpABI.hpp
-)
-
-# 仅复制实际构建的库到 SDK 目录
-add_custom_command(TARGET pycp POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${PYCP_SDK_DIR}"
-    COMMENT "Packaging runtime libraries and AOT headers into ${PYCP_SDK_DIR}"
-)
 
 if(BUILD_RUNTIME_STATIC)
-    add_custom_command(TARGET pycp POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "$<TARGET_FILE:PycpRuntime_static>" "${PYCP_SDK_DIR}/"
+    install(TARGETS PycpRuntime_static
+        ARCHIVE DESTINATION lib
     )
 endif()
 
-if(BUILD_RUNTIME_SHARED)
-    # 确保动态库也被构建（pycp 静态链接时不依赖 shared 目标）
-    add_dependencies(pycp PycpRuntime_shared)
-    add_custom_command(TARGET pycp POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "$<TARGET_FILE:PycpRuntime_shared>" "${PYCP_SDK_DIR}/"
-    )
-    # 复制 DLL 导入库（MinGW: libPycpRuntime.dll.a；MSVC: PycpRuntime.lib），
-    # 否则 g++ -lPycpRuntime 会回退选中静态库 .a，导致 __imp_ 符号 undefined reference。
-    add_custom_command(TARGET pycp POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "$<TARGET_LINKER_FILE:PycpRuntime_shared>" "${PYCP_SDK_DIR}/"
+# 标准库原生扩展：运行时按可执行文件同级 stdlib/ 查找，必须装在 bin/stdlib
+if(PYCP_STDLIB_TARGETS)
+    install(TARGETS ${PYCP_STDLIB_TARGETS}
+        LIBRARY DESTINATION bin/stdlib
+        RUNTIME DESTINATION bin/stdlib
     )
 endif()
 
-foreach(hdr IN LISTS PYCP_AOT_HEADERS)
-    add_custom_command(TARGET pycp POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${PYCP_BACKEND_DIR}/include/${hdr}" "${PYCP_SDK_DIR}/"
-    )
+# AOT / 原生扩展编译所需的后端头文件
+install(DIRECTORY ${PYCP_BACKEND_DIR}/include/
+    DESTINATION include
+    FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp"
+)
+
+# =====================================================================
+# 最终产物收集（dist）
+# ---------------------------------------------------------------------
+# 把散落在构建树各处的产物（build/pycp、build/backend/libPycpRuntime.*、
+# build/stdlib/*.so、backend/include/*.h*）统一收集到一个自包含目录，
+# 开箱即可运行与部署，无需再拼接其它路径：
+#
+#   <PYCP_DIST_DIR>/pycp                主程序
+#   <PYCP_DIST_DIR>/stdlib/             标准库原生扩展（运行时按可执行文件
+#                                       同级目录的 stdlib/ 查找，不可改名）
+#   <PYCP_DIST_DIR>/lib/                运行时库（动态库 + 静态库 + 导入库）
+#   <PYCP_DIST_DIR>/include/            AOT / 原生扩展所需的后端头文件
+#
+# 触发：默认随 ALL 自动执行；也可单独执行（幂等，仅覆盖同名文件、不清空目录）：
+#   cmake --build build --target pycp-dist
+# 自定义：
+#   -DPYCP_DIST_DIR=<path>              改输出位置（默认 build/dist）
+#   -DPYCP_DIST_PLATFORM_SUBDIR=ON      输出到 dist/<system>-<arch>/，
+#                                       多平台/多架构产物共存不冲突
+#   -DPYCP_DIST_WRITE_BUILD_INFO=OFF    不生成 BUILD_INFO.txt
+# =====================================================================
+set(PYCP_DIST_DIR "${CMAKE_BINARY_DIR}/dist" CACHE PATH
+    "Final output directory for the collected Pycp artifacts")
+option(PYCP_DIST_PLATFORM_SUBDIR
+    "Place artifacts under <PYCP_DIST_DIR>/<system>-<arch>" OFF)
+option(PYCP_DIST_WRITE_BUILD_INFO
+    "Write BUILD_INFO.txt into the dist directory" ON)
+
+# 规范化输出目录（含平台分层子目录）
+file(TO_CMAKE_PATH "${PYCP_DIST_DIR}" PYCP_DIST_DIR)
+if(PYCP_DIST_PLATFORM_SUBDIR)
+    string(TOLOWER "${CMAKE_SYSTEM_NAME}" _dist_system)
+    string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _dist_arch)
+    set(PYCP_DIST_OUT_DIR "${PYCP_DIST_DIR}/${_dist_system}-${_dist_arch}")
+else()
+    set(PYCP_DIST_OUT_DIR "${PYCP_DIST_DIR}")
+endif()
+
+# 标准库目标清单：各子库经 GLOBAL 属性注册，新增子库无需改动此处
+set(PYCP_DIST_STDLIB_FILES "")
+foreach(_stdlib_target IN LISTS PYCP_STDLIB_TARGETS)
+    string(APPEND PYCP_DIST_STDLIB_FILES "$<TARGET_FILE:${_stdlib_target}>|")
 endforeach()
+
+# 运行时库（静态库 / 动态库 / Windows 导入库）-> dist/lib
+set(PYCP_DIST_RUNTIME_TARGETS "")
+set(PYCP_DIST_RUNTIME_FILES "")
+if(BUILD_RUNTIME_STATIC)
+    list(APPEND PYCP_DIST_RUNTIME_TARGETS PycpRuntime_static)
+    string(APPEND PYCP_DIST_RUNTIME_FILES "$<TARGET_FILE:PycpRuntime_static>|")
+endif()
+if(BUILD_RUNTIME_SHARED)
+    list(APPEND PYCP_DIST_RUNTIME_TARGETS PycpRuntime_shared)
+    string(APPEND PYCP_DIST_RUNTIME_FILES "$<TARGET_FILE:PycpRuntime_shared>|")
+    # Windows 导入库（MinGW: libPycpRuntime.dll.a；MSVC: PycpRuntime.lib），
+    # 否则 g++ -lPycpRuntime 会回退选中静态库 .a，导致 __imp_ 符号 undefined reference。
+    if(WIN32)
+        string(APPEND PYCP_DIST_RUNTIME_FILES "$<TARGET_LINKER_FILE:PycpRuntime_shared>|")
+    endif()
+endif()
+
+# 需与可执行文件同级的运行时文件：Windows 加载 DLL 只搜索 exe 所在目录，
+# 不会搜索 lib/，因此 PycpRuntime.dll 在根目录额外放一份（与 lib/ 那份同源）。
+set(PYCP_DIST_ROOT_FILES "")
+if(WIN32 AND BUILD_RUNTIME_SHARED)
+    string(APPEND PYCP_DIST_ROOT_FILES "$<TARGET_FILE:PycpRuntime_shared>|")
+endif()
+
+# 收集动作由独立脚本执行（建目录 / 覆盖复制 / 路径规范化 / 缺失即报错），
+# 多值参数以 '|' 分隔，避免路径中的分号被 CMake 列表吞掉。
+add_custom_target(pycp-dist ALL
+    COMMAND ${CMAKE_COMMAND}
+        -DBASE_DIR=${CMAKE_BINARY_DIR}
+        -DDIST_DIR=${PYCP_DIST_OUT_DIR}
+        -DLIB_DIR=${PYCP_DIST_OUT_DIR}/lib
+        -DINCLUDE_DIR=${PYCP_DIST_OUT_DIR}/include
+        -DEXE_FILE=$<TARGET_FILE:pycp>
+        -DROOT_FILES=${PYCP_DIST_ROOT_FILES}
+        -DRUNTIME_FILES=${PYCP_DIST_RUNTIME_FILES}
+        -DSTDLIB_FILES=${PYCP_DIST_STDLIB_FILES}
+        -DINCLUDE_DIRS=${PYCP_BACKEND_DIR}/include
+        -DWRITE_BUILD_INFO=${PYCP_DIST_WRITE_BUILD_INFO}
+        -DBUILD_INFO_SYSTEM=${CMAKE_SYSTEM_NAME}
+        -DBUILD_INFO_ARCH=${CMAKE_SYSTEM_PROCESSOR}
+        -DBUILD_INFO_TYPE=${CMAKE_BUILD_TYPE}
+        -DBUILD_INFO_COMPILER=${CMAKE_CXX_COMPILER_ID}
+        -DBUILD_INFO_VERSION=${PROJECT_VERSION}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PycpDist.cmake
+    COMMENT "Collecting final artifacts into ${PYCP_DIST_OUT_DIR}"
+    VERBATIM
+)
+
+# 依赖全部产物目标：保证并行构建下收集发生在所有库编译完成之后。
+# 缺少该依赖时，首次并行构建会出现“收集时 .so 尚未生成”的 FATAL_ERROR。
+add_dependencies(pycp-dist
+    pycp
+    ${PYCP_STDLIB_TARGETS}
+    ${PYCP_DIST_RUNTIME_TARGETS}
+)
 
 # =====================================================================
 # 构建信息
 # =====================================================================
+if(BUILD_RUNTIME_SHARED)
+    set(_runtime_link_mode "shared (dynamic)")
+else()
+    set(_runtime_link_mode "static")
+endif()
+
 message(STATUS "================================================")
 message(STATUS "Project: Pycp v${PROJECT_VERSION}")
 message(STATUS "Output executable: ${CMAKE_BINARY_DIR}/pycp")
+message(STATUS "Runtime link mode: ${_runtime_link_mode}")
+message(STATUS "Dist directory   : ${PYCP_DIST_OUT_DIR}")
 message(STATUS "Compiler: ${CMAKE_CXX_COMPILER_ID}")
 message(STATUS "================================================")

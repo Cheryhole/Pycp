@@ -37,10 +37,15 @@ set_target_properties(PycpBuiltin_classtools_shared PROPERTIES
 )
 
 # 依赖 PycpRuntime（头文件与链接接口均来自 runtime）。
-# Windows 下采用 shared 运行时（PycpRuntime_shared.dll），使扩展 DLL 可解析
-# 运行时导出的 C++ 符号；非 Windows 维持静态链接（靠主程序 -rdynamic 导出符号）。
-if(WIN32 AND BUILD_RUNTIME_SHARED)
+# 构建了 shared 运行时就统一动态链接：全进程只存在一份运行时状态（GC 池、
+# 小整数池、扩展句柄缓存），避免每个扩展 .so 内嵌一份副本。
+if(BUILD_RUNTIME_SHARED)
     target_link_libraries(PycpBuiltin_classtools_shared PUBLIC PycpRuntime_shared)
+    # rpath：dist/stdlib/*.so -> dist/lib；build/stdlib/*.so -> build/backend。
+    set_target_properties(PycpBuiltin_classtools_shared PROPERTIES
+        BUILD_RPATH "$ORIGIN/../lib;$ORIGIN/../backend"
+        INSTALL_RPATH "$ORIGIN/../lib"
+    )
 else()
     target_link_libraries(PycpBuiltin_classtools_shared PUBLIC PycpRuntime_static)
 endif()
@@ -50,3 +55,6 @@ if(MSVC)
 else()
     target_compile_options(PycpBuiltin_classtools_obj PRIVATE -Wall -Wextra -O2)
 endif()
+
+# 注册到全局标准库目标清单（供 pycp-dist 收集到 <dist>/stdlib/）。
+set_property(GLOBAL APPEND PROPERTY PYCP_STDLIB_TARGETS PycpBuiltin_classtools_shared)

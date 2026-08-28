@@ -183,7 +183,15 @@ pycp [options] <input_file>
 ```bash
 # 将 .pycp 逐指令翻译为依赖 PycpABI 的 C++ 源文件
 ./build/pycp --emit-cpp hello.pycp -o hello.gen.cpp
+
+# 编译：头文件在 build/dist/include，运行时库在 build/dist/lib
+g++ -std=c++17 -I build/dist/include hello.gen.cpp \
+    -L build/dist/lib -lPycpRuntime -Wl,-rpath,'$ORIGIN/lib' -o hello
 ```
+
+生成的可执行文件运行时仍按「可执行文件同级 `stdlib/`」加载原生模块，
+因此请把 `build/dist/lib/` 与 `build/dist/stdlib/` 一并放到 `hello` 旁边
+（或改用静态链接 `-L build/dist/lib -l:libPycpRuntime.a`，此时无需 `lib/`）。
 
 生成的 `.cpp` 包含 `main()`，内部将字节码翻译为 `Pycp::Add`/`Sub`/`Call` 等
 ABI 调用序列（常量内联为 `g_c[]`，控制流翻译为 `goto`，函数翻译为
@@ -278,8 +286,8 @@ io.print(a.age())   # 类外访问 public 方法正常
 
 ### 顶层构建选项
 
-顶层 `CMakeLists.txt` 在引入 backend 时强制设定以下选项（同时构建静态库
-与动态库，产物统一输出到 `backend/bin/`）：
+顶层 `CMakeLists.txt` 在引入 backend 时设定以下选项（默认同时构建静态库与
+动态库；产物输出到 `build/backend/`）：
 
 | 变量 | 值 | 说明 |
 |------|-----|------|
@@ -288,12 +296,70 @@ io.print(a.age())   # 类外访问 public 方法正常
 | `BUILD_PYTHON_BINDING` | `OFF` | 不构建 Python 绑定 |
 | `BUILD_TEST` | `OFF` | 不构建测试程序 |
 
-构建完成后，`backend/bin/` 下会同时产出：
+`pycp` 与三个标准库扩展默认【动态链接】运行时——全进程只存在一份运行时
+状态（GC 池、小整数池、扩展句柄缓存），避免每个扩展 `.so` 内嵌一份副本。
+静态库仍一并产出，供 AOT 生成代码选择静态链接。想退回纯静态链接：
 
-- `libPycpRuntime.a`（静态库）
-- `libPycpRuntime.so`（动态库，Linux；macOS 为 `.dylib`）
+```bash
+cmake -S . -B build -DBUILD_RUNTIME_SHARED=OFF
+```
 
-顶层 `pycp` 可执行文件当前静态链接 `libPycpRuntime.a`。
+### 最终产物目录（dist）
+
+构建完成后，所有产物会被统一收集到最终输出目录（默认 `build/dist/`），
+该目录自包含、可直接运行或部署，无需再去其它路径查找依赖：
+
+```
+build/dist/
+├── pycp                     主程序（解释器 / 编译器 / REPL）
+├── stdlib/                  标准库原生扩展，运行时固定在此目录查找
+│   ├── io.so
+│   ├── Pycp.so
+│   └── classtools.so
+├── lib/                     运行时库
+│   ├── libPycpRuntime.so    动态库（默认构建，pycp 动态链接它）
+│   └── libPycpRuntime.a     静态库（AOT 生成代码静态链接用）
+│                            Windows 下另有 PycpRuntime.dll 与导入库
+├── include/                 后端头文件（AOT / 原生扩展编译用）
+│   └── Pycp*.hpp / PycpExt.h
+└── BUILD_INFO.txt           产物溯源信息（平台 / 构建类型 / 编译器 / 版本）
+```
+
+> Windows 例外：加载 DLL 只搜索可执行文件所在目录、不搜索 `lib/`，因此
+> `PycpRuntime.dll` 会在 dist 根目录再放一份（与 `lib/` 那份同源）。
+
+收集步骤默认随 `ALL` 自动执行，也可单独触发（幂等，只覆盖同名文件、不清空目录）：
+
+```bash
+cmake --build build -j              # 构建并自动收集
+cmake --build build --target pycp-dist   # 仅重新收集
+```
+
+可通过 CMake 变量调整输出位置与布局：
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `PYCP_DIST_DIR` | `build/dist` | 最终输出目录，可指向任意路径 |
+| `PYCP_DIST_PLATFORM_SUBDIR` | `OFF` | `ON` 时输出到 `dist/<system>-<arch>/`，多平台 / 多架构产物共存不冲突 |
+| `PYCP_DIST_WRITE_BUILD_INFO` | `ON` | 是否生成 `BUILD_INFO.txt` |
+
+```bash
+# 输出到自定义位置，并按平台分层
+cmake -S . -B build -DPYCP_DIST_DIR=/opt/pycp -DPYCP_DIST_PLATFORM_SUBDIR=ON
+```
+
+> 注意：`stdlib/` 目录名不可更改——运行时按“可执行文件所在目录 + `/stdlib/`”
+> 查找 `io.so` / `Pycp.so` / `classtools.so`，因此分发时请整目录带走。
+
+各产物靠 rpath 相互定位，脱离构建树仍可运行：
+
+| 产物 | rpath | 解析到 |
+|------|-------|--------|
+| `dist/pycp` | `$ORIGIN/lib` | `dist/lib/libPycpRuntime.so` |
+| `dist/stdlib/*.so` | `$ORIGIN/../lib` | `dist/lib/libPycpRuntime.so` |
+
+因此把整个 `dist/` 拷到任意路径（或拷到别的机器同架构上）都能直接运行。
+`cmake --install` 沿用同一套布局：`bin/pycp`、`bin/stdlib/`、`lib/`、`include/`。
 
 ### backend 独立构建选项
 
@@ -337,6 +403,8 @@ cmake -S . -B build -DBUILD_PYTHON_BINDING=ON
 Pycp/
 ├── CMakeLists.txt          # 顶层总构建脚本（一键编译整个项目）
 ├── PycpMain.cpp            # 主程序入口（编译 / 解释执行 CLI）
+├── cmake/                  # 构建辅助脚本
+│   └── PycpDist.cmake      # 最终产物收集（由 pycp-dist 目标构建期调用）
 ├── example.pycp            # 示例源码（含尚未支持的高级语法）
 ├── frontend/               # 前端：词法/语法分析、AST、代码生成、AOT
 │   ├── CMakeLists.txt      # 独立构建入口（parser_test 测试程序）
@@ -427,6 +495,28 @@ cmake --build build -j
 
 ## 最近更新
 
+- **dist 布局调整与运行时默认动态链接**：dist 目录改为标准分层布局——头文件
+  归入 `dist/include/`、运行时库（动态库 + 静态库 + Windows 导入库）归入
+  `dist/lib/`、主程序留在 `dist/` 根、标准库原生扩展仍留在 `dist/stdlib/`
+  （运行时硬约束）。`BUILD_RUNTIME_SHARED` 改为全平台默认 `ON`，`pycp` 与
+  三个 stdlib 扩展统一动态链接运行时，全进程只有一份运行时状态；静态库仍
+  一并产出供 AOT 静态链接，`-DBUILD_RUNTIME_SHARED=OFF` 可退回纯静态。
+  配套改动：①三个 stdlib 子库加 `BUILD_RPATH $ORIGIN/../lib`（构建树为
+  `$ORIGIN/../backend`），`pycp` 改 `$ORIGIN/lib`，使 dist 脱离构建树自包含；
+  ②Windows 下 `PycpRuntime.dll` 在 dist 根额外放一份（Windows 不搜索 `lib/`）；
+  ③`backend` 的 `PycpRuntime_shared` 补 `${CMAKE_DL_LIBS}`；
+  ④`install` 规则镜像新布局（`bin/`+`bin/stdlib/`+`lib/`+`include/`）。
+  修复两处此前被静态链接掩盖的问题：`-Wl,--export-all-symbols` 是 MinGW
+  专有选项却应用于所有非 MSVC 编译器（Linux 下报 `unrecognized option`），
+  现限定 `MINGW`；`BUILD_RPATH` 曾指向源码目录 `backend/bin`。AOT 编译命令
+  相应改为 `-I build/dist/include -L build/dist/lib`。
+- **最终产物目录（`build/dist`）**：新增 `pycp-dist` 目标，构建结束自动把
+  `pycp` 可执行文件、`stdlib/*.so`（io / Pycp / classtools）、运行时库与全部
+  后端头文件收集到同一个自包含目录，开箱即可运行与部署。收集逻辑集中在
+  `cmake/PycpDist.cmake`（建目录 / 覆盖更新 / 路径规范化 / 源文件缺失即报错），
+  标准库子库通过 `PYCP_STDLIB_TARGETS` 全局属性注册，新增子库无需改动顶层
+  脚本。可用 `PYCP_DIST_DIR` 改输出位置、`PYCP_DIST_PLATFORM_SUBDIR=ON` 按
+  `<system>-<arch>` 分层放置多平台产物。原 `build/bin` SDK 目录已移除。
 - **VM 跳转越界检查修复「跳回指令 0」边界**：当循环恰好是代码对象的第一条指令时（REPL 中先 `import io` 再单独粘贴 `repeat if True{...}`、或文件/函数体以循环开头），循环末尾向后跳转的目标为指令 0。此前 VM 五处跳转 opcode（`FOR_ITER`/`JUMP`/`JUMP_IF_FALSE`/`JUMP_IF_TRUE`/`BREAK`）把 int64 中间结果强转 `size_t` 后再判越界，向后跳回指令 0 时中间值 `-1` 回绕成 `0xFFFF...F`，恒 `>= pc_end` 而误报 `jump out of range`。现改为在 int64 域计算并校验最终目标 `target ∈ [0, pc_end)`，再赋 `pc = target - 1`（`target=0` 时 `size_t` 回绕，主循环 `++pc` 后合法到达指令 0）；真正越界的跳转仍正确报错，字节码格式与 codegen 不变。
 - **REPL 会话级连续行号**：REPL 错误行号不再每次输入从 1 重新计数，而是按整个会话的物理输入行连续递增（含空行、续行、编译失败的行），对齐 Python 交互模式。实现上为 `parse_statement`/`compile_statement` 增加 `initial_line` 参数，由 REPL 主循环维护会话行号计数并传入；词法/语法/语义/运行时错误均自动获得正确的会话行号。同时修复文件模式 `parse()` 不重置行号导致的 import 子模块报错行号累积问题（此前 2 行的子模块错误会报 `line 5`，现正确报 `line 2`）。
 - **运行时类型命名去 `Object` 后缀**：`ListObject`→`List`、`ClassObject`→`Class`、
