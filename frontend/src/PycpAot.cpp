@@ -5,6 +5,7 @@
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <vector>
 
 namespace Pycp::AOT {
 
@@ -50,6 +51,24 @@ std::string cpp_string_literal(const std::string& s) {
 		}
 	}
 	out += "\"";
+	return out;
+}
+
+// 将模块名转为合法的 C++ 标识符片段（用于生成唯一的桩类型/变量名）。
+// 非字母数字下划线的字符按字节转义为 _xx，避免生成的源码非法。
+std::string sanitize_identifier(const std::string& s) {
+	std::string out;
+	for (char ch : s) {
+		if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+		    (ch >= '0' && ch <= '9') || ch == '_') {
+			out += ch;
+		} else {
+			char buf[8];
+			std::snprintf(buf, sizeof(buf), "_%02x",
+			              static_cast<unsigned char>(ch));
+			out += buf;
+		}
+	}
 	return out;
 }
 
@@ -657,10 +676,13 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 
 // 生成单个模块的 .cpp 内容（不含 main）。
 //   is_entry : 是否入口模块（入口模块额外生成 main）。
+//   deps     : 本模块 import 的、同批生成 .gen.cpp 的模块名列表。
+//              为其生成「链接拉入桩」，见下方 emit_link_stubs 说明。
 std::string emit_module_cpp(const Pycp::BC::Module& module,
                             const std::string& modname,
                             bool is_entry,
-                            const std::string& entry_name) {
+                            const std::string& entry_name,
+                            const std::vector<std::string>& deps = {}) {
 	if (module.code_objects.empty()) {
 		throw std::runtime_error("AOT: empty module (no code objects).");
 	}
@@ -764,8 +786,34 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	os << "    g_globals.clear();\n";
 	os << "}\n\n";
 
+	// ---- 依赖模块的「链接拉入桩」----
+	// 问题：把被依赖模块的 .gen.cpp 编成静态库（.a）再链接时，链接器只拉入
+	// 「能解析当前未定义符号」的成员。本 TU 原本不引用 PycpModule_<dep>，
+	// 于是 dep.gen.o 整个被丢弃，其静态初始化器无从执行——表现为编译链接
+	// 全部成功，运行时 import 却报 ImportError。
+	// 解法：在此显式引用各依赖的初始化符号并登记，强制链接器拉入对应成员。
+	// 比 -Wl,--whole-archive 更精确（只拉入真正需要的成员），且不依赖
+	// GNU 专有链接选项，跨平台一致。
+	// 注：仅对同批生成的 .pycp 模块生成（deps 已过滤）。标准库扩展
+	// （io/Pycp/classtools）运行时从 stdlib/ 动态加载，若误生成会产生
+	// 无法解析的外部符号。
+	for (const std::string& dep : deps) {
+		if (dep == modname) continue; // 自依赖（循环导入）：本 TU 已有该符号
+		const std::string tag = std::to_string(reg_id) + "_" + sanitize_identifier(dep);
+		os << "extern \"C\" Pycp::Module* " << module_init_symbol(dep) << "();\n";
+		os << "namespace { struct PycpAotLink_" << tag << " {\n";
+		os << "  PycpAotLink_" << tag << "() {\n";
+		os << "    Pycp::RegisterAotModule(" << cpp_string_literal(dep) << ", &"
+		   << module_init_symbol(dep) << ");\n";
+		os << "  }\n";
+		os << "}; PycpAotLink_" << tag << " _pycp_aot_link_" << tag << "; }\n";
+	}
+	if (!deps.empty()) os << "\n";
+
 	// ---- 模块注册器（静态初始化阶段，main 之前登记本模块初始化函数）----
 	// 供 Pycp::ImportModule 经注册表「直接调用」PycpModule_<name>，无需 dlsym。
+	// 与 dlsym(RTLD_DEFAULT) 互为兜底：主程序符号默认不进动态符号表，
+	// AOT 生成的 exe 若未加 -rdynamic，dlsym 会失败，此时注册表生效。
 	os << "// 静态初始化阶段注册本模块初始化函数，供 Pycp::ImportModule 经注册表调用。\n";
 	os << "extern \"C\" Pycp::Module* " << module_init_symbol(modname) << "();\n";  // 前向声明
 	os << "namespace { struct PycpAotReg_" << reg_id << " {\n";
@@ -818,6 +866,19 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	return os.str();
 }
 
+// 取模块 import 列表中「同批生成 .gen.cpp」的依赖（即存在于 modules 中者）。
+// 标准库扩展（io/Pycp/classtools）不在 modules 内，运行时从可执行文件旁的
+// stdlib/ 动态加载，故须排除——否则链接拉入桩会产生无法解析的外部符号。
+std::vector<std::string> resolve_deps(
+    const std::map<std::string, Pycp::BC::Module>& modules,
+    const Pycp::BC::Module& module) {
+	std::vector<std::string> deps;
+	for (const auto& dep : module.imports) {
+		if (modules.find(dep) != modules.end()) deps.push_back(dep);
+	}
+	return deps;
+}
+
 } // anonymous namespace
 
 std::string EmitCpp(const Pycp::BC::Module& module,
@@ -834,7 +895,8 @@ std::map<std::string, std::string> EmitCppAll(
 		const std::string& modname = kv.first;
 		bool is_entry = (modname == entry_name);
 		result[modname] = emit_module_cpp(kv.second, modname, is_entry,
-		                                  Pycp::AOT_ENTRY_FN_NAME);
+		                                  Pycp::AOT_ENTRY_FN_NAME,
+		                                  resolve_deps(modules, kv.second));
 	}
 	return result;
 }

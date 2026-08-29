@@ -20,8 +20,6 @@ class PYCP_API None : public Object{
 		None();
 		~None();
 
-		String* none_str() const { return none_str_; }
-
 		Object* __integer__() override;
 		Object* __string__() override;
 

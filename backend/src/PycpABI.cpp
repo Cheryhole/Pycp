@@ -3,6 +3,7 @@
 #include "PycpFunction.hpp"
 #include "PycpNativeExt.hpp"
 #include <map>
+#include <mutex>
 
 namespace Pycp {
 
@@ -295,13 +296,51 @@ void RegisterAotModule(const std::string& name, AotModuleInitFn init) {
 	aot_module_registry()[name] = init;
 }
 
+namespace {
+// 脚本所在目录（第 3 层的第二个候选目录），进程级，由 VM 构造时设置。
+std::string g_module_search_dir;
+std::mutex g_module_search_dir_mutex;
+
+std::string module_search_dir() {
+	std::lock_guard<std::mutex> lock(g_module_search_dir_mutex);
+	return g_module_search_dir;
+}
+
+// 调用 AOT 模块初始化函数（跨模块边界保护异常）。
+Module* call_aot_init(AotModuleInitFn init, const std::string& name) {
+	Module* mod = nullptr;
+	try {
+		mod = init();
+	} catch (const Pycp::Exception&) {
+		throw; // 已含位置信息，直接向上传播
+	} catch (const std::exception& e) {
+		throw Pycp::Exception("AOT module '" + name +
+		                      "' init failed: " + e.what());
+	} catch (...) {
+		throw Pycp::Exception("unknown exception in AOT module '" + name + "'");
+	}
+	if (mod == nullptr) {
+		throw Pycp::ImportError("AOT module '" + name +
+		                        "' init function returned null module.");
+	}
+	return mod;
+}
+} // anonymous namespace
+
+void SetModuleSearchDir(const std::string& dir) {
+	std::lock_guard<std::mutex> lock(g_module_search_dir_mutex);
+	g_module_search_dir = dir;
+}
+
 // =============================================================
 // 模块导入（类似 CPython 的 PyImport_ImportModule）
-// 统一入口：进程级缓存 → 内建动态库 → AOT .pycp 子模块（注册表）。
-// 返回 nullptr 表示既非内建也非 AOT 子模块，调用方回退到自身机制
-// （如 VM::load_module 的 registry 路径）。
+// 统一入口：进程级缓存 → ①进程内符号 → ②exe 目录/stdlib → ③cwd 与脚本目录。
+// 全部未命中返回 nullptr（out_source 亦为空），调用方回退到自身机制
+// （如 VM::load_module 的 registry 路径）并抛出 ImportError。
 // =============================================================
-Module* ImportModule(const std::string& name) {
+Module* ImportModule(const std::string& name, BC::Module** out_source) {
+	if (out_source != nullptr) *out_source = nullptr;
+
 	// 进程级缓存（跨 VM 实例、跨 AOT 调用共享）。
 	static std::map<std::string, Module*> g_import_cache;
 	auto it = g_import_cache.find(name);
@@ -309,32 +348,55 @@ Module* ImportModule(const std::string& name) {
 		return it->second;
 	}
 
-	// 1) 内建动态库（io/Pycp/classtools 等）。搜索目录取 cwd；stdlib 由
-	//    LoadNativeModule 内部按可执行文件目录兜底。
-	Module* m = LoadNativeModule(name, ".");
-	if (m != nullptr) {
-		// 模块对象常驻进程：AddRoot 防止 GC 回收，Incref 抵消后续
-		// （如 ~VM）的 Decref，避免 use-after-free。
-		GC_AddRoot(m);
-		Incref(m);
-		g_import_cache[name] = m;
-		return m;
-	}
+	// 命中并缓存：模块对象常驻进程——AddRoot 防止 GC 回收，Incref 抵消
+	// 后续（如 ~VM）的 Decref，避免 use-after-free。
+	auto cached = [&](Module* mod) -> Module* {
+		GC_AddRoot(mod);
+		Incref(mod);
+		g_import_cache[name] = mod;
+		return mod;
+	};
+	// 命中 .pycp 源码（已编译、尚未执行顶层）：交由 VM 执行。
+	auto source_hit = [&]() {
+		return out_source != nullptr && *out_source != nullptr;
+	};
 
-	// 2) AOT 编译的 .pycp 子模块：经注册表「直接调用」PycpModule_<name>。
-	//    无哈希、按模块名唯一，由 frontend AOT 在静态初始化阶段登记。
-	auto ait = aot_module_registry().find(name);
-	if (ait != aot_module_registry().end()) {
-		Module* sub = ait->second();
-		if (sub != nullptr) {
-			// 生成函数内部已 GC_AddRoot（幂等），此处仅登记缓存。
-			GC_AddRoot(sub);
-			g_import_cache[name] = sub;
-			return sub;
+	// ---- ① 进程内符号 ----
+	// 两级同层兜底，缺一不可：
+	//   dlsym(RTLD_DEFAULT) 覆盖经 -rdynamic 动态链接进主程序的模块；
+	//   静态注册表        覆盖主程序符号不可见（AOT 生成的 exe 默认无
+	//                     -rdynamic）与静态库链接的场景。
+	Module* m = LoadLinkedModule(name);
+	if (m == nullptr) {
+		auto ait = aot_module_registry().find(name);
+		if (ait != aot_module_registry().end()) {
+			m = call_aot_init(ait->second, name);
 		}
 	}
+	if (m != nullptr) return cached(m);
 
-	// 3) 既非内建也非 AOT 子模块：交回调用方处理（如解释器 registry）。
+	// ---- ② 可执行文件所在目录的 stdlib/ ----
+	const std::string& stdlib_dir = GetStdlibDir();
+	if (!stdlib_dir.empty()) {
+		m = LoadNativeModuleFrom(stdlib_dir, name, out_source);
+		if (m != nullptr) return cached(m);
+		if (source_hit()) return nullptr;
+	}
+
+	// ---- ③ 当前工作目录，其次脚本所在目录 ----
+	m = LoadNativeModuleFrom(std::string(), name, out_source);
+	if (m != nullptr) return cached(m);
+	if (source_hit()) return nullptr;
+
+	// 脚本目录为 "." 时与 cwd 重合，已在上一步覆盖，无需重复探测。
+	const std::string script_dir = module_search_dir();
+	if (!script_dir.empty() && script_dir != ".") {
+		m = LoadNativeModuleFrom(script_dir, name, out_source);
+		if (m != nullptr) return cached(m);
+		if (source_hit()) return nullptr;
+	}
+
+	// 全部未命中：交回调用方处理（如解释器 registry）。
 	return nullptr;
 }
 

@@ -49,7 +49,6 @@ class PYCP_API Function : public Object{
 		Function(const char* name);
 		Function(const char* name, PycpNativeFunction func);
 
-		FunctionKind get_kind() const { return kind; }
 		const char* get_name() const override { return name.c_str(); }
 
 		// 方法所属类（供 super() 解析父类）。仅类方法设置，其余为 nullptr。

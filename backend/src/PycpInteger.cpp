@@ -4,7 +4,6 @@
 #include "PycpBoolean.hpp"
 #include "PycpException.hpp"
 #include "PycpGC.hpp"
-#include "PycpMagic.hpp"
 
 #include <cmath>
 #include <stdexcept>

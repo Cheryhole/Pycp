@@ -1,0 +1,17 @@
+// AOT 导入测试入口：import 本地模块 b_dep 并调用其函数。
+// 用于验证 --emit-cpp 生成的多个 .gen.cpp 在「直接链接」与「依赖编为
+// 静态库再链接」两种场景下都能正常 import。
+import io
+import Pycp
+import b_dep
+
+func main() {
+	r = b_dep.double_value(21)
+	if (r != 42) {
+		io.print("mismatch: got " + Pycp.String(r))
+		return None
+	}
+	io.print("AOT IMPORT PASS")
+}
+
+main()

@@ -81,10 +81,6 @@ public:
 	// 元素个数（视图模式返回 owner 合并成员数）。
 	std::size_t size() const;
 
-	// 视图判定与 owner 访问（供 GC/序列化等使用）。
-	bool is_view() const { return is_view_; }
-	Object* view_owner() const { return owner_; }
-
 	// 魔术方法。
 	Object* __get_item__(Object* key) override;
 	Object* __set_item__(Object* key, Object* value) override;

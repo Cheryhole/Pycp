@@ -44,6 +44,10 @@ class Class;
 class Instance;
 class File;
 
+// 仅以指针形式使用的字节码模块，避免本头文件反向依赖 PycpBytecode.hpp
+// （PycpBytecode.hpp 经 PycpABI.hpp 与本文件形成环）。
+namespace BC { struct Module; }
+
 // 通用属性访问/赋值：对任意对象（模块/类/实例/文件）执行。
 //   GetAttr 返回 Borrowed 引用；未找到抛 AttributeError。
 //   SetAttr 接管 value 所有权（内部按需 Incref）。
@@ -92,21 +96,40 @@ PYCP_API Object* Call(Object* callable, Object** argv, std::size_t argc);
 // =============================================================
 //
 // 按模块名加载并返回 Pycp::Module*（Borrowed，不增引用；调用方负责
-// 视需要 Incref）。统一处理：
-//   1) 进程级缓存命中直接返回；
-//   2) 内建动态库（io/Pycp/classtools 等）→ LoadNativeModule；
-//   3) AOT 编译的 .pycp 子模块 → dlsym(RTLD_DEFAULT, "PycpModule_<name>")
-//      调用其生成的初始化函数（无哈希、按模块名唯一）。
-// 命中后模块对象经 GC_AddRoot + Incref 常驻进程，跨 VM 实例存活，
-// 由 Finalize 统一回收。
+// 视需要 Incref）。查找顺序（命中即终止，不再下探）：
 //
-// 返回 nullptr 表示「既不是内建库也不是 AOT 子模块」（如解释器路径下
-// 仅注册于 registry 的 .pycp 子模块），调用方（VM::load_module）应回退
-// 到其 registry 路径。寻不到任何来源时由调用方抛出 ImportError。
+//   0) 进程级缓存（跨 VM 实例、跨 AOT 调用共享）
+//   1) 进程内符号：dlsym(RTLD_DEFAULT, "PycpModule_<name>")；
+//      未找到再查 AOT 静态注册表（RegisterAotModule 登记）
+//   2) 可执行文件所在目录的 stdlib/
+//   3) 当前工作目录，其次脚本所在目录（SetModuleSearchDir 设置）
 //
-// from-import 的属性提取由调用方负责（本函数只管模块对象加载），
+// 第 2/3 层在单个目录内均按「原生动态库 <name>.so 优先，其次 .pycp 源码」
+// 的顺序探测；.pycp 源码需宿主经 SetSourceModuleCompiler 注册编译器钩子，
+// 未注册时该候选形式自动禁用（AOT 生成的独立程序仅识别动态库）。
+//
+// 第 1 层命中符号但初始化返回 nullptr 时抛 ImportError：符号存在即表明
+// 明确的链接意图，静默下探会掩盖「静态库成员被链接器丢弃」这类问题。
+//
+// 返回值三态：
+//   非 nullptr                        : 已初始化完成的模块对象
+//   nullptr 且 *out_source 非 nullptr : 命中 .pycp 源码，已编译为字节码
+//                                       但尚未执行顶层，由 VM 执行并接管
+//   二者皆 nullptr                    : 未命中，调用方应回退 registry_，
+//                                       仍无则抛出 ImportError
+//
+// out_source 默认 nullptr，保证 AOT 已生成的 ImportModule(dep) 调用点
+// 零改动（存量 .gen.cpp 无需重新生成即可编译）。
+//
+// 模块对象经 GC_AddRoot + Incref 常驻进程，跨 VM 实例存活，由 Finalize
+// 统一回收。from-import 的属性提取由调用方负责（本函数只管模块对象加载），
 // 职责与 PyImport_ImportModule 对齐。
-PYCP_API Module* ImportModule(const std::string& name);
+PYCP_API Module* ImportModule(const std::string& name,
+                              BC::Module** out_source = nullptr);
+
+// 设置脚本所在目录（第 3 层的第二个候选目录），进程级。
+// 解释器在 VM 构造时按入口文件路径设置；AOT 生成的独立程序无需设置。
+PYCP_API void SetModuleSearchDir(const std::string& dir);
 
 // AOT 编译的 .pycp 子模块在生成的 .cpp 静态初始化阶段，把自己的初始化函数
 // 指针登记进进程级注册表。ImportModule 据此「直接调用」对应 PycpModule_<name>

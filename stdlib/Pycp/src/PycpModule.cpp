@@ -190,15 +190,6 @@ Object* _object_string(Object* /*fn*/, Object** argv, std::size_t argc) {
 	return argv[0]->__string__();
 }
 
-// 将普通类对象放入命名空间（用于 Pycp.Object 基类）。
-[[maybe_unused]] void set_plain_class(Module* mod, const char* name) {
-	auto* ns = mod->get_namespace();
-	Class* cls = New<Class>(name);
-	(*ns)[name] = cls;
-	Incref(cls);
-	Decref(cls); // namespace 持有
-}
-
 // 将普通类对象放入命名空间，并附带默认 __initialize__（用于 Pycp.Object）。
 void set_object_class(Module* mod, const char* name) {
 	auto* ns = mod->get_namespace();

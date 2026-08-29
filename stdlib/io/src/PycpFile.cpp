@@ -358,21 +358,6 @@ Object* File::write(Object* arg) {
     return None::instance;
 }
 
-Object* File::writelines(Object* arg) {
-    EnsureWritable();
-    
-    List* lines = dynamic_cast<List*>(arg);
-    if (lines == nullptr) {
-        throw TypeError("writelines() expects a List.");
-    }
-    
-    for (std::size_t i = 0; i < lines->size(); ++i) {
-        Object* line = lines->at(i);
-        write(line);
-    }
-    return None::instance;
-}
-
 // =============================================================
 // 方法绑定（__get_attribute__）
 // =============================================================

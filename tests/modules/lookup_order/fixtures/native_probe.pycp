@@ -1,0 +1,3 @@
+// 与 native_probe.so 同名的「源码模块」版本。
+// 取值为 2 代表来自 .pycp 源码；若优先级实现错误会被优先命中。
+native_probe_origin = 2

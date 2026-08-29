@@ -1,0 +1,4 @@
+// 被 a_entry 依赖的模块（AOT 导入测试）。
+func double_value(x) {
+	return x * 2
+}

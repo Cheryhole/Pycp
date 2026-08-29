@@ -3,7 +3,7 @@
 #include "PycpList.hpp"
 #include "PycpBoolean.hpp"
 #include "PycpMap.hpp"
-#include "PycpABI.hpp"
+#include "PycpGC.hpp"
 #include "PycpMagic.hpp"
 
 #include <sstream>

@@ -27,7 +27,6 @@
 #include "PycpInteger.hpp"
 #include "PycpString.hpp"
 #include "PycpNone.hpp"
-#include "PycpFunction.hpp"
 #include "PycpException.hpp"
 #include "PycpConfig.hpp"
 #include "PycpClass.hpp"
@@ -38,7 +37,6 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace Pycp {
@@ -106,13 +104,6 @@ private:
 	std::map<std::string, Module*>* registry_;
 	std::map<std::string, Pycp::Module*> module_cache_;
 
-	// 常驻模块集合（native 扩展模块，如 Pycp/io/classtools）。
-	// 这些模块由 Initialize/Finalize 拥有、生命周期跨 VM 实例，~VM 不应
-	// 清理其命名空间内容（否则会提前释放 Pycp.Object 等仍被用户类
-	// parent_ 指向的对象，导致退出阶段堆损坏）。~VM 仅移除其 root 并对
-	// 其 Decref（抵消 LoadNativeModule 的 Incref），交由 Finalize 统一回收。
-	std::unordered_set<std::string> resident_modules_;
-
 	// 由 exec_module 提交、本 VM 负责释放的 Module 列表（REPL 场景）。
 	// 这些 Module 被 BytecodeFunction 闭包引用，须存活至 VM 析构。
 	std::vector<Module*> owned_modules_;
@@ -125,6 +116,13 @@ private:
 	// 加载（或取缓存）指定模块，返回其 Pycp::Module（Borrowed，不增引用）。
 	// 首次加载会执行该模块顶层并填充命名空间。
 	Pycp::Module* load_module(const std::string& name);
+
+	// 执行字节码模块的顶层并构造其模块对象。
+	// registry 子模块与「.pycp 源码编译所得」模块共用此流程：
+	// 先占坑缓存（支持循环导入）→ 构建 runtime_consts → 执行 code_objects[0]，
+	// 失败时从缓存移除并回滚。
+	//   bc : 字节码模块，须在本 VM 生命周期内保持有效
+	Pycp::Module* load_from_bc_module(const std::string& name, Module* bc);
 };
 
 } // namespace BC
@@ -151,8 +149,6 @@ public:
 	                 std::shared_ptr<BC::Environment> captured);
 
 	Object* invoke(Object** argv, std::size_t argc) override;
-
-	std::size_t get_code_idx() const { return code_idx; }
 
 	// 捕获环境访问器（native 模式下 AOT 生成的 pycp_fn_N 经 self 读取）。
 	const std::shared_ptr<BC::Environment>& get_captured() const { return captured; }

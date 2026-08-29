@@ -5,7 +5,6 @@
 #include "PycpGC.hpp"
 #include "PycpList.hpp"
 #include "PycpIterator.hpp"
-#include "PycpMagic.hpp"
 
 #include <iostream>
 #include <functional>

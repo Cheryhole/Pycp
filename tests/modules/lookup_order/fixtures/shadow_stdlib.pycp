@@ -1,0 +1,3 @@
+// 第 2 层（exe 目录 stdlib/）版本的同名模块。
+// 与 cwd 下的 shadow.pycp 内容不同：取值为 1 代表来自 stdlib。
+shadow_origin = 1

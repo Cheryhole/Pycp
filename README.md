@@ -280,6 +280,28 @@ io.print(a.age())   # 类外访问 public 方法正常
 
 > 注意：`.cpycp` 是编译后的字节码（类似 Python 的 `.pyc`），而非可执行文件。它必须由内嵌 Pycp VM 的 `pycp` 程序反序列化后执行。
 
+### 模块导入查找顺序
+
+`import xxx` 按下表顺序查找，**命中即终止**，不再继续下探：
+
+| 优先级 | 查找位置 | 候选形式 |
+|--------|----------|----------|
+| 1 | 当前程序已链接的符号 | `PycpModule_xxx` |
+| 2 | 可执行文件所在目录的 `stdlib/` | `xxx.so` → `xxx.pycp` |
+| 3 | 当前工作目录 → 脚本所在目录 | `xxx.so` → `xxx.pycp` |
+| 4 | 解释器编译期收集的依赖表（`registry`） | `.pycp` |
+| — | 全部未命中 | 抛 `ImportError: No module named 'xxx'` |
+
+说明：
+
+- **同层动态库优先于 `.pycp` 源码**。原生扩展（`xxx.so`，入口符号 `PycpModule_xxx`）性能更好，也与 `stdlib/` 现状（全部为动态库）一致。
+- **第 1 层主要针对编译产物**。AOT（`--emit-cpp`）生成的每个模块都导出 `PycpModule_<模块名>`，因此「多个 `.gen.cpp` 一起链接」或「把 `b.gen.cpp` 编成静态库再链接」都能正常 `import b`。该层由两级机制互为兜底：全局符号查找（`dlsym`）与静态初始化注册表——主程序符号默认不进动态符号表，未加 `-rdynamic` 时前者会失效，此时后者生效。
+- **第 2 层的 `stdlib/` 随可执行文件定位**：解释器取 `pycp` 自身所在目录，AOT 编译出的独立程序取该程序自身所在目录。
+- **`.pycp` 源码需要宿主支持**。解析器位于 frontend，解释器（`pycp`）已注册编译器钩子，故第 2/3 层可直接加载 `.pycp`；AOT 生成的独立程序未注册该钩子，其 `stdlib/` 仅识别动态库。
+- **第 1 层命中符号但初始化返回空**时直接抛 `ImportError`，不继续下探——符号存在即表明明确的链接意图，静默回退会掩盖「静态库成员被链接器丢弃」这类问题。
+
+> **关于静态库**：把 `b.gen.cpp` 编成 `.a` 再链接时，生成代码会自动为依赖模块插入**链接拉入桩**（在入口翻译单元显式引用 `PycpModule_b`），强制链接器拉入对应目标文件。否则未被引用的成员会被整体丢弃，表现为「编译链接全部成功，运行时却报 `ImportError`」。因此**无需** `-Wl,--whole-archive`；若把多个依赖分别编成静态库，仍须遵守静态库的标准链接顺序（依赖方在前、被依赖方在后）。
+
 ## 配置说明
 
 本项目通过 CMake 变量（option）控制构建行为，无需环境变量或配置文件。
@@ -407,7 +429,7 @@ Pycp/
 │   └── PycpDist.cmake      # 最终产物收集（由 pycp-dist 目标构建期调用）
 ├── example.pycp            # 示例源码（含尚未支持的高级语法）
 ├── frontend/               # 前端：词法/语法分析、AST、代码生成、AOT
-│   ├── CMakeLists.txt      # 独立构建入口（parser_test 测试程序）
+│   ├── CMakeLists.txt      # 独立构建入口（产出 pycp，不含 stdlib 原生扩展）
 │   ├── include/
 │   │   ├── PycpAstNode.hpp     # AST 节点定义
 │   │   ├── PycpCodegen.hpp     # 代码生成器接口（AST -> 字节码）
@@ -415,7 +437,6 @@ Pycp/
 │   └── src/
 │       ├── PycpLexer.l         # Flex 词法规则
 │       ├── PycpParser.y        # Bison 语法规则
-│       ├── PycpParser.cpp      # parser_test 入口（打印 AST）
 │       ├── PycpAstNode.cpp     # AST 节点实现
 │       ├── PycpCodegen.cpp     # 代码生成器实现
 │       └── PycpAot.cpp         # AOT 实现（预留骨架）
@@ -471,7 +492,7 @@ Pycp/
 | `backend/` | 后端：运行时库（对象模型、GC、VM、字节码），**不依赖前端** |
 | `stdlib/` | 标准库：C++ 原生动态库（`io` / `Pycp` / `classtools`），`import` 时由 VM 动态加载 |
 | 顶层 `CMakeLists.txt` | 全项目统一构建入口，产出 `pycp` 可执行文件 |
-| `frontend/CMakeLists.txt` | 独立构建 `parser_test`（打印 AST 的解析器测试） |
+| `frontend/CMakeLists.txt` | 独立构建 `pycp`（不构建 stdlib 原生扩展，`import io` 等不可用） |
 | `backend/CMakeLists.txt` | 独立构建运行时库与 `test_pycp` 测试 |
 
 > 各标准库子库统一采用 `<name>/include`（头文件）+ `<name>/src`（源文件）+ `<name>/CMakeLists.txt` 的目录结构，编译为独立动态库（`io.so` / `Pycp.so` / `classtools.so`），输出到 `build/stdlib/`。
@@ -481,11 +502,11 @@ Pycp/
 除了顶层一键编译，各模块也可独立构建：
 
 ```bash
-# 仅构建前端 parser_test（无需 backend）
+# 仅构建前端（会连带构建 backend 运行时，但不构建 stdlib 原生扩展）
 cd frontend
 cmake -S . -B build
 cmake --build build -j
-./build/parser_test ../example.pycp   # 打印 AST
+./build/pycp ../example.pycp
 
 # 仅构建后端运行时库 + 测试
 cd backend

@@ -12,8 +12,8 @@
 // 返回一个已构建好的 Module（Owned，refcount=1），其命名空间
 // 内可放置 Function（复用 PycpNativeFunction 签名）等对象。
 //
-// 加载链：VM::load_module 在 FindBuiltinModule（静态内建）之后、
-// registry_（.pycp 依赖）之前调用 LoadNativeModule。
+// 加载链：VM::load_module 经 Pycp::ImportModule 统一编排，在 registry_
+// （.pycp 依赖）之前完成「进程内符号 / stdlib / cwd / 脚本目录」的查找。
 // =============================================================
 
 #include "PycpObject.hpp"
@@ -24,6 +24,10 @@
 
 namespace Pycp {
 
+// 仅以指针形式使用的字节码模块，避免本头文件反向依赖 PycpBytecode.hpp
+// （PycpBytecode.hpp 经 PycpABI.hpp 间接依赖本文件，形成环）。
+namespace BC { struct Module; }
+
 // 平台原生动态库后缀（纯原生，无特殊命名）：
 //   Linux  ".so" / Windows ".dll" / macOS ".dylib"
 const char* native_ext_suffix();
@@ -32,15 +36,47 @@ const char* native_ext_suffix();
 // 如 pycp 可执行文件位于 /usr/local/bin/pycp，则返回 /usr/local/bin/stdlib。
 const std::string& GetStdlibDir();
 
-// 尝试加载原生扩展 <name><suffix>，搜索顺序：
-//   1) <可执行文件目录>/stdlib/（标准库，优先）
-//   2) search_dir（脚本所在目录）
-//   3) 当前工作目录
-//   - 文件不存在：返回 nullptr（由调用方回退 .pycp 加载）。
-//   - 文件存在但 dlopen / dlsym / 入口调用失败：抛 ImportError。
-// 命中返回 Module*（Owned，refcount=1，由调用方 GC_AddRoot 并缓存）。
+// =============================================================
+// 模块查找原语
+//
+// ImportModule 按「进程内符号 -> exe 目录/stdlib -> cwd -> 脚本目录」
+// 的顺序编排下列原语，每个原语只负责单一来源的探测。
+// =============================================================
+
+// .pycp 源码模块编译器钩子：源码路径 -> 字节码 Module。
+// 返回堆分配对象，所有权移交运行时。编译失败时抛异常（由调用方转换为
+// 带位置信息的 ImportError）。默认的空实现返回 nullptr，使 .pycp 源码
+// 层自动禁用（AOT 生成的独立程序即为此情形，仅识别原生动态库）。
+//   注：backend 无法解析 .pycp（parser / Codegen 位于 frontend），故由
+//   宿主（PycpMain）注册，避免 libPycpRuntime 反向依赖 frontend。
+using SourceModuleCompiler = BC::Module* (*)(const char* path);
+void SetSourceModuleCompiler(SourceModuleCompiler fn);
+
+// 第 1 层（前）：在当前进程已加载的全局符号表中查找 PycpModule_<name>。
+//   Linux/macOS : dlsym(RTLD_DEFAULT, ...)
+//   Windows     : GetModuleHandle(NULL) + GetProcAddress（仅主程序模块）
+// 未找到返回 nullptr（属正常，交由后续层级继续）。
+// 找到但入口返回 nullptr 时抛 ImportError——符号存在即表明明确的链接
+// 意图，静默下探会掩盖「静态库成员被链接器丢弃」这类问题。
+Module* LoadLinkedModule(const std::string& name);
+
+// 单目录探测原语：仅在 dir 指定的单一目录下查找模块，不跨目录回退。
+//   dir 为空时表示当前工作目录。
+// 先找 <dir>/<name><suffix>（原生动态库，入口符号 PycpModule_<name>），
+// 未找到再找 <dir>/<name>.pycp（源码，经 SourceModuleCompiler 编译）。
+//   返回非 nullptr          : 已初始化完成的模块对象（Owned）。
+//   返回 nullptr 且 *out_source 非 nullptr : 命中 .pycp 源码，已编译为
+//                            字节码但尚未执行顶层，交由 VM 完成执行。
+//   二者皆 nullptr          : 本目录下不存在该模块的任何形式。
+Module* LoadNativeModuleFrom(const std::string& dir, const std::string& name,
+                             BC::Module** out_source = nullptr);
+
+// 兼容旧入口：等价于按既有顺序（cwd -> search_dir -> stdlib）依次调用
+// LoadNativeModuleFrom。新代码应直接使用 LoadNativeModuleFrom 自行编排，
+// 保留本函数仅为不破坏既有外部调用方。
 Module* LoadNativeModule(const std::string& name,
-                         const std::string& search_dir);
+                         const std::string& search_dir,
+                         BC::Module** out_source = nullptr);
 
 // 统一关闭所有已加载的 dlopen 句柄并清空句柄缓存（进程退出前调用）。
 void NativeExt_Finalize();

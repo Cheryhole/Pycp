@@ -2,8 +2,6 @@
 #include "PycpException.hpp"
 #include "PycpGC.hpp"
 #include "PycpString.hpp"
-#include "PycpNone.hpp"
-#include "PycpABI.hpp"
 #include "PycpConfig.hpp"
 #include "PycpMagic.hpp"
 #include "PycpMap.hpp"
@@ -86,11 +84,6 @@ Class::~Class() {
 		Decref(parent_);
 		parent_ = nullptr;
 	}
-}
-
-void Class::AddMemberName(Class* cls, const std::string& name) {
-	if (cls == nullptr) throw TypeError("cannot add member to null class.");
-	cls->add_member_name(name);
 }
 
 void Class::AddMethod(Class* cls, const std::string& name, Object* fn) {
@@ -614,15 +607,6 @@ Object* Instance::__list__() {
 	Object* self = this;
 	Object* argv[1] = { self };
 	return fn->invoke(argv, 1);
-}
-
-std::vector<std::string> Instance::field_names() const {
-	// 仅实例数据成员名（fields_ + 动态成员，排除类方法），fields_ 优先。
-	std::vector<std::string> names;
-	for (const auto& kv : member_pairs()) {
-		names.push_back(kv.first);
-	}
-	return names;
 }
 
 std::vector<std::pair<std::string, Object*>> Instance::member_pairs() const {

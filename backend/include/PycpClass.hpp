@@ -49,8 +49,7 @@ public:
 	// 静态工厂：创建指定名字的类对象（返回 Owned，refcount=1）。
 	static Class* New(const std::string& name);
 
-	// 静态操作：添加成员名 / 方法（与旧 ABI 自由函数语义一致）。
-	static void AddMemberName(Class* cls, const std::string& name);
+	// 静态操作：添加方法（与旧 ABI 自由函数语义一致）。
 	static void AddMethod(Class* cls, const std::string& name, Object* fn);
 
 	// 覆盖基类虚函数：返回类名（供默认 __string__ 与异常信息使用）。
@@ -154,10 +153,6 @@ public:
 	Object* __delete__() override;
 	// delete obj[key] 触发：用户定义 __delete_item__ 则调用，否则默认抛错。
 	Object* __delete_item__(Object* key) override;
-
-	// 字段名枚举（仅 fields_ + 动态 members_，不含类方法），供 __map__
-	// 视图字符串化/计数使用。返回去重后的名称（fields_ 优先）。
-	std::vector<std::string> field_names() const;
 
 	// 数据成员键值对（合并 fields_ + 动态 members_，排除类方法）。
 	// 供 __map__ 视图遍历/字符串化使用。

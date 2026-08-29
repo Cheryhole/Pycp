@@ -25,6 +25,16 @@ VM::VM(Module* module, std::map<std::string, Module*>* registry,
 		global_env_->globals = new std::unordered_map<std::string, Object*>();
 	}
 
+	// 设置脚本所在目录，作为 import 查找第 3 层（cwd 之后）的候选目录。
+	// 取入口模块源路径的目录部分；REPL（module_ == nullptr）无脚本目录，
+	// 此时该候选位置不生效。
+	if (module_ != nullptr && !module_->source_path.empty()) {
+		const std::string& sp = module_->source_path;
+		std::size_t slash = sp.find_last_of("/\\");
+		Pycp::SetModuleSearchDir(slash == std::string::npos
+			? std::string(".") : sp.substr(0, slash));
+	}
+
 	// 本版起不注入任何内建函数（命名空间仅含用户定义内容）。
 
 	// 若 runtime_consts 为空（编译路径 Compile 未填充），则从 const_pool 构建。
@@ -52,15 +62,11 @@ VM::VM(Module* module, std::map<std::string, Module*>* registry,
 }
 
 VM::~VM() {
-	// 第一步：显式断开所有【非驻留】模块命名空间的引用（清空 map 并 Decref
-	// 值），打破模块间可能形成的循环引用（A import B 且 B import A），避免
-	// 后续 Decref Module 时因环导致连锁析构 / 双重释放。
-	// 常驻 native 模块（Pycp/io/classtools）跳过：其命名空间内容（如
-	// Pycp.Object 类）可能仍被用户类 parent_ 引用，须存活到 Finalize 阶段
-	// 随最后的子类引用一起回收，否则会悬垂。
+	// 第一步：显式断开各模块命名空间的引用（清空 map 并 Decref 值），打破
+	// 模块间可能形成的循环引用（A import B 且 B import A），避免后续
+	// Decref Module 时因环导致连锁析构 / 双重释放。
 	for (auto& kv : module_cache_) {
 		if (kv.second == nullptr) continue;
-		if (resident_modules_.count(kv.first)) continue;
 		auto* ns = kv.second->get_namespace();
 		if (ns != nullptr) {
 			for (auto& p : *ns) {
@@ -77,14 +83,11 @@ VM::~VM() {
 	// （清空入口模块 namespace 时对全局变量值 Decref）归零并释放，
 	// 因此此处【不可再 Decref】，否则会对已释放对象二次释放。
 	// 仅入口模块 entry_mod_ 不被任何全局变量持有，需在此显式 Decref 释放。
-	// 常驻模块则在此 Decref（抵消 LoadNativeModule 的 Incref），使其引用
-	// 计数在 Finalize 的 GC_Collect 中归零并释放，避免泄漏。
+	// native 扩展模块（Pycp/io/classtools）由 ImportModule 常驻进程，其
+	// 引用最终在 Finalize 的 GC_Collect 中随 root 移除而回收。
 	for (auto& kv : module_cache_) {
 		if (kv.second != nullptr) {
 			GC_RemoveRoot(kv.second);
-			if (resident_modules_.count(kv.first)) {
-				Decref(kv.second);
-			}
 		}
 	}
 	if (entry_mod_ != nullptr) {
@@ -210,15 +213,24 @@ Pycp::Module* VM::load_module(const std::string& name) {
 		return it->second;
 	}
 
-	// 内建动态库（io/Pycp/classtools 等）与 AOT 编译的 .pycp 子模块
-	// （进程内统一符号 PycpModule_<name>）统一经 ABI 入口 ImportModule 处理，
-	// 命中进程级缓存直接返回。返回 nullptr 表示非上述来源，回退 registry。
-	Pycp::Module* imported = Pycp::ImportModule(name);
+	// ① 进程内符号（PycpModule_<name>）② exe 目录的 stdlib/ ③ cwd 与脚本
+	// 目录，统一经 ABI 入口 ImportModule 处理，命中进程级缓存直接返回。
+	Module* src = nullptr;
+	Pycp::Module* imported = Pycp::ImportModule(name, &src);
 	if (imported != nullptr) {
 		return imported;
 	}
 
-	// 未命中：需从注册表查找模块并执行其顶层
+	// 命中 .pycp 源码模块：已编译为字节码，尚未执行顶层。
+	// 接管其生命周期——registry 中的模块由调用方持有，而源码模块是本次
+	// import 临时编译所得，须加入 owned_modules_ 才能被 ~VM 清理
+	// runtime_consts 并释放。
+	if (src != nullptr) {
+		owned_modules_.push_back(src);
+		return load_from_bc_module(name, src);
+	}
+
+	// 未命中：回退解释器编译期收集的注册表（registry_）。
 	if (registry_ == nullptr) {
 		throw ImportError("No module named '" + name + "'");
 	}
@@ -226,8 +238,11 @@ Pycp::Module* VM::load_module(const std::string& name) {
 	if (mit == registry_->end() || mit->second == nullptr) {
 		throw ImportError("No module named '" + name + "'");
 	}
-	Module* sub_module = mit->second;
+	return load_from_bc_module(name, mit->second);
+}
 
+// 执行字节码模块的顶层并构造其模块对象（registry 子模块与 .pycp 源码模块共用）。
+Pycp::Module* VM::load_from_bc_module(const std::string& name, Module* bc) {
 	// 先占坑：创建 Pycp::Module 并放入缓存（支持循环导入——执行子模块时
 	// 若其反向 import 本模块名，会命中这个未填充完的对象而非无限递归）。
 	Pycp::Module* modobj = Pycp::Module::New(name);
@@ -246,35 +261,35 @@ Pycp::Module* VM::load_module(const std::string& name) {
 	// 但 execute 内部读取 module_->source_path / runtime_consts，
 	// 因此需要临时切换 module_ 指针。
 	Module* saved_module = module_;
-	module_ = sub_module;
+	module_ = bc;
 	try {
-		if (sub_module->code_objects.empty()) {
+		if (bc->code_objects.empty()) {
 			throw VMError("empty imported module: " + name);
 		}
 
 		// 确保子模块 runtime_consts 已构建（编译路径 Compile 未填充）。
-		if (sub_module->runtime_consts.empty() && !sub_module->const_pool.empty()) {
-			sub_module->runtime_consts.reserve(sub_module->const_pool.size());
-			for (const auto& c : sub_module->const_pool) {
+		if (bc->runtime_consts.empty() && !bc->const_pool.empty()) {
+			bc->runtime_consts.reserve(bc->const_pool.size());
+			for (const auto& c : bc->const_pool) {
 				switch (c.kind) {
 					case ConstKind::INTEGER:
-						sub_module->runtime_consts.push_back(Integer::FromLong(c.int_value));
+						bc->runtime_consts.push_back(Integer::FromLong(c.int_value));
 						break;
 					case ConstKind::STRING:
-						sub_module->runtime_consts.push_back(String::FromCString(c.str_value.c_str()));
+						bc->runtime_consts.push_back(String::FromCString(c.str_value.c_str()));
 						break;
 					case ConstKind::NONE:
-						sub_module->runtime_consts.push_back(None::instance);
+						bc->runtime_consts.push_back(None::instance);
 						Incref(None::instance);
 						break;
 					default:
 						throw VMError("unknown constant kind.");
 				}
-				GC_AddRoot(sub_module->runtime_consts.back());
+				GC_AddRoot(bc->runtime_consts.back());
 			}
 		}
 
-		CodeObject* top = &sub_module->code_objects[0];
+		CodeObject* top = &bc->code_objects[0];
 		std::shared_ptr<Environment> env = std::make_shared<Environment>();
 		env->globals = sub_global->globals;
 		Object* ret = execute(top, env, nullptr, 0);

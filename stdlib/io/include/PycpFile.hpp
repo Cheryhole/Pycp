@@ -69,11 +69,7 @@ public:
     void close();
     // 判断文件是否已关闭
     bool closed() const { return !is_open_; }
-    // 获取显示名称
-    const std::string& name() const { return name_; }
-    // 获取实际路径
-    const std::string& path() const { return path_; }
-    
+
     // 读取全部内容（返回 String）
     Object* read();
     // 读取指定字节数（返回 String）
@@ -84,8 +80,6 @@ public:
     Object* readlines();
     // 写入内容（返回 None）
     Object* write(Object* arg);
-    // 写入多行（返回 None）
-    Object* writelines(Object* arg);
 
     // ---------- Object 虚方法重写 ----------
 

@@ -2,10 +2,9 @@
 #include "PycpException.hpp"
 #include "PycpInteger.hpp"
 #include "PycpString.hpp"
-#include "PycpNone.hpp"
-#include "PycpGC.hpp"
 #include "PycpConfig.hpp"
 
+#include <atomic>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -13,6 +12,9 @@
 
 #if defined(_WIN32)
 	#include <windows.h>
+#elif defined(__APPLE__)
+	#include <dlfcn.h>
+	#include <mach-o/dyld.h>   // _NSGetExecutablePath
 #else
 	#include <dlfcn.h>
 	#include <unistd.h>
@@ -22,8 +24,8 @@ namespace Pycp {
 
 // 原生扩展入口符号约定：每个动态库按其模块名导出符号
 //   extern "C" Module* PycpModule_<name>();
-// （如 io 库导出 PycpModule_io，Pycp 库导出 PycpModule_Pycp）。LoadNativeModule
-// 按导入名 name 拼出 "PycpModule_<name>" 经 dlsym 解析，与 AOT 子模块符号命名统一。
+// （如 io 库导出 PycpModule_io，Pycp 库导出 PycpModule_Pycp）。运行时
+// 按导入名 name 拼出 "PycpModule_<name>" 解析，与 AOT 子模块符号命名统一。
 namespace {
 // 模块初始化入口函数指针类型。
 using NativeModuleInitFn = Module* (*)();
@@ -37,23 +39,47 @@ std::string g_stdlib_dir;
 bool g_stdlib_dir_computed = false;
 std::mutex g_stdlib_mutex;
 
+// .pycp 源码模块编译器钩子。默认实现返回 nullptr，使「.pycp 源码」这一
+// 候选形式整体禁用——AOT 生成的独立程序即为此情形（仅识别原生动态库）。
+BC::Module* default_source_compiler(const char*) {
+	return nullptr;
+}
+std::atomic<SourceModuleCompiler> g_source_compiler{&default_source_compiler};
+
+// 关闭动态库句柄（跨平台）。
+void close_handle(void* h) {
+	if (h == nullptr) return;
+#if defined(_WIN32)
+	FreeLibrary(static_cast<HMODULE>(h));
+#else
+	dlclose(h);
+#endif
+}
+
 // 计算可执行文件所在目录（惰性，仅首次调用时）。
 std::string compute_exe_dir() {
+	std::string p;
 #if defined(_WIN32)
 	char buf[MAX_PATH];
 	DWORD len = GetModuleFileNameA(nullptr, buf, MAX_PATH);
 	if (len == 0 || len >= MAX_PATH) return "";
-	std::string p(buf, len);
+	p.assign(buf, static_cast<std::size_t>(len));
 #elif defined(__APPLE__)
-	// macOS：_NSGetExecutablePath（简化：用 /proc 不可用，退化为空）。
-	return "";
+	// macOS 无 /proc，改用 _NSGetExecutablePath：首传 nullptr 取得所需
+	// 缓冲区大小，再按该大小重建缓冲区取真实路径。
+	uint32_t size = 0;
+	_NSGetExecutablePath(nullptr, &size);
+	if (size == 0) return "";
+	p.resize(static_cast<std::size_t>(size));
+	if (_NSGetExecutablePath(&p[0], &size) != 0) return "";
+	if (!p.empty() && p.back() == '\0') p.pop_back(); // 去掉结尾的 '\0'
 #else
 	// Linux：readlink /proc/self/exe。
 	char buf[4096];
 	ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
 	if (len <= 0) return "";
 	buf[len] = '\0';
-	std::string p(buf);
+	p.assign(buf, static_cast<std::size_t>(len));
 #endif
 	std::size_t slash = p.find_last_of("/\\");
 	if (slash == std::string::npos) return "";
@@ -77,42 +103,48 @@ const std::string& GetStdlibDir() {
 	if (!g_stdlib_dir_computed) {
 		std::string exe_dir = compute_exe_dir();
 		if (!exe_dir.empty()) {
-			g_stdlib_dir = exe_dir + "/stdlib";
+			g_stdlib_dir = exe_dir + "/" + Pycp::STDLIB_DIR_NAME;
 		}
 		g_stdlib_dir_computed = true;
 	}
 	return g_stdlib_dir;
 }
 
-Module* LoadNativeModule(const std::string& name,
-                         const std::string& search_dir) {
-	const std::string fname = name + native_ext_suffix();
+void SetSourceModuleCompiler(SourceModuleCompiler fn) {
+	// 传 nullptr 表示注销，回退到默认实现（源码层禁用）。
+	g_source_compiler.store(fn != nullptr ? fn : &default_source_compiler);
+}
 
-	// 候选路径：优先当前工作目录（cwd），其次 search_dir（脚本目录），
-	// 最后 stdlib（可执行文件旁）。取第一个存在的文件。
-	std::string path;
-	std::error_code ec;
-	if (std::filesystem::exists("./" + fname, ec)) {
-		path = "./" + fname;
+// 调用模块入口函数，跨 ABI 边界保护异常。
+//   symbol : 入口符号名（PycpModule_<name>）
+//   source : 来源描述，仅用于错误信息（动态库路径 / "linked symbol"）
+Module* call_module_init(NativeModuleInitFn init, const std::string& symbol,
+                         const std::string& source) {
+	Module* mod = nullptr;
+	try {
+		mod = init();
+	} catch (const Pycp::Exception&) {
+		// Pycp 异常已含位置信息，直接向上传播。
+		throw;
+	} catch (const std::exception& e) {
+		throw Pycp::Exception("module entry '" + symbol + "' (" + source +
+		                      ") init failed: " + e.what());
+	} catch (...) {
+		throw Pycp::Exception("unknown native exception in module entry '" +
+		                      symbol + "' (" + source + ")");
 	}
-	if (path.empty() && !search_dir.empty()) {
-		std::string c = search_dir + "/" + fname;
-		if (std::filesystem::exists(c, ec)) path = c;
+	if (mod == nullptr) {
+		throw ImportError("module entry '" + symbol + "' (" + source +
+		                  ") returned null module.");
 	}
-	if (path.empty()) {
-		const std::string& stdlib_dir = GetStdlibDir();
-		if (!stdlib_dir.empty()) {
-			std::string c = stdlib_dir + "/" + fname;
-			if (std::filesystem::exists(c, ec)) path = c;
-		}
-	}
+	return mod;
+}
 
-	// 无任何候选文件：返回 nullptr，交由调用方回退 .pycp 加载。
-	if (path.empty()) {
-		return nullptr;
-	}
+// 从确定的动态库路径加载模块（dlopen + 解析入口 + 调用 + 记录句柄）。
+// 调用方须先确认 path 存在。失败时已关闭句柄，不残留。
+Module* load_native_from_path(const std::string& path, const std::string& name) {
+	const std::string entry_symbol = std::string(Pycp::AOT_MODULE_INIT_PREFIX) + name;
 
-	// 文件存在：执行动态加载。
 	void* handle = nullptr;
 #if defined(_WIN32)
 	handle = static_cast<void*>(LoadLibraryA(path.c_str()));
@@ -128,8 +160,6 @@ Module* LoadNativeModule(const std::string& name,
 	}
 #endif
 
-	// 解析入口符号 PycpModule_<name>（按导入名拼接，与 AOT 子模块命名统一）。
-	const std::string entry_symbol = std::string("PycpModule_") + name;
 	NativeModuleInitFn init = nullptr;
 #if defined(_WIN32)
 	// GetProcAddress 返回 FARPROC（通用函数指针），先转 void* 再转具体签名，
@@ -141,51 +171,17 @@ Module* LoadNativeModule(const std::string& name,
 	init = reinterpret_cast<NativeModuleInitFn>(dlsym(handle, entry_symbol.c_str()));
 #endif
 	if (init == nullptr) {
-#if defined(_WIN32)
-		FreeLibrary(static_cast<HMODULE>(handle));
-#else
-		dlclose(handle);
-#endif
+		close_handle(handle);
 		throw ImportError("Extension '" + path + "' has no entry symbol '" +
 		                  entry_symbol + "'");
 	}
 
-	// 调用入口，跨 ABI 边界保护异常。
 	Module* mod = nullptr;
 	try {
-		mod = init();
-	} catch (const Pycp::Exception&) {
-		// Pycp 异常直接向上传播。
-#if defined(_WIN32)
-		FreeLibrary(static_cast<HMODULE>(handle));
-#else
-		dlclose(handle);
-#endif
-		throw;
-	} catch (const std::exception& e) {
-#if defined(_WIN32)
-		FreeLibrary(static_cast<HMODULE>(handle));
-#else
-		dlclose(handle);
-#endif
-		throw Pycp::Exception(std::string("native module '") + name +
-		                      "' init failed: " + e.what());
+		mod = call_module_init(init, entry_symbol, path);
 	} catch (...) {
-#if defined(_WIN32)
-		FreeLibrary(static_cast<HMODULE>(handle));
-#else
-		dlclose(handle);
-#endif
-		throw Pycp::Exception("unknown native exception in module '" + name + "'");
-	}
-
-	if (mod == nullptr) {
-#if defined(_WIN32)
-		FreeLibrary(static_cast<HMODULE>(handle));
-#else
-		dlclose(handle);
-#endif
-		throw ImportError("Extension '" + path + "' returned null module.");
+		close_handle(handle);
+		throw;
 	}
 
 	// 记录句柄（模块名 -> handle），供 NativeExt_Finalize 统一关闭。
@@ -194,14 +190,10 @@ Module* LoadNativeModule(const std::string& name,
 		if (g_handles == nullptr) {
 			g_handles = new std::unordered_map<std::string, void*>();
 		}
-		// 若同名模块已加载（重复 import 但未走 VM 缓存），关闭旧句柄避免泄漏。
+		// 若同名模块已加载（重复 import 但未走缓存），关闭旧句柄避免泄漏。
 		auto it = g_handles->find(name);
 		if (it != g_handles->end()) {
-#if defined(_WIN32)
-			FreeLibrary(static_cast<HMODULE>(it->second));
-#else
-			dlclose(it->second);
-#endif
+			close_handle(it->second);
 		}
 		(*g_handles)[name] = handle;
 	}
@@ -209,16 +201,91 @@ Module* LoadNativeModule(const std::string& name,
 	return mod;
 }
 
+Module* LoadLinkedModule(const std::string& name) {
+	const std::string entry_symbol = std::string(Pycp::AOT_MODULE_INIT_PREFIX) + name;
+
+	NativeModuleInitFn init = nullptr;
+#if defined(_WIN32)
+	// 主程序模块自身导出的符号（GetModuleHandle(NULL) 取 exe 句柄）。
+	init = reinterpret_cast<NativeModuleInitFn>(
+		reinterpret_cast<void*>(
+			GetProcAddress(GetModuleHandleA(nullptr), entry_symbol.c_str())));
+#else
+	// RTLD_DEFAULT：在整个进程的全局符号表中查找。
+	// 注：以 RTLD_LOCAL 加载的 stdlib 扩展（io.so 等）不进全局符号表，
+	// 不会在此误命中；仅「明确链接进主程序」的模块才会被找到。
+	init = reinterpret_cast<NativeModuleInitFn>(dlsym(RTLD_DEFAULT, entry_symbol.c_str()));
+#endif
+	if (init == nullptr) return nullptr;
+
+	// 符号存在即表明明确的链接意图。入口返回 nullptr 时直接抛错、不静默
+	// 下探，否则「静态库成员被链接器丢弃」会退化为难以排查的 ImportError。
+	return call_module_init(init, entry_symbol, "linked symbol");
+}
+
+Module* LoadNativeModuleFrom(const std::string& dir, const std::string& name,
+                             BC::Module** out_source) {
+	if (out_source != nullptr) *out_source = nullptr;
+
+	const std::string fname = name + native_ext_suffix();
+	std::error_code ec;
+
+	// 动态库优先：原生扩展性能更好，且与 stdlib 现状（全为 .so）一致。
+	const std::string so_path = dir.empty()
+		? ("./" + fname) : (dir + "/" + fname);
+	if (std::filesystem::exists(so_path, ec)) {
+		return load_native_from_path(so_path, name);
+	}
+
+	// 其次 .pycp 源码。需调用方能接收 BC::Module（由其执行顶层），
+	// 否则本候选形式不可用（旧接口 LoadNativeModule 即属此情形）。
+	if (out_source == nullptr) return nullptr;
+	const std::string src_path = dir.empty()
+		? ("./" + name + Pycp::EXT_PYCP)
+		: (dir + "/" + name + Pycp::EXT_PYCP);
+	if (!std::filesystem::exists(src_path, ec)) return nullptr;
+
+	// 未注册编译器钩子（AOT 生成的独立程序）：跳过源码形式。
+	SourceModuleCompiler compiler = g_source_compiler.load();
+	if (compiler == nullptr) return nullptr;
+
+	BC::Module* bc = compiler(src_path.c_str());
+	if (bc == nullptr) return nullptr;
+
+	// 已编译为字节码但尚未执行顶层，交由 VM 完成（与 registry 路径一致）。
+	*out_source = bc;
+	return nullptr;
+}
+
+Module* LoadNativeModule(const std::string& name,
+                         const std::string& search_dir,
+                         BC::Module** out_source) {
+	// 兼容旧入口：保持既有顺序（cwd -> search_dir -> stdlib）。
+	Module* m = LoadNativeModuleFrom(std::string(), name, out_source);
+	if (m != nullptr || (out_source != nullptr && *out_source != nullptr)) {
+		return m;
+	}
+	if (!search_dir.empty()) {
+		m = LoadNativeModuleFrom(search_dir, name, out_source);
+		if (m != nullptr || (out_source != nullptr && *out_source != nullptr)) {
+			return m;
+		}
+	}
+	const std::string& stdlib_dir = GetStdlibDir();
+	if (!stdlib_dir.empty()) {
+		m = LoadNativeModuleFrom(stdlib_dir, name, out_source);
+		if (m != nullptr || (out_source != nullptr && *out_source != nullptr)) {
+			return m;
+		}
+	}
+	return nullptr;
+}
+
 void NativeExt_Finalize() {
 	std::lock_guard<std::mutex> lock(g_handles_mutex);
 	if (g_handles == nullptr) return;
 	for (auto& kv : *g_handles) {
-		if (kv.second == nullptr) continue;
-#if defined(_WIN32)
-		FreeLibrary(static_cast<HMODULE>(kv.second));
-#else
-		dlclose(kv.second);
-#endif
+		close_handle(kv.second);
 	}
 	g_handles->clear();
 	delete g_handles;

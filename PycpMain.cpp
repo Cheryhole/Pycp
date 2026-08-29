@@ -42,6 +42,7 @@
 #include "PycpBytecode.hpp"  // 字节码格式 / 序列化
 #include "PycpBytecodeDump.hpp" // 字节码查看（dump）接口
 #include "PycpBytecodeVM.hpp"// VM 执行
+#include "PycpNativeExt.hpp" // 原生扩展加载 / 源码模块编译器钩子
 #include "PycpString.hpp"    // REPL 回显：String::get_value()
 #include "PycpException.hpp"
 #include "PycpConfig.hpp"    // 集中管理的常量（扩展名/输出命名/版本等）
@@ -213,6 +214,21 @@ std::string entry_module_name(const std::string& path) {
 	return base;
 }
 
+// 初始化运行时，并注册 .pycp 源码模块编译器钩子。
+//
+// 钩子使 import 的第 2/3 层（可执行文件目录的 stdlib/、cwd 与脚本目录）
+// 能够直接加载 .pycp 源码文件——backend 无法解析 .pycp（parser / Codegen
+// 位于 frontend），故由宿主注入。
+//   注：AOT 生成的独立程序不注册钩子，其 stdlib/ 仅识别原生动态库。
+//   返回的 Module 为堆分配对象，所有权移交运行时（由 VM 加入
+//   owned_modules_，在 ~VM 时清理 runtime_consts 并释放）。
+void initialize_runtime() {
+	Pycp::Initialize();
+	Pycp::SetSourceModuleCompiler([](const char* path) -> Pycp::BC::Module* {
+		return new Pycp::BC::Module(Pycp::ModuleLoader::compile_file(path));
+	});
+}
+
 // 执行入口模块及其 import 依赖（构造带模块注册表的 VM 并 run）。
 //   modules : ModuleLoader::load_all 产出的「模块名 -> Module」映射，
 //             entry_name 为入口模块名（其 basename）。
@@ -282,7 +298,7 @@ void repl_print_value(Pycp::Object* obj) {
 }
 
 void run_repl() {
-	Pycp::Initialize();
+	initialize_runtime();
 
 	// REPL 使用无入口模块的 VM，全局命名空间独立创建（globals 在 VM 内）。
 	Pycp::BC::VM vm(nullptr);
@@ -463,7 +479,7 @@ int main(int argc, char** argv) {
 
 	int ret = 0;
 	try {
-		Pycp::Initialize();
+		initialize_runtime();
 
 		if (opt.preprocess) {
 			// 预处理查看：仅支持 .pycp 源码文本（.cpycp 字节码无法预处理）。
