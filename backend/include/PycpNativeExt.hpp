@@ -32,9 +32,14 @@ namespace BC { struct Module; }
 //   Linux  ".so" / Windows ".dll" / macOS ".dylib"
 const char* native_ext_suffix();
 
+// 当前可执行文件所在目录，惰性计算并缓存（跨平台原语）。
+// 如 pycp 位于 /usr/local/bin/pycp，则返回 /usr/local/bin；取不到时返回空串。
+// 注：GetStdlibDir() 与本函数都基于它，避免各处重复实现平台分支。
+PYCP_API const std::string& GetExeDir();
+
 // 标准库动态库目录（可执行文件旁的 stdlib/），惰性计算并缓存。
 // 如 pycp 可执行文件位于 /usr/local/bin/pycp，则返回 /usr/local/bin/stdlib。
-const std::string& GetStdlibDir();
+PYCP_API const std::string& GetStdlibDir();
 
 // =============================================================
 // 模块查找原语

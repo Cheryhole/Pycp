@@ -35,20 +35,29 @@ rm -rf "$WORK"
 mkdir -p "$WORK"
 cd "$WORK" || exit 2
 
-# 生成 C++ 源码（输出目录 a_entry/ 建立在当前工作目录）
+# 生成 C++ 源码（默认输出目录 <entry>/ = a_entry/，含 CMakeLists.txt）
 "$PYCP" --emit-cpp "$ENTRY" >/dev/null || {
 	echo "ERROR: --emit-cpp 失败" >&2
 	exit 2
 }
+
+pass=0
+fail=0
+
+# --- 新增场景 0：生成目录应同时包含 CMakeLists.txt 与全部 .gen.cpp ---
+if [[ ! -f a_entry/CMakeLists.txt || ! -f a_entry/__pycp_main.gen.cpp || ! -f a_entry/b_dep.gen.cpp ]]; then
+	echo "[FAIL] 生成目录缺少 CMakeLists.txt 或 .gen.cpp 源文件"
+	fail=$((fail + 1))
+else
+	echo "[PASS] 生成目录包含 CMakeLists.txt 与全部 .gen.cpp"
+	pass=$((pass + 1))
+fi
 
 # 运行时需要可执行文件同级的 stdlib/（io.so 等原生扩展）
 cp -r "$DIST/stdlib" ./stdlib
 
 CXXFLAGS="-std=c++17 -I $DIST/include"
 LDFLAGS="-L $DIST/lib -lPycpRuntime -Wl,-rpath,$DIST/lib"
-
-pass=0
-fail=0
 
 # 运行指定可执行文件，校验退出码与输出标记
 check() {
@@ -84,6 +93,46 @@ g++ $CXXFLAGS -c a_entry/b_dep.gen.cpp -o b_dep.o 2>&1 | head -5 &&
 g++ $CXXFLAGS a_entry/__pycp_main.gen.cpp -L. -lb_dep \
 	$LDFLAGS -o aot_static 2>&1 | head -5
 check "依赖编为静态库后 import（无 --whole-archive）" "aot_static"
+
+# --- 新增场景 3：用生成的 CMakeLists.txt 构建并运行 ---
+CMAKE_PROJ="$WORK/a_entry"
+rm -rf "$CMAKE_PROJ/build"
+if cmake -S "$CMAKE_PROJ" -B "$CMAKE_PROJ/build" >/dev/null 2>&1 &&
+   cmake --build "$CMAKE_PROJ/build" >/dev/null 2>&1; then
+	check "生成的 CMake 项目构建并运行" "a_entry/build/a_entry"
+else
+	echo "[FAIL] 生成的 CMake 项目构建失败"
+	echo "----- cmake configure/build log (tail) -----"
+	tail -20 "$CMAKE_PROJ/build/CMakeFiles/CMakeError.log" 2>/dev/null
+	fail=$((fail + 1))
+fi
+
+# --- 新增场景 4：自包含部署（exe 拷到空目录，携带同级 lib/ 与 stdlib/）---
+SELF_DIR="$WORK/self_contained"
+rm -rf "$SELF_DIR"
+mkdir -p "$SELF_DIR"
+cp "$CMAKE_PROJ/build/a_entry" "$SELF_DIR/"
+cp -r "$CMAKE_PROJ/build/stdlib" "$SELF_DIR/"
+cp -r "$CMAKE_PROJ/build/lib" "$SELF_DIR/"
+if ( cd "$SELF_DIR" && ./a_entry ) 2>&1 | grep -q "AOT IMPORT PASS"; then
+	echo "[PASS] 自包含部署（空目录 + 同级 lib/stdlib）运行正常"
+	pass=$((pass + 1))
+else
+	echo "[FAIL] 自包含部署运行异常"
+	fail=$((fail + 1))
+fi
+
+# --- 新增场景 5：-o 自定义目录应把全部文件（含 CMakeLists.txt）落到该目录 ---
+CUSTOM="$WORK/custom_out"
+rm -rf "$CUSTOM"
+"$PYCP" --emit-cpp "$ENTRY" -o "$CUSTOM" >/dev/null 2>&1
+if [[ -f "$CUSTOM/CMakeLists.txt" && -f "$CUSTOM/__pycp_main.gen.cpp" && -f "$CUSTOM/b_dep.gen.cpp" ]]; then
+	echo "[PASS] -o 自定义目录包含 CMakeLists.txt 与全部 .gen.cpp"
+	pass=$((pass + 1))
+else
+	echo "[FAIL] -o 自定义目录缺少文件（可能散落到默认目录）"
+	fail=$((fail + 1))
+fi
 
 echo "==================================="
 echo "PASS=$pass  FAIL=$fail"

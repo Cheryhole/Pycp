@@ -100,8 +100,8 @@ pycp [options] <input_file>
 | `-c, --compile` | 将 `.pycp` 编译为 `.cpycp` 字节码（不执行） |
 | `-b, --bytecode` | 生成 `.cpycp` 字节码（`-c` 的别名） |
 | `-i, --interpret` | 解释执行（默认行为；接受 `.pycp` 或 `.cpycp`） |
-| `-o, --output <f>` | 指定输出文件路径（配合 `-c/-b/--emit-cpp`） |
-| `--emit-cpp` | 将 `.pycp` 翻译为独立 C++ 源文件（AOT 指令翻译，输出 `.cpp`） |
+| `-o, --output <f>` | 指定输出路径：配合 `-c/-b` 为 `.cpycp` 文件路径；配合 `--emit-cpp` 为**项目目录**（默认 `./<入口名>/`）；配合 `-p` 为 `.pp.pycp` 文件路径 |
+| `--emit-cpp` | 将 `.pycp` 翻译为可直接编译的 **CMake 项目目录**（AOT 指令翻译，输出 `.gen.cpp` + `CMakeLists.txt`） |
 | `-d, --dump` | 查看字节码内容（常量池 / 符号表 / 代码对象 / 指令与行号），接受 `.pycp` 或 `.cpycp` |
 
 ### 使用示例
@@ -178,20 +178,34 @@ pycp [options] <input_file>
   2  RETURN
 ```
 
-**4. 翻译为独立 C++ 源文件（AOT）**
+**4. 翻译为可直接编译的 C++ 项目（AOT）**
 
 ```bash
-# 将 .pycp 逐指令翻译为依赖 PycpABI 的 C++ 源文件
-./build/pycp --emit-cpp hello.pycp -o hello.gen.cpp
+# 将 .pycp 及其全部 import 依赖翻译为一个 CMake 项目目录（默认 ./hello/）
+./build/pycp --emit-cpp hello.pycp
+# 或指定输出目录：-o <dir> 必须是目录
+./build/pycp --emit-cpp hello.pycp -o ./my_project
 
-# 编译：头文件在 build/dist/include，运行时库在 build/dist/lib
-g++ -std=c++17 -I build/dist/include hello.gen.cpp \
-    -L build/dist/lib -lPycpRuntime -Wl,-rpath,'$ORIGIN/lib' -o hello
+# 生成目录内含：
+#   __pycp_main.gen.cpp  （入口，含 main）
+#   <dep>.gen.cpp        （每个被 import 的模块各一份）
+#   CMakeLists.txt       （自动定位 Pycp 运行时 SDK、动态链接、部署 stdlib/ 与 lib/）
+cd hello && cmake -S . -B build && cmake --build build
+./build/hello   # 输出与解释执行一致
 ```
 
-生成的可执行文件运行时仍按「可执行文件同级 `stdlib/`」加载原生模块，
-因此请把 `build/dist/lib/` 与 `build/dist/stdlib/` 一并放到 `hello` 旁边
-（或改用静态链接 `-L build/dist/lib -l:libPycpRuntime.a`，此时无需 `lib/`）。
+生成的 CMake 项目会自动：
+- **动态链接** `PycpRuntime`（stdio 三个扩展 `.so` 同样动态链接运行时，避免进程内两份运行时状态）；
+- 在 Linux 上加 `-rdynamic`，使 import 的「进程内符号」查找（`dlsym(RTLD_DEFAULT, "PycpModule_xxx")`）能命中链接进本程序的模块；
+- 构建期（`POST_BUILD`）把 SDK 的 `stdlib/` 与 `lib/` 复制到 exe 同级，**产物自包含**，可单独拷到任意目录运行（Windows 额外复制根目录 `PycpRuntime.dll`）；
+- SDK 根目录以 `CACHE PATH` 形式写入 `PYCP_DIST`，换机器时用 `-DPYCP_DIST=<path>` 覆盖即可。
+
+> 若你只想手工编译而不用 CMake，也可直接 `g++`（与旧版一致）：
+> ```bash
+> g++ -std=c++17 -I build/dist/include __pycp_main.gen.cpp <dep>.gen.cpp \
+>     -L build/dist/lib -lPycpRuntime -Wl,-rpath,'$ORIGIN/lib' -o hello
+> # 运行前把 build/dist/lib/ 与 build/dist/stdlib/ 放到 hello 旁边
+> ```
 
 生成的 `.cpp` 包含 `main()`，内部将字节码翻译为 `Pycp::Add`/`Sub`/`Call` 等
 ABI 调用序列（常量内联为 `g_c[]`，控制流翻译为 `goto`，函数翻译为
@@ -433,13 +447,25 @@ Pycp/
 │   ├── include/
 │   │   ├── PycpAstNode.hpp     # AST 节点定义
 │   │   ├── PycpCodegen.hpp     # 代码生成器接口（AST -> 字节码）
-│   │   └── PycpAot.hpp         # AOT 原生编译接口（预留骨架）
+│   │   └── aot/                 # AOT 模块化子目录（单一职责 + 纯数据接口）
+│   │       ├── PycpAot.hpp            # 字节码 -> C++ 源码翻译（逻辑不变）
+│   │       ├── PycpAotSdkLocator.hpp  # SDK 定位与校验
+│   │       ├── PycpProjectSpec.hpp    # 项目描述数据模型 + 校验
+│   │       ├── PycpBuildScriptGenerator.hpp # 生成器抽象接口 + 注册表
+│   │       ├── PycpCMakeGenerator.hpp  # CMakeLists 渲染器
+│   │       └── PycpAotProject.hpp     # 编排入口
 │   └── src/
 │       ├── PycpLexer.l         # Flex 词法规则
 │       ├── PycpParser.y        # Bison 语法规则
 │       ├── PycpAstNode.cpp     # AST 节点实现
 │       ├── PycpCodegen.cpp     # 代码生成器实现
-│       └── PycpAot.cpp         # AOT 实现（预留骨架）
+│       └── aot/                 # 与 include/aot 一一对应的实现
+│           ├── PycpAot.cpp
+│           ├── PycpAotSdkLocator.cpp
+│           ├── PycpProjectSpec.cpp
+│           ├── PycpBuildScriptGenerator.cpp
+│           ├── PycpCMakeGenerator.cpp
+│           └── PycpAotProject.cpp
 └── backend/                # 后端：运行时（对象模型 / GC / VM / 字节码）
     ├── CMakeLists.txt      # 独立构建入口（静态/动态库 + 测试）
     ├── include/            # 运行时头文件（13 个 .hpp）
@@ -547,6 +573,17 @@ cmake --build build -j
 - **AOT（`--emit-cpp`）指令翻译补齐**：新增 `LOAD_ATTR`/`STORE_ATTR`/`BUILD_LIST`/
   `GET_ITEM`/`SET_ITEM`/`MAKE_CLASS` 翻译，闭包通过 `BytecodeFunction` native 模式落地，
   内建库导入经 `LoadNativeModule` 缓存，生成的 C++ 可经 g++ 真正编译运行。
+- **`--emit-cpp` 升级为「生成可直接编译的 CMake 项目」+ AOT 模块化重构**：
+  `--emit-cpp hello.pycp` 现输出一个项目目录（默认 `./hello/`，`-o <dir>` 指定），
+  内含入口 `__pycp_main.gen.cpp`、各依赖 `<name>.gen.cpp` 与一份开箱即用的
+  `CMakeLists.txt`。该 CMake 项目动态链接 `PycpRuntime`、Linux 加 `-rdynamic`、
+  设置 `BUILD_RPATH`/`INSTALL_RPATH`、构建期（`POST_BUILD`）复制 `stdlib/` 与 `lib/`
+  使产物自包含，SDK 路径以 `CACHE PATH PYCP_DIST` 写入（换机器 `-DPYCP_DIST=<path>` 覆盖）。
+  AOT 代码收敛到 `frontend/{include,src}/aot/`，按单一职责拆分为 SDK 定位、项目描述、
+  生成器接口+注册表、CMake 生成器、编排五个模块，模块间仅经纯数据 `ProjectSpec` 通信；
+  生成器经注册表自注册，后续加 Makefile/Ninja 生成器零改动既有模块。对应的顶层与
+  `frontend/` 两套 `CMakeLists` 的 `AOT_SOURCES` 同步更新（并补齐 frontend 独立入口
+  此前缺失的 `escape_handler.cpp` 与 preprocessor 源）。
 - **解释执行 bug 修复**：修复 `STORE_ATTR` 未释放 `pop` 传入值的引用计数导致的退出时
   double free；`Module` 新增 `foreach_ref` 遍历命名空间使模块级对象在 GC 标记阶段可达，
   避免误回收。

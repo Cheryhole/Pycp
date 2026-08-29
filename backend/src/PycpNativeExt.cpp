@@ -46,46 +46,60 @@ BC::Module* default_source_compiler(const char*) {
 }
 std::atomic<SourceModuleCompiler> g_source_compiler{&default_source_compiler};
 
+// 可执行文件所在目录（惰性计算并缓存）。
+std::string g_exe_dir;
+bool g_exe_dir_computed = false;
+std::mutex g_exe_dir_mutex;
+
 // 关闭动态库句柄（跨平台）。
 void close_handle(void* h) {
-	if (h == nullptr) return;
+if (h == nullptr) return;
 #if defined(_WIN32)
-	FreeLibrary(static_cast<HMODULE>(h));
+FreeLibrary(static_cast<HMODULE>(h));
 #else
-	dlclose(h);
+dlclose(h);
 #endif
 }
+} // anonymous namespace
 
-// 计算可执行文件所在目录（惰性，仅首次调用时）。
-std::string compute_exe_dir() {
+// 计算可执行文件所在目录（跨平台，惰性缓存）。
+// 取不到时返回空串（如 /proc 不可用），调用方须按空串处理。
+const std::string& GetExeDir() {
+std::lock_guard<std::mutex> lock(g_exe_dir_mutex);
+if (!g_exe_dir_computed) {
 	std::string p;
 #if defined(_WIN32)
 	char buf[MAX_PATH];
 	DWORD len = GetModuleFileNameA(nullptr, buf, MAX_PATH);
-	if (len == 0 || len >= MAX_PATH) return "";
-	p.assign(buf, static_cast<std::size_t>(len));
+	if (len != 0 && len < MAX_PATH) p.assign(buf, static_cast<std::size_t>(len));
 #elif defined(__APPLE__)
 	// macOS 无 /proc，改用 _NSGetExecutablePath：首传 nullptr 取得所需
 	// 缓冲区大小，再按该大小重建缓冲区取真实路径。
 	uint32_t size = 0;
 	_NSGetExecutablePath(nullptr, &size);
-	if (size == 0) return "";
-	p.resize(static_cast<std::size_t>(size));
-	if (_NSGetExecutablePath(&p[0], &size) != 0) return "";
-	if (!p.empty() && p.back() == '\0') p.pop_back(); // 去掉结尾的 '\0'
+	if (size > 0) {
+		p.resize(static_cast<std::size_t>(size));
+		if (_NSGetExecutablePath(&p[0], &size) == 0) {
+			if (!p.empty() && p.back() == '\0') p.pop_back(); // 去掉结尾的 '\0'
+		} else {
+			p.clear();
+		}
+	}
 #else
 	// Linux：readlink /proc/self/exe。
 	char buf[4096];
 	ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-	if (len <= 0) return "";
-	buf[len] = '\0';
-	p.assign(buf, static_cast<std::size_t>(len));
+	if (len > 0) {
+		buf[len] = '\0';
+		p.assign(buf, static_cast<std::size_t>(len));
+	}
 #endif
 	std::size_t slash = p.find_last_of("/\\");
-	if (slash == std::string::npos) return "";
-	return p.substr(0, slash);
+	g_exe_dir = (slash == std::string::npos) ? std::string() : p.substr(0, slash);
+	g_exe_dir_computed = true;
 }
-} // anonymous namespace
+return g_exe_dir;
+}
 
 const char* native_ext_suffix() {
 #if defined(_WIN32)
@@ -101,7 +115,7 @@ const char* native_ext_suffix() {
 const std::string& GetStdlibDir() {
 	std::lock_guard<std::mutex> lock(g_stdlib_mutex);
 	if (!g_stdlib_dir_computed) {
-		std::string exe_dir = compute_exe_dir();
+		const std::string& exe_dir = GetExeDir();
 		if (!exe_dir.empty()) {
 			g_stdlib_dir = exe_dir + "/" + Pycp::STDLIB_DIR_NAME;
 		}

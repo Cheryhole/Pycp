@@ -118,7 +118,12 @@ set(CODGEN_SOURCES
 )
 
 set(AOT_SOURCES
-    ${PYCP_FRONTEND_DIR}/src/PycpAot.cpp
+    ${PYCP_FRONTEND_DIR}/src/aot/PycpAot.cpp
+    ${PYCP_FRONTEND_DIR}/src/aot/PycpAotSdkLocator.cpp
+    ${PYCP_FRONTEND_DIR}/src/aot/PycpProjectSpec.cpp
+    ${PYCP_FRONTEND_DIR}/src/aot/PycpBuildScriptGenerator.cpp
+    ${PYCP_FRONTEND_DIR}/src/aot/PycpCMakeGenerator.cpp
+    ${PYCP_FRONTEND_DIR}/src/aot/PycpAotProject.cpp
 )
 
 set(LOADER_SOURCES

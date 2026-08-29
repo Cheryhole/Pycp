@@ -38,14 +38,36 @@ message(STATUS "Flex  : ${FLEX_EXECUTABLE}")
 # =====================================================================
 set(AST_SOURCES
     src/PycpAstNode.cpp
+    src/escape_handler.cpp
 )
 
 set(CODGEN_SOURCES
     src/PycpCodegen.cpp
 )
 
+set(LOADER_SOURCES
+    src/PycpModuleLoader.cpp
+)
+
 set(AOT_SOURCES
-    src/PycpAot.cpp
+    src/aot/PycpAot.cpp
+    src/aot/PycpAotSdkLocator.cpp
+    src/aot/PycpProjectSpec.cpp
+    src/aot/PycpBuildScriptGenerator.cpp
+    src/aot/PycpCMakeGenerator.cpp
+    src/aot/PycpAotProject.cpp
+)
+
+set(PREPROCESSOR_SOURCES
+    src/preprocessor/PycpPreprocessor.cpp
+)
+
+set(PREPROCESSOR_BISON_INPUT
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preprocessor/PycpPreprocessorParser.y
+)
+
+set(PREPROCESSOR_FLEX_INPUT
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/preprocessor/PycpPreprocessorLexer.l
 )
 
 # 主程序入口：位于项目顶层目录
@@ -114,6 +136,42 @@ add_flex_bison_dependency(
 )
 
 # =====================================================================
+# 预处理指令解析器（Flex/Bison，独立于主解析器）
+# ---------------------------------------------------------------------
+# 生成 Pycpp* 解析器/词法器，由 PREPROCESSOR_SOURCES 驱动（接口文件）。
+# 与顶层 CMakeLists 对齐，保证独立构建入口可链接。
+# =====================================================================
+bison_target(
+    PycpPreprocessorParser
+
+    ${PREPROCESSOR_BISON_INPUT}
+
+    ${CMAKE_CURRENT_BINARY_DIR}/PycpPreprocessorParser.cpp
+
+    DEFINES_FILE
+    ${CMAKE_CURRENT_BINARY_DIR}/PycpPreprocessorParser.hpp
+
+    COMPILE_FLAGS
+    "-v -Wcounterexamples"
+)
+
+flex_target(
+    PycpPreprocessorLexer
+
+    ${PREPROCESSOR_FLEX_INPUT}
+
+    ${CMAKE_CURRENT_BINARY_DIR}/PycpPreprocessorLexer.cpp
+
+    DEFINES_FILE
+    ${CMAKE_CURRENT_BINARY_DIR}/PycpPreprocessorLexer.hpp
+)
+
+add_flex_bison_dependency(
+    PycpPreprocessorLexer
+    PycpPreprocessorParser
+)
+
+# =====================================================================
 # Backend 运行时（通过 add_subdirectory 引入）
 # ---------------------------------------------------------------------
 # 引入 backend 运行时：提供 Object/GC/ABI/Bytecode/VM 实现。
@@ -131,9 +189,13 @@ add_executable(pycp
     ${MAIN_SOURCE}
     ${AST_SOURCES}
     ${CODGEN_SOURCES}
+    ${LOADER_SOURCES}
     ${AOT_SOURCES}
+    ${PREPROCESSOR_SOURCES}
     ${BISON_PycpParser_OUTPUTS}
     ${FLEX_PycpLexer_OUTPUTS}
+    ${BISON_PycpPreprocessorParser_OUTPUTS}
+    ${FLEX_PycpPreprocessorLexer_OUTPUTS}
 )
 
 # =====================================================================
@@ -144,6 +206,9 @@ target_include_directories(pycp
 
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}
+
+    # 预处理头文件（include/preprocessor）
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
 
     # backend 头文件（Pycp.hpp / PycpBytecode.hpp / PycpBytecodeVM.hpp 等）
     ${CMAKE_CURRENT_SOURCE_DIR}/../backend/include

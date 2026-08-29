@@ -1,4 +1,4 @@
-#include "PycpAot.hpp"
+#include "aot/PycpAot.hpp"
 #include "PycpConfig.hpp"
 
 #include <cstdio>

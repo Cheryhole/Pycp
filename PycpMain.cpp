@@ -34,7 +34,8 @@
 
 #include "PycpAstNode.hpp"
 #include "PycpCodegen.hpp"
-#include "PycpAot.hpp"
+#include "aot/PycpAot.hpp"
+#include "aot/PycpAotProject.hpp"
 #include "PycpModuleLoader.hpp"
 #include "preprocessor/PycpPreprocessor.hpp"
 
@@ -86,8 +87,9 @@ void print_help(const char* prog) {
 		<< "  -i, --interpret   Interpret & execute (default); accepts .pycp or .cpycp\n"
 		<< "  -c, --compile     Compile <input_file> (.pycp) to bytecode (.cpycp)\n"
 		<< "  -b, --bytecode    Generate .cpycp bytecode file (alias of -c)\n"
-		<< "      --emit-cpp    Translate .pycp to C++ source file(s)\n"
-		<< "  -o, --output <f>  Output path (used with -c/-b/--emit-cpp/-p)\n"
+		<< "      --emit-cpp    Translate .pycp to a compilable C++ project (CMake)\n"
+		<< "  -o, --output <f>  Output path/dir (with -c/-b: .cpycp file; with\n"
+		<< "                    --emit-cpp: project directory; with -p: .pp.pycp file)\n"
 		<< "  -d, --dump        Dump bytecode (constant pool, symbols, code objects,\n"
 		<< "                    instructions & line numbers) of .pycp or .cpycp\n"
 		<< "  -p, --preprocess  Preprocess a .pycp file (no execution): writes\n"
@@ -104,15 +106,18 @@ void print_help(const char* prog) {
 		<< "Import & modules:\n"
 		<< "  * import foo / import foo as bar  loads foo.pycp from the entry\n"
 		<< "    file's directory and binds a module object in the current scope.\n"
-		<< "  * --emit-cpp generates one .gen.cpp per imported file into a\n"
-		<< "    subdirectory named after the entry file: the entry .pycp becomes\n"
-		<< "    <name>/__pycp_main.gen.cpp (contains main()), each imported module\n"
-		<< "    foo.pycp becomes <name>/foo.gen.cpp.\n\n"
+		<< "  * --emit-cpp generates a compilable C++ project directory (default\n"
+		<< "    ./<entry-name>/, or -o <dir>): it contains the entry\n"
+		<< "    <dir>/__pycp_main.gen.cpp (with main()), one <name>.gen.cpp per\n"
+		<< "    imported module, and a CMakeLists.txt. Build & run with:\n"
+		<< "      cd <dir> && cmake -S . -B build && cmake --build build && ./build/<entry>\n"
+		<< "    The CMake project dynamically links the PycpRuntime SDK (auto-located\n"
+		<< "    from the pycp install; override with -DPYCP_DIST=<path>).\n\n"
 		<< "Examples:\n"
 		<< "  " << prog << " hello.pycp              # compile & run\n"
 		<< "  " << prog << " hello.cpycp             # run compiled bytecode directly\n"
 		<< "  " << prog << " -c hello.pycp -o hello.cpycp\n"
-		<< "  " << prog << " --emit-cpp hello.pycp   # -> hello/__pycp_main.gen.cpp (+ deps)\n";
+		<< "  " << prog << " --emit-cpp hello.pycp   # -> hello/ project (CMake)\n";
 }
 
 bool has_suffix(const std::string& s, const std::string& suffix) {
@@ -523,45 +528,32 @@ int main(int argc, char** argv) {
 			Pycp::BC::DumpModule(module);
 		}
 		else if (opt.emit_cpp) {
-			// AOT：收集入口与全部 import 依赖，逐文件生成 C++ 源码。
-			//   入口模块 -> <name>/__pycp_main.gen.cpp（含 main）；
-			//   被导入模块 foo -> <name>/foo.gen.cpp。
+			// AOT：收集入口与全部 import 依赖，生成可直接编译的 CMake 项目文件夹。
+			//   编排层（PycpAotProject）负责建目录、写 .gen.cpp、渲染构建脚本。
+			//   -o <dir> 指定整个项目目录（默认 ./<入口名>/）；该目录内含入口
+			//   __pycp_main.gen.cpp、各依赖 <name>.gen.cpp 与 CMakeLists.txt。
 			std::map<std::string, Pycp::BC::Module> modules =
 				Pycp::ModuleLoader::load_all(opt.input_file);
 			std::string entry_name = entry_module_name(opt.input_file);
-			auto sources = Pycp::AOT::EmitCppAll(modules, entry_name);
 
-			// 输出目录：以入口文件名（去扩展名）命名的子目录，位于当前工作目录。
-			//   如 ../tests/import_test.pycp -> ./import_test/。
-			std::string out_dir = entry_name;
-
-			// 入口输出路径：<out_dir>/__pycp_main.gen.cpp（-o 可覆盖为指定路径）。
-			std::string entry_out = opt.output_file.empty()
-				? out_dir + "/" + Pycp::AOT_ENTRY_CPP_FILENAME
+			// 输出目录：-o 指定则用之，否则默认 ./<入口名>/（位于当前工作目录）。
+			std::string out_dir = opt.output_file.empty()
+				? entry_name
 				: opt.output_file;
 
-			// 确保输出目录存在（std::ofstream 不会自动创建目录）。
-			std::error_code ec;
-			std::filesystem::create_directories(out_dir, ec);
-			if (ec) throw Pycp::Exception("Failed to create output directory: " + out_dir);
-
-			// 写入口 .cpp
-			{
-				std::ofstream f(entry_out, std::ios::binary);
-				if (!f) throw Pycp::Exception("Failed to write AOT output: " + entry_out);
-				f << sources[entry_name];
+			std::vector<std::string> written;
+			std::string emsg;
+			if (!Pycp::AOT::EmitProject(modules, entry_name, opt.input_file,
+			                            out_dir, {}, &written, &emsg)) {
+				throw Pycp::Exception(emsg);
 			}
-			std::cout << "Generated C++ source: " << entry_out << std::endl;
 
-			// 写各依赖模块 .cpp（原始模块名 + .gen.cpp，写到同一输出目录）
-			for (const auto& kv : sources) {
-				if (kv.first == entry_name) continue; // 跳过入口
-				std::string dep_out = out_dir + "/" + kv.first + Pycp::AOT_CPP_SUFFIX;
-				std::ofstream f(dep_out, std::ios::binary);
-				if (!f) throw Pycp::Exception("Failed to write AOT output: " + dep_out);
-				f << kv.second;
-				std::cout << "Generated C++ source: " << dep_out << std::endl;
+			std::cout << "Generated AOT project in: " << out_dir << "\n";
+			for (const std::string& w : written) {
+				std::cout << "  " << w << std::endl;
 			}
+			std::cout << "Build it with:\n"
+			          << "  cd " << out_dir << " && cmake -S . -B build && cmake --build build\n";
 		}
 		else if (opt.compile) {
 			// 编译模式：.pycp -> .cpycp
