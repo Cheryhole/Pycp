@@ -262,20 +262,35 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 				// .pycp 子模块 PycpModule_<name> 链接），无需生成侧分流。
 				// ImportModule 返回常驻 Borrowed 对象，此处 Incref 平衡后续
 				// 栈弹出时的 Decref。
+				int lineno = (pc < co.linenos.size()) ? co.linenos[pc] : -1;
 				os << "    { Pycp::Module* m = Pycp::ImportModule("
 				   << cpp_string_literal(dep) << ");\n";
-				os << "      if (m == nullptr) throw Pycp::ImportError(\"No module named \" + std::string("
-				   << cpp_string_literal(dep) << "));\n";
+				os << "      if (m == nullptr) throw Pycp::ImportError("
+				   << cpp_string_literal(module.source_path) << ", " << lineno
+				   << ", \"No module named '\" + std::string("
+				   << cpp_string_literal(dep) << ") + \"'\");\n";
 				os << "      Pycp::Incref(m); st.push_back(m); }\n";
 				break;
 			}
 			case Pycp::BC::Op::GET_ATTR: {
 				std::size_t idx = static_cast<std::size_t>(ins.operand);
 				const std::string& attr = module.symtab[idx];
+				int lineno = (pc < co.linenos.size()) ? co.linenos[pc] : -1;
+				// 模块属性访问。Module::GetAttr 抛出的错误（如
+				// "module 'x' has no attribute 'y'"）不带位置信息；解释器
+				// 在 run 循环外层补 cur_file()/cur_line()，AOT 在此处等价补充，
+				// 保证两套实现错误输出一致。
 				os << "    { Pycp::Object* obj = st.back(); st.pop_back();\n";
-				os << "      Pycp::Object* v = Pycp::Module::GetAttr("
+				os << "      Pycp::Object* v;\n";
+				os << "      try { v = Pycp::Module::GetAttr("
 				   << "static_cast<Pycp::Module*>(obj), "
-				   << cpp_string_literal(attr) << ");\n";
+				   << cpp_string_literal(attr) << "); }\n";
+				os << "      catch (const Pycp::Exception& e) {\n";
+				os << "        if (e.file.empty()) throw Pycp::Exception("
+				   << cpp_string_literal(module.source_path) << ", " << lineno
+				   << ", e.what());\n";
+				os << "        throw;\n";
+				os << "      }\n";
 				os << "      Pycp::Decref(obj);\n";
 				os << "      st.push_back(v); Pycp::Incref(v); }\n";
 				break;
@@ -284,12 +299,23 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 			case Pycp::BC::Op::LOAD_ATTR: {
 				std::size_t idx = static_cast<std::size_t>(ins.operand);
 				const std::string& attr = module.symtab[idx];
+				int lineno = (pc < co.linenos.size()) ? co.linenos[pc] : -1;
 				// 通用属性访问（实例/类/模块/文件/list 等）。Pycp::GetAttr 返回
 				// Owned（实例方法返回 BoundMethod、list 的 length 包装绑定等），
 				// 栈接管这 1 份引用，不额外 Incref/Decref。
+				// GetAttr 抛出的错误（如 "Unsupported attribute access." /
+				// "object has no attribute ..."）不带位置信息，此处补文件/行号，
+				// 与解释器 run 循环的外层补位置对齐。
 				os << "    { Pycp::Object* obj = st.back(); st.pop_back();\n";
-				os << "      Pycp::Object* v = Pycp::GetAttr(obj, "
-				   << cpp_string_literal(attr) << ");\n";
+				os << "      Pycp::Object* v;\n";
+				os << "      try { v = Pycp::GetAttr(obj, "
+				   << cpp_string_literal(attr) << "); }\n";
+				os << "      catch (const Pycp::Exception& e) {\n";
+				os << "        if (e.file.empty()) throw Pycp::Exception("
+				   << cpp_string_literal(module.source_path) << ", " << lineno
+				   << ", e.what());\n";
+				os << "        throw;\n";
+				os << "      }\n";
 				os << "      Pycp::Decref(obj);\n";
 				os << "      st.push_back(v); }\n";
 				break;
@@ -430,7 +456,7 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 				os << "      Pycp::Object* obj = st.back(); st.pop_back();\n";
 				os << "      Pycp::Object* res = Pycp::GetItem(obj, key);\n";
 				os << "      Pycp::Decref(obj); Pycp::Decref(key);\n";
-				os << "      st.push_back(res); }\n";
+				os << "      st.push_back(res); Pycp::Incref(res); }\n";
 				break;
 			}
 			case Pycp::BC::Op::SET_ITEM: {
@@ -573,6 +599,11 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 						os << "      Pycp::BytecodeFunction* mfn2_" << i << " = static_cast<Pycp::BytecodeFunction*>(dm" << i << ");\n";
 						os << "      cls->add_method(" << cpp_string_literal(mname)
 						   << ", mfn2_" << i << ", mfn2_" << i << "->is_private());\n";
+						// 记录方法所属类，供 super() 按「当前执行方法所属类」解析
+						// 父类（与解释器 PycpBytecodeVM 建类处一致）。缺失时
+						// super() 会退化成按最派生实例类解析，继承链上重复调用
+						// super 将无限递归到自身（AOT 下表现为栈溢出）。
+						os << "      mfn2_" << i << "->set_owner_class(cls);\n";
 						os << "      Pycp::Decref(mfn2_" << i << ");\n";
 					} else {
 						os << "      Pycp::BytecodeFunction* mfn" << i << " = new Pycp::BytecodeFunction("
@@ -581,9 +612,11 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 						os << "      Pycp::GC_Track(mfn" << i << ");\n";
 						os << "      cls->add_method(" << cpp_string_literal(mname)
 						   << ", mfn" << i << ", mfn" << i << "->is_private());\n";
+						// 同上：记录方法所属类，供 super() 正确解析父类。
+						os << "      mfn" << i << "->set_owner_class(cls);\n";
 						os << "      Pycp::Decref(mfn" << i << ");\n";
-					}
-				}
+						}
+						}
 
 				// 6) 弹出装饰器对象（每份栈引用 Decref）。
 				os << "      for (std::size_t d = 0; d < " << cdef.decorator_count
@@ -713,6 +746,7 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	os << "#include \"PycpModule.hpp\"\n";
 	os << "#include \"PycpClass.hpp\"\n";
 	os << "#include \"PycpList.hpp\"\n";
+	os << "#include \"PycpMap.hpp\"\n";
 	os << "#include \"PycpBytecodeVM.hpp\"\n";
 	os << "#include \"PycpNativeExt.hpp\"\n";
 	os << "#include \"PycpException.hpp\"\n";

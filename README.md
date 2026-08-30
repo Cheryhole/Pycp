@@ -27,7 +27,7 @@ Pycp 对象的类型判定使用**字符串**（而非枚举），与 ABI 保持
   - 模块的类型名即模块名（如 `io`）。
 - **自定义类型的名称与代码定义时的实际名称完全一致（含大小写）**，不做任何改写。
   例如 `class MyClass{}` 的类型名、`<class "MyClass">`、`<MyClass instance at ...>` 均保留 `MyClass`。
-- 匿名函数 / 匿名类使用内部名 `@anonymous`。
+- 匿名函数 / 匿名类使用内部名 `@anonymous`（仅作为"名字"，字符串表示仍沿用普通格式）。
 
 ### 已支持的语言子集
 
@@ -134,6 +134,8 @@ pycp [options] <input_file>
 | `-i, --interpret` | 解释执行（默认行为；接受 `.pycp` 或 `.cpycp`） |
 | `-o, --output <f>` | 指定输出路径：配合 `-c/-b` 为 `.cpycp` 文件路径；配合 `--emit-cpp` 为**项目目录**（默认 `./<入口名>/`）；配合 `-p` 为 `.pp.pycp` 文件路径 |
 | `--emit-cpp` | 将 `.pycp` 翻译为可直接编译的 **CMake 项目目录**（AOT 指令翻译，输出 `.gen.cpp` + `CMakeLists.txt`） |
+| `--shared` | 配合 `--emit-cpp`：生成的 AOT 项目采用**动态链接**（默认）。运行时与原生扩展以 DLL 形式部署 |
+| `--static` | 配合 `--emit-cpp`：生成的 AOT 项目采用**静态链接**。静态链接运行时与全部原生扩展，产物为单个自包含可执行文件 |
 | `-d, --dump` | 查看字节码内容（常量池 / 符号表 / 代码对象 / 指令与行号），接受 `.pycp` 或 `.cpycp` |
 
 ### 使用示例
@@ -229,7 +231,7 @@ cd hello && cmake -S . -B build && cmake --build build
 生成的 CMake 项目会自动：
 - **动态链接** `PycpRuntime`（stdio 三个扩展 `.so` 同样动态链接运行时，避免进程内两份运行时状态）；
 - 在 Linux 上加 `-rdynamic`，使 import 的「进程内符号」查找（`dlsym(RTLD_DEFAULT, "PycpModule_xxx")`）能命中链接进本程序的模块；
-- 构建期（`POST_BUILD`）把 SDK 的 `stdlib/` 与 `lib/` 复制到 exe 同级，**产物自包含**，可单独拷到任意目录运行（Windows 额外复制根目录 `PycpRuntime.dll`）；
+- 构建期（`POST_BUILD`）把 SDK 的 `stdlib/` 与 `lib/` 复制到 exe 同级，**产物自包含**，可单独拷到任意目录运行（Windows 额外把运行时 DLL 复制到 exe 同级；其名随编译器而异：MinGW 为 `libPycpRuntime.dll`，MSVC 为 `PycpRuntime.dll`）；
 - SDK 根目录以 `CACHE PATH` 形式写入 `PYCP_DIST`，换机器时用 `-DPYCP_DIST=<path>` 覆盖即可。
 
 > 若你只想手工编译而不用 CMake，也可直接 `g++`（与旧版一致）：
@@ -243,6 +245,34 @@ cd hello && cmake -S . -B build && cmake --build build
 ABI 调用序列（常量内联为 `g_c[]`，控制流翻译为 `goto`，函数翻译为
 `pycp_fn_N`）。它不依赖解释器循环，但编译时仍需链接 `PycpRuntime` 库
 （静态 `libPycpRuntime.a`，或动态 `libPycpRuntime.dll` + 导入库 `libPycpRuntime.dll.a`；Linux/macOS 下为 `libPycpRuntime.so`）。
+
+**两种链接模式：`--shared`（默认）与 `--static`**
+
+`--emit-cpp` 支持两种产物形态，由链接模式决定：
+
+```bash
+# shared（默认）：动态链接，产物 exe 需要同级 stdlib/ 与 lib/（以及 Windows 运行时 DLL）
+./build/pycp --emit-cpp --shared hello.pycp
+
+# static：静态链接运行时与全部原生扩展，产物是单个自包含可执行文件
+./build/pycp --emit-cpp --static hello.pycp
+```
+
+| 维度 | `--shared`（默认） | `--static` |
+|------|--------------------|------------|
+| 运行时 | 动态链接 `PycpRuntime`（DLL/so） | 静态链接 `libPycpRuntime.a` |
+| 原生扩展（io/Pycp/classtools） | 运行时从 `stdlib/` 加载 DLL/so | 静态链接 `libPycpExt_*.a` |
+| `PYCP_STATIC` 宏 | 不定义 | exe 与静态扩展库均定义（Windows 必需） |
+| `-rdynamic` / rpath | 需要 | 不需要 |
+| POST_BUILD 复制 | 复制 `stdlib/` + `lib/`（Windows 另复制运行时 DLL） | 无 |
+| 产物形态 | exe + 同级 `stdlib/`、`lib/` | 单个自包含 exe |
+
+- `--static` 与 `--shared` 同时给出会报错；二者仅在 `--emit-cpp` 场景下有效。
+- static 模式通过 `dist/lib/` 下的 `libPycpExt_io.a` / `libPycpExt_Pycp.a` /
+  `libPycpExt_classtools.a` 三个静态扩展库 + 生成器发射的 `__pycp_builtin_modules.gen.cpp`
+  注册桩（`RegisterAotModule`）实现"扩展静态链接并强制被链接器拉入"，因此静态产物
+  无需依赖外部 `stdlib/`，可单独拷到任意机器运行。
+- 两者生成的代码完全一致，仅链接方式不同；行为上应与解释器逐字节一致（见下文一致性回归）。
 
 > 说明：AOT 已实现完整的指令翻译（含类定义 `MAKE_CLASS`、属性
 > `LOAD_ATTR`/`STORE_ATTR`、列表字面量与下标 `BUILD_LIST`/`GET_ITEM`/`SET_ITEM`、
@@ -386,15 +416,21 @@ build/dist/
 │   └── classtools.so
 ├── lib/                     运行时库
 │   ├── libPycpRuntime.so    动态库（默认构建，pycp 动态链接它）
-│   └── libPycpRuntime.a     静态库（AOT 生成代码静态链接用）
-│                            Windows 下另有 PycpRuntime.dll 与导入库
+│   ├── libPycpRuntime.a     静态库（AOT 生成代码静态链接用）
+│   ├── libPycpExt_io.a      原生扩展静态库（`--emit-cpp --static` 用）
+│   ├── libPycpExt_Pycp.a
+│   ├── libPycpExt_classtools.a
+│                            Windows 下另有运行时 DLL 与导入库（MinGW：
+│                            libPycpRuntime.dll + libPycpRuntime.dll.a；
+│                            MSVC：PycpRuntime.dll + PycpRuntime.lib）
 ├── include/                 后端头文件（AOT / 原生扩展编译用）
 │   └── Pycp*.hpp / PycpExt.h
 └── BUILD_INFO.txt           产物溯源信息（平台 / 构建类型 / 编译器 / 版本）
 ```
 
 > Windows 例外：加载 DLL 只搜索可执行文件所在目录、不搜索 `lib/`，因此
-> `PycpRuntime.dll` 会在 dist 根目录再放一份（与 `lib/` 那份同源）。
+> 运行时 DLL 会在 dist 根目录再放一份（与 `lib/` 那份同源）。其文件名随
+> 编译器而异——MinGW 为 `libPycpRuntime.dll`，MSVC 为 `PycpRuntime.dll`。
 
 收集步骤默认随 `ALL` 自动执行，也可单独触发（幂等，只覆盖同名文件、不清空目录）：
 
@@ -574,6 +610,29 @@ cmake --build build -j
 
 ## 最近更新
 
+- **AOT 支持 `--static` / `--shared` 两种链接模式 + 一致性回归测试**：
+  `--emit-cpp` 默认 `--shared`（动态链接，保持原有行为零改动）；`--static`
+  改为静态链接运行时与三个原生扩展（io / Pycp / classtools），产物为单个
+  自包含可执行文件。static 模式下生成器对 exe 发射 `target_compile_definitions
+  PRIVATE PYCP_STATIC`（Windows 避免 `__imp__...` undefined reference），用
+  全路径链接 `libPycpRuntime.a` 与 `libPycpExt_*.a`，并追加一份
+  `__pycp_builtin_modules.gen.cpp` 注册桩（复用既有 `RegisterAotModule`）让
+  静态扩展符号被链接器强制拉入；shared 分支逐行保留，二者互不干扰。
+  dist 在 `lib/` 下新增三份静态扩展库 `libPycpExt_io.a` /
+  `libPycpExt_Pycp.a` / `libPycpExt_classtools.a`，SDK 定位器扫描 `lib/` 下
+  所有 `PycpExt_*` 推导内置扩展清单（新增子库零改动）。新增
+  `cmake/PycpAotEquivalence.cmake` + `pycp-aot-equiv` 目标，对全部 `tests/`
+  用例分别跑解释器与 AOT 产物（shared 与 static 各一次），地址归一化后逐
+  字节比对 stdout / stderr / 退出码，有差异即 `FATAL_ERROR`，用于收敛两套
+  实现的行为漂移。
+- **AOT 引用计数失衡修复（`GET_ITEM` 漏 `Incref`）**：AOT 生成的
+  `GET_ITEM` 从容器取元素（`GetItem` 返回 **Borrowed**）压栈时漏了
+  `Incref`，导致后续消费路径对容器共享元素多减一次引用——全局常量
+  （尤其 Integer 小整数常量）被提前释放，随后 use-after-free，最终在嵌套
+  下标 / map 字面量场景抛 `TypeError: unhashable type: Integer`（解释器因
+  模块常量池持有常量而免疫）。现 AOT 与解释器一致地 `st.push_back(res);
+  Incref(res)`，嵌套下标与容器销毁不再级联释放共享常量。一致性回归已覆盖
+  该场景（`tests/containers/map.pycp` 等在 shared / static 下全部通过）。
 - **dist 布局调整与运行时默认动态链接**：dist 目录改为标准分层布局——头文件
   归入 `dist/include/`、运行时库（动态库 + 静态库 + Windows 导入库）归入
   `dist/lib/`、主程序留在 `dist/` 根、标准库原生扩展仍留在 `dist/stdlib/`
@@ -680,7 +739,7 @@ cmake --build build -j
 - **类定义**：`class Name{ ... }`，含成员变量声明、方法定义（`func name(self, ...){}`）。
 - **单继承**：`class Child inherits Parent{ ... }`，子类复制父类成员与方法（含可见性），支持 `super()` 调用父类方法。
 - **构造与字符串转换**：`__initialize__`（创建实例自动调用）、`__string__`（转字符串时自动调用）。
-- **默认字符串表示**：未定义 `__string__` 的对象输出 `<name at 0xADDR>`；普通函数输出 `<function "name" at 0xADDR>`；类输出 `<class "name">`；匿名函数 / 匿名类统一输出 `@anonymous`。
+- **默认字符串表示**：未定义 `__string__` 的对象输出 `<name at 0xADDR>`；函数输出 `<function "name" at 0xADDR>`；类输出 `<class "name">`；类实例输出 `<Name instance at 0xADDR>`；模块输出 `<module "name">`。匿名函数 / 匿名类沿用各自格式，仅名字位置为内部名 `@anonymous`，即 `<function "@anonymous" at 0xADDR>` / `<class "@anonymous">`（其类实例为 `<@anonymous instance at 0xADDR>`）。
 - **运算符重载**（魔术方法）：`__addition__` / `__subtraction__` / `__multiplication__` / `__division__` / `__power__` / `__negation__`，及比较 `__less_than__` / `__less_equal__` / `__equal__` / `__not_equal__` / `__greater_than__` / `__greater_equal__`。
 - **装饰器语法糖**：`@decorator` 把被装饰对象（函数或任意对象）作为参数传给装饰器函数，用返回值替换原对象。
 - **成员可见性**：`@private` / `@public` 修饰类内成员，控制该成员在类外的访问可见性（方法内部经 `self` 访问不受限）。

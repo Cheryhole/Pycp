@@ -4,8 +4,12 @@
 # super / private / public 为语言关键字（词法/语法层实现），
 # 本模块仅提供空命名空间，使 `from classtools import ...` 加载不报错。
 #
-# 产物：动态库 classtools（classtools.so / .dll / .dylib），输出到 build/stdlib/。
-# 入口：导出符号 PycpModule_classtools（按模块名命名，extern "C"），import classtools 时动态加载。
+# 产物：
+#   动态库 classtools（classtools.so / .dll / .dylib），输出到 build/stdlib/。
+#     入口：导出符号 PycpModule_classtools（按模块名命名，extern "C"），
+#           import classtools 时动态加载。
+#   静态库 PycpExt_classtools（libPycpExt_classtools.a / PycpExt_classtools.lib），
+#     输出到 build/lib/。供 AOT 的 --static 模式链接进产物 exe。
 # 依赖：PycpRuntime。
 # =====================================================================
 
@@ -56,5 +60,35 @@ else()
     target_compile_options(PycpBuiltin_classtools_obj PRIVATE -Wall -Wextra -O2)
 endif()
 
+# =====================================================================
+# 静态库（AOT --static 模式用）
+# ---------------------------------------------------------------------
+# 不能复用上面的 OBJECT 库：PYCP_API 在 Windows 下默认 dllimport，
+# 动态库版必须保持 dllimport，静态库版必须定义 PYCP_STATIC（详见
+# stdlib/io/CMakeLists.txt 中的同名段落说明）。
+# =====================================================================
+add_library(PycpBuiltin_classtools_obj_static OBJECT ${CLASSTOOLS_SOURCES} ${CLASSTOOLS_HEADERS})
+target_include_directories(PycpBuiltin_classtools_obj_static PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../backend/include
+)
+target_compile_definitions(PycpBuiltin_classtools_obj_static PUBLIC PYCP_STATIC)
+
+add_library(PycpBuiltin_classtools_static STATIC $<TARGET_OBJECTS:PycpBuiltin_classtools_obj_static>)
+set_target_properties(PycpBuiltin_classtools_static PROPERTIES
+    OUTPUT_NAME "PycpExt_classtools"
+    ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+)
+target_link_libraries(PycpBuiltin_classtools_static PUBLIC PycpRuntime_static)
+
+if(MSVC)
+    target_compile_options(PycpBuiltin_classtools_obj_static PRIVATE /W4 /EHsc /utf-8)
+else()
+    target_compile_options(PycpBuiltin_classtools_obj_static PRIVATE -Wall -Wextra -O2)
+endif()
+
 # 注册到全局标准库目标清单（供 pycp-dist 收集到 <dist>/stdlib/）。
 set_property(GLOBAL APPEND PROPERTY PYCP_STDLIB_TARGETS PycpBuiltin_classtools_shared)
+# 静态库清单（供 pycp-dist 收集到 <dist>/lib/）。
+set_property(GLOBAL APPEND PROPERTY PYCP_STDLIB_STATIC_TARGETS PycpBuiltin_classtools_static)

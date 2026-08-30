@@ -14,6 +14,7 @@
 // =============================================================
 
 #include "PycpBytecode.hpp"
+#include "aot/PycpProjectSpec.hpp" // LinkMode
 
 #include <map>
 #include <string>
@@ -26,6 +27,7 @@ namespace Pycp::AOT {
 //   entry_name   : 入口模块名（对应 modules 中的 key），生成含 main 的源码
 //   source_pycp  : 原始入口 .pycp 路径（仅用于文件头注释）
 //   output_dir   : 项目输出目录（-o 指定，或默认 ./<entry_name>/）
+//   link_mode    : 链接模式（kShared 动态 / kStatic 静态），见 LinkMode
 //   kinds        : 生成器标识列表，空表示全部已注册生成器（当前仅 "cmake"）
 //   written      : 输出参数，返回所有已写入文件的绝对/相对路径
 //   err          : 输出参数，失败原因（可操作）
@@ -35,6 +37,7 @@ bool EmitProject(
 	const std::string& entry_name,
 	const std::string& source_pycp,
 	const std::string& output_dir,
+	LinkMode link_mode,
 	const std::vector<std::string>& kinds,
 	std::vector<std::string>* written,
 	std::string* err);

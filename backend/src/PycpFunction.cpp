@@ -32,12 +32,14 @@ Function::Function(const char* name, PycpNativeFunction func)
 		: Object("Function"), kind(FunctionKind::Native), name(name), native(func){}
 
 Object* Function::__string__(){
-	// 匿名函数（name 为空或匿名占位名）输出 "@anonymous"。
-	if (name.empty() || name == ANONYMOUS_FUNCTION) {
-		return String::FromCString("@anonymous");
-	}
+	// 匿名函数沿用与普通函数完全相同的格式，仅名字位置显示 @anonymous：
+	//   <function "@anonymous" at 0xADDR>
+	// 空名亦归一化为 @anonymous：BoundMethod 的底层方法为 nullptr 时以空串
+	// 构造 Function（见 PycpClass.cpp），否则会输出 <function "" at ...>。
+	const bool anon = name.empty() || name == ANONYMOUS_FUNCTION;
+	const std::string display = anon ? ANONYMOUS_FUNCTION : name;
 	// 普通函数："<function \"name\" at 0xADDR>"。
-	return String::FromCString(("<function \"" + std::string(name) +
+	return String::FromCString(("<function \"" + display +
 	                          "\" at " + ptr_address(this) + ">").c_str());
 }
 

@@ -96,6 +96,8 @@ add_subdirectory(stdlib)
 # 取出各 stdlib 子库注册的全局目标清单（安装与 dist 收集共用）。
 # 新增 stdlib 子库只需在其 CMakeLists 中 set_property 注册，此处无需改动。
 get_property(PYCP_STDLIB_TARGETS GLOBAL PROPERTY PYCP_STDLIB_TARGETS)
+# 静态版 stdlib 扩展（AOT --static 模式用，收集到 dist/lib/）。
+get_property(PYCP_STDLIB_STATIC_TARGETS GLOBAL PROPERTY PYCP_STDLIB_STATIC_TARGETS)
 
 # =====================================================================
 # 目录路径
@@ -531,6 +533,12 @@ foreach(_stdlib_target IN LISTS PYCP_STDLIB_TARGETS)
     string(APPEND PYCP_DIST_STDLIB_FILES "$<TARGET_FILE:${_stdlib_target}>|")
 endforeach()
 
+# 静态版 stdlib 扩展（libPycpExt_<name>.a）-> dist/lib，供 AOT --static 链接。
+set(PYCP_DIST_STDLIB_STATIC_FILES "")
+foreach(_stdlib_target IN LISTS PYCP_STDLIB_STATIC_TARGETS)
+    string(APPEND PYCP_DIST_STDLIB_STATIC_FILES "$<TARGET_FILE:${_stdlib_target}>|")
+endforeach()
+
 # 运行时库（静态库 / 动态库 / Windows 导入库）-> dist/lib
 set(PYCP_DIST_RUNTIME_TARGETS "")
 set(PYCP_DIST_RUNTIME_FILES "")
@@ -567,6 +575,7 @@ add_custom_target(pycp-dist ALL
         -DROOT_FILES=${PYCP_DIST_ROOT_FILES}
         -DRUNTIME_FILES=${PYCP_DIST_RUNTIME_FILES}
         -DSTDLIB_FILES=${PYCP_DIST_STDLIB_FILES}
+        -DSTDLIB_STATIC_FILES=${PYCP_DIST_STDLIB_STATIC_FILES}
         -DINCLUDE_DIRS=${PYCP_BACKEND_DIR}/include
         -DWRITE_BUILD_INFO=${PYCP_DIST_WRITE_BUILD_INFO}
         -DBUILD_INFO_SYSTEM=${CMAKE_SYSTEM_NAME}
@@ -584,8 +593,52 @@ add_custom_target(pycp-dist ALL
 add_dependencies(pycp-dist
     pycp
     ${PYCP_STDLIB_TARGETS}
+    ${PYCP_STDLIB_STATIC_TARGETS}
     ${PYCP_DIST_RUNTIME_TARGETS}
 )
+
+# =====================================================================
+# AOT / 解释器一致性对比（pycp-aot-equiv）
+# ---------------------------------------------------------------------
+# 对每个用例分别跑「解释器」与「--emit-cpp 生成的 AOT 产物」，逐字节比对
+# stdout / stderr / 退出码（地址归一化），把两套实现的语义漂移暴露出来。
+#
+# 不挂 ALL：构建 AOT 项目较慢，不应拖慢常规构建。单独执行：
+#   cmake --build build --target pycp-aot-equiv
+#
+# 用例集在【配置期】GLOB，新增 .pycp 后需重新配置（与 dist 里的头文件
+# GLOB 同为「配置期快照」，不追求运行时自增）。
+# =====================================================================
+file(GLOB_RECURSE _pycp_equiv_cases "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.pycp")
+set(_pycp_equiv_case_list "")
+foreach(_c IN LISTS _pycp_equiv_cases)
+    string(APPEND _pycp_equiv_case_list "${_c}|")
+endforeach()
+list(LENGTH _pycp_equiv_cases _pycp_equiv_case_count)
+
+add_custom_target(pycp-aot-equiv
+    COMMAND ${CMAKE_COMMAND}
+        -DPYCP=$<TARGET_FILE:pycp>
+        -DCASES=${_pycp_equiv_case_list}
+        -DWORK_DIR=${CMAKE_BINARY_DIR}/aot-equiv
+        -DMODES=shared$<SEMICOLON>static
+        # 复用主构建所用的生成器：保证 AOT 项目用的是同一套可用工具链
+        # （不指定时 CMake 会自选，Windows 上可能落到未安装的 nmake）。
+        -DGENERATOR=${CMAKE_GENERATOR}
+        # 已知缺陷用例（解释器自身行为未定义、预期不一致）降级为 XFAIL，
+        # 与 tests/modules/import_tests/run.sh 的 EXPECTED_FAIL_PATTERNS 一致。
+        # circular_import 与其两端 mod_circ_x / mod_circ_y 同属「真正循环导入」
+        # 已知缺陷：解释器自身会段错误/堆损坏（0xc0000374），AOT 为栈溢出，
+        # 退出码必然不一致，属预期。
+        # preprocessings 用 # send warning/message 在编译期输出诊断：解释器
+        # 运行时复跑预处理器（诊断进 stderr），AOT 预处理器在 --emit-cpp 生成期
+        # 已跑、产物 exe 无法复现，属编译期 vs 运行期的结构性差异，预期不一致。
+        -DXFAIL=circular_import|mod_circ|preprocessings
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PycpAotEquivalence.cmake
+    COMMENT "Comparing AOT vs interpreter behaviour on ${_pycp_equiv_case_count} test case(s)"
+    VERBATIM
+)
+add_dependencies(pycp-aot-equiv pycp pycp-dist)
 
 # =====================================================================
 # 构建信息

@@ -3,6 +3,7 @@
 #include "PycpConfig.hpp"
 #include "PycpNativeExt.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 
@@ -45,6 +46,58 @@ std::string env_var(const char* name) {
 	return (v != nullptr) ? std::string(v) : std::string();
 }
 
+// 取路径最后一段（文件名）；无分隔符时返回原串。
+std::string file_name(const std::string& path) {
+	const std::size_t pos = path.find_last_of("/\\");
+	return (pos == std::string::npos) ? path : path.substr(pos + 1);
+}
+
+// 静态库文件所属的模块名：libPycpExt_io.a / PycpExt_io.lib -> "io"。
+// 即剥掉 lib 前缀与静态库扩展名（.a / .lib）后的剩余部分，
+// 再剥掉固定的 PycpExt_ 前缀。非该命名规则的文件返回空串（表示跳过）。
+std::string static_ext_module_name(const std::string& file) {
+	std::string name = file_name(file);
+
+	// 剥静态库扩展名
+	for (const char* ext : {".a", ".lib"}) {
+		const std::string e(ext);
+		if (name.size() > e.size() &&
+		    name.compare(name.size() - e.size(), e.size(), e) == 0) {
+			name = name.substr(0, name.size() - e.size());
+			break;
+		}
+	}
+	// 剥 GNU 的 lib 前缀
+	const std::string lib = "lib";
+	if (name.size() > lib.size() && name.compare(0, lib.size(), lib) == 0) {
+		name = name.substr(lib.size());
+	}
+
+	const std::string prefix = "PycpExt_";
+	if (name.size() > prefix.size() &&
+	    name.compare(0, prefix.size(), prefix) == 0) {
+		return name.substr(prefix.size());
+	}
+	return std::string(); // 不是内置扩展的静态库
+}
+
+// 扫描 <lib_dir> 下全部 libPycpExt_<name>.a，推导内置扩展清单。
+// 结果按模块名排序，保证生成文件内容稳定（避免每次生成顺序不同导致
+// 不必要的重编译）。
+void scan_static_extensions(const std::string& lib_dir, SdkInfo* info) {
+	std::error_code ec;
+	for (const auto& entry : std::filesystem::directory_iterator(lib_dir, ec)) {
+		if (!entry.is_regular_file(ec)) continue;
+		const std::string path = entry.path().string();
+		const std::string mod = static_ext_module_name(path);
+		if (mod.empty()) continue;
+		info->stdlib_static_libs.push_back(path);
+		info->builtin_modules.push_back(mod);
+	}
+	std::sort(info->stdlib_static_libs.begin(), info->stdlib_static_libs.end());
+	std::sort(info->builtin_modules.begin(), info->builtin_modules.end());
+}
+
 } // anonymous namespace
 
 bool ValidateSdkRoot(const std::string& root, SdkInfo* out) {
@@ -85,9 +138,32 @@ bool ValidateSdkRoot(const std::string& root, SdkInfo* out) {
 
 	// Windows：加载 DLL 只搜 exe 同级目录、不搜 lib/，故 SDK 根目录会额外
 	// 放一份运行时 DLL（见顶层 CMakeLists 的 PYCP_DIST_ROOT_FILES）。
+	// 文件名随构建 SDK 的编译器而异：MinGW/GNU 产出 libPycpRuntime.dll，
+	// MSVC 产出 PycpRuntime.dll，故两者都要探测（此前只探测后者，MinGW 下
+	// 恒不命中，导致 root_dll 永远为空）。
 	// 该文件非必需（静态链接构建下没有），缺失时仅置空、不影响校验。
-	const std::string dll = join(root, "PycpRuntime.dll");
-	if (is_file(dll)) info.root_dll = dll;
+	for (const char* dll_name : {"PycpRuntime.dll", "libPycpRuntime.dll"}) {
+		const std::string dll = join(root, dll_name);
+		if (is_file(dll)) {
+			info.root_dll = dll;
+			break;
+		}
+	}
+
+	// 静态链接（--static）所需产物：静态运行时 + 各内置扩展的静态库。
+	// 同样非必需：shared-only 的 SDK（如 -DBUILD_RUNTIME_STATIC=OFF 构建的
+	// dist）没有这些文件，此时置空且不影响 valid，仅在使用 --static 时报错。
+	for (const char* a_name : {"libPycpRuntime.a", "PycpRuntime.lib",
+	                           "libPycpRuntime.lib"}) {
+		const std::string a = join(info.lib_dir, a_name);
+		if (is_file(a)) {
+			info.static_runtime = a;
+			break;
+		}
+	}
+	scan_static_extensions(info.lib_dir, &info);
+	info.has_static = !info.static_runtime.empty() &&
+	                  !info.stdlib_static_libs.empty();
 
 	info.valid = true;
 	if (out != nullptr) *out = info;

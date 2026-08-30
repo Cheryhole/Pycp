@@ -75,6 +75,12 @@ struct Options {
 	bool dump = false;       // -d / --dump
 	bool preprocess = false; // -p / --preprocess
 	bool show_help = false;
+
+	// --emit-cpp 的链接模式（默认 shared）。
+	Pycp::AOT::LinkMode link_mode = Pycp::AOT::LinkMode::kShared;
+	// 是否显式指定过链接模式：默认 kShared 与「显式 --shared」值相同，
+	// 仅靠 link_mode 无法区分，故单独记标志用于冲突检测。
+	bool link_mode_set = false;
 };
 
 void print_help(const char* prog) {
@@ -88,6 +94,12 @@ void print_help(const char* prog) {
 		<< "  -c, --compile     Compile <input_file> (.pycp) to bytecode (.cpycp)\n"
 		<< "  -b, --bytecode    Generate .cpycp bytecode file (alias of -c)\n"
 		<< "      --emit-cpp    Translate .pycp to a compilable C++ project (CMake)\n"
+		<< "      --shared      With --emit-cpp: link the PycpRuntime SDK dynamically\n"
+		<< "                    (default). Native extensions are loaded at runtime\n"
+		<< "                    from the stdlib/ directory next to the executable.\n"
+		<< "      --static      With --emit-cpp: link the runtime and all native\n"
+		<< "                    extensions statically, producing a single\n"
+		<< "                    self-contained executable (no stdlib/ or DLLs).\n"
 		<< "  -o, --output <f>  Output path/dir (with -c/-b: .cpycp file; with\n"
 		<< "                    --emit-cpp: project directory; with -p: .pp.pycp file)\n"
 		<< "  -d, --dump        Dump bytecode (constant pool, symbols, code objects,\n"
@@ -111,13 +123,15 @@ void print_help(const char* prog) {
 		<< "    <dir>/__pycp_main.gen.cpp (with main()), one <name>.gen.cpp per\n"
 		<< "    imported module, and a CMakeLists.txt. Build & run with:\n"
 		<< "      cd <dir> && cmake -S . -B build && cmake --build build && ./build/<entry>\n"
-		<< "    The CMake project dynamically links the PycpRuntime SDK (auto-located\n"
-		<< "    from the pycp install; override with -DPYCP_DIST=<path>).\n\n"
+		<< "    The CMake project links the PycpRuntime SDK (auto-located from the\n"
+		<< "    pycp install; override with -DPYCP_DIST=<path>), dynamically by\n"
+		<< "    default (--shared) or statically with --static.\n\n"
 		<< "Examples:\n"
 		<< "  " << prog << " hello.pycp              # compile & run\n"
 		<< "  " << prog << " hello.cpycp             # run compiled bytecode directly\n"
 		<< "  " << prog << " -c hello.pycp -o hello.cpycp\n"
-		<< "  " << prog << " --emit-cpp hello.pycp   # -> hello/ project (CMake)\n";
+		<< "  " << prog << " --emit-cpp hello.pycp   # -> hello/ project (CMake)\n"
+		<< "  " << prog << " --emit-cpp --static hello.pycp -o hello-static\n";
 }
 
 bool has_suffix(const std::string& s, const std::string& suffix) {
@@ -149,6 +163,22 @@ bool parse_args(int argc, char** argv, Options& opt) {
 			opt.emit_cpp = true;
 			opt.compile = false;
 			opt.interpret = false;
+		} else if (arg == "--shared") {
+			if (opt.link_mode_set && opt.link_mode == Pycp::AOT::LinkMode::kStatic) {
+				std::cerr << "Error: --static and --shared are mutually exclusive."
+				          << std::endl;
+				return false;
+			}
+			opt.link_mode = Pycp::AOT::LinkMode::kShared;
+			opt.link_mode_set = true;
+		} else if (arg == "--static") {
+			if (opt.link_mode_set && opt.link_mode == Pycp::AOT::LinkMode::kShared) {
+				std::cerr << "Error: --static and --shared are mutually exclusive."
+				          << std::endl;
+				return false;
+			}
+			opt.link_mode = Pycp::AOT::LinkMode::kStatic;
+			opt.link_mode_set = true;
 		} else if (arg == "-d" || arg == "--dump") {
 			opt.dump = true;
 			opt.compile = false;
@@ -481,6 +511,13 @@ int main(int argc, char** argv) {
 		run_repl();
 		return 0;
 	}
+	if (opt.link_mode_set && !opt.emit_cpp) {
+		// --static / --shared 只影响 AOT 生成的 CMake 项目，对解释执行、
+		// 字节码编译、dump、预处理都无意义。静默忽略会让用户误以为生效。
+		std::cerr << "Error: --static/--shared can only be used with --emit-cpp."
+		          << std::endl;
+		return 2;
+	}
 
 	int ret = 0;
 	try {
@@ -544,16 +581,27 @@ int main(int argc, char** argv) {
 			std::vector<std::string> written;
 			std::string emsg;
 			if (!Pycp::AOT::EmitProject(modules, entry_name, opt.input_file,
-			                            out_dir, {}, &written, &emsg)) {
+			                            out_dir, opt.link_mode, {},
+			                            &written, &emsg)) {
 				throw Pycp::Exception(emsg);
 			}
 
-			std::cout << "Generated AOT project in: " << out_dir << "\n";
+			std::cout << "Generated AOT project in: " << out_dir
+			          << "  [link mode: "
+			          << (opt.link_mode == Pycp::AOT::LinkMode::kStatic
+			                  ? "static"
+			                  : "shared")
+			          << "]\n";
 			for (const std::string& w : written) {
 				std::cout << "  " << w << std::endl;
 			}
 			std::cout << "Build it with:\n"
 			          << "  cd " << out_dir << " && cmake -S . -B build && cmake --build build\n";
+			if (opt.link_mode == Pycp::AOT::LinkMode::kStatic) {
+				std::cout << "Self-contained executable: " << out_dir
+				          << "/build/" << entry_name
+				          << " (no stdlib/ or runtime DLL needed)\n";
+			}
 		}
 		else if (opt.compile) {
 			// 编译模式：.pycp -> .cpycp

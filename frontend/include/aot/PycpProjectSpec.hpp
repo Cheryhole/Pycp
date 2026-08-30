@@ -20,6 +20,12 @@
 
 namespace Pycp::AOT {
 
+// AOT 产物的链接模式（CLI --shared / --static）。
+enum class LinkMode {
+	kShared, // 默认：动态链接运行时，原生扩展从 stdlib/ 目录运行时加载
+	kStatic, // 静态链接运行时与全部原生扩展，产物为单个自包含可执行文件
+};
+
 struct ProjectSpec {
 	// 项目名：同时作为可执行文件名与 CMake project() 名称。
 	// 应已是可安全用于文件名与 CMake 标识符的形式。
@@ -37,6 +43,11 @@ struct ProjectSpec {
 
 	// 运行时 SDK（dist）定位结果。
 	SdkInfo sdk;
+
+	// 链接模式：决定生成器是渲染动态链接段落还是静态链接段落。
+	// kStatic 要求 sdk.has_static（静态运行时 + libPycpExt_*.a 齐全），
+	// 由 Validate 拦下。
+	LinkMode link_mode = LinkMode::kShared;
 
 	// 生成时的 Pycp 版本，写入生成文件供追溯。
 	std::string pycp_version;

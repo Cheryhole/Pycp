@@ -30,6 +30,10 @@ constexpr const char* EXT_PP_PYCP = ".pp.pycp"; // 预处理输出的源文件
 constexpr const char* AOT_CPP_SUFFIX = ".gen.cpp";
 // 入口 .pycp 生成的 C++ 文件固定名（含 main 函数）
 constexpr const char* AOT_ENTRY_CPP_FILENAME = "__pycp_main.gen.cpp";
+// 静态链接模式（--static）专用：内置原生扩展的注册/链接拉入桩文件名。
+// 该文件显式引用各内置扩展的 PycpModule_<name> 并登记进运行时注册表，
+// 既让静态链接下 import 能命中，也强制链接器保留对应静态库成员。
+constexpr const char* AOT_BUILTIN_REG_CPP_FILENAME = "__pycp_builtin_reg.gen.cpp";
 
 // =============================================================
 // 字节码魔数与格式版本（单一事实来源，序列化/反序列化共享）

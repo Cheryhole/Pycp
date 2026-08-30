@@ -196,12 +196,11 @@ Object* Class::__get_attribute__(const std::string& name) {
 }
 
 Object* Class::__string__() {
-	// 匿名类（内部名为 @anonymous）输出 "@anonymous"。
-	if (name_ == ANONYMOUS_CLASS) {
-		return String::FromCString("@anonymous");
-	}
-	// 普通类："<class \"name\">"。
-	return String::FromCString(("<class \"" + name_ + "\">").c_str());
+	// 匿名类的内部名本身即 @anonymous，故无需特例分支：统一套用
+	// "<class \"name\">" 格式即可自然得到 <class "@anonymous">。
+	// name_ 为空时同样归一化为 @anonymous（防御性，与函数侧对称）。
+	const std::string display = name_.empty() ? ANONYMOUS_CLASS : name_;
+	return String::FromCString(("<class \"" + display + "\">").c_str());
 }
 
 Object* Class::__introspect__() {

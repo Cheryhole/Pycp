@@ -83,7 +83,8 @@ public:
 	// 类自身属性访问（方法查找）。
 	Object* __get_attribute__(const std::string& name) override;
 
-	// 类的字符串表示：<Name class at 0xADDR>。
+	// 类的字符串表示：<class "name">。
+	// 匿名类（内部名为 @anonymous）沿用同一格式，输出 <class "@anonymous">。
 	Object* __string__() override;
 
 	// 属性名枚举：返回类的方法名 + 通用成员。

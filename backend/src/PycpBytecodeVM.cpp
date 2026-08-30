@@ -327,26 +327,16 @@ Object* VM::call(Module* m, size_t co_idx, Object** argv, std::size_t argc,
 	env->local_names = co->names;
 	env->locals.assign(co->nlocals, nullptr);
 
-	// 方法体执行期间置内部访问标志，放行 private 成员的 self 访问；
-	// 同时若首参数为实例（self），压入当前 self 上下文供 super() 使用。
-	enter_internal_access();
-	bool pushed_self = false;
-	if (argc > 0 && argv != nullptr && argv[0] != nullptr &&
-	    dynamic_cast<Instance*>(argv[0]) != nullptr) {
-		push_current_self(static_cast<Instance*>(argv[0]));
-		pushed_self = true;
-	}
+	// 注意：方法调用上下文（internal_access / current_self / current_class）
+	// 已统一由 BytecodeFunction::invoke 中的 MethodCallContext 建立，
+	// 解释器与 AOT 两条路径共用，此处不再重复处理。
 	Object* ret = nullptr;
 	try {
 		ret = execute(co, env, argv, argc);
 	} catch (...) {
-		if (pushed_self) pop_current_self();
-		leave_internal_access();
 		module_ = saved_module;
 		throw;
 	}
-	if (pushed_self) pop_current_self();
-	leave_internal_access();
 	module_ = saved_module;
 	return ret;
 }
@@ -1011,21 +1001,57 @@ BytecodeFunction::BytecodeFunction(const std::string& name_,
 	name = name_.c_str();
 }
 
+namespace {
+
+// 方法调用上下文（RAII）：解释器与 AOT 两条路径共用，保证行为一致。
+//
+// 背景：这三个 thread_local 上下文此前只在解释器路径建立，AOT 路径
+// （native_fn_ 分支）完全缺失，导致同一份源码在两种模式下行为不同：
+//   - 缺 internal_access -> 方法体内 self.x 访问 private 成员被误拦，
+//     抛 AttributeError "'x' is private in class '...'"
+//   - 缺 current_self    -> super() 取不到接收者，抛 TypeError
+//     "super() used outside a method."
+//   - 缺 current_class   -> 即便 self 可用，super() 也会按最派生实例类
+//     解析父类，继承链上重复 super 会递归回自身
+// 三者语义耦合、必须同进同出，故收在一处统一处理。
+class MethodCallContext {
+public:
+	MethodCallContext(Class* owner, Object** argv, std::size_t argc)
+		: pushed_self_(false), pushed_class_(false) {
+		if (owner != nullptr) {
+			Pycp::push_current_class(owner);
+			pushed_class_ = true;
+		}
+		Pycp::enter_internal_access();
+		if (argc > 0 && argv != nullptr && argv[0] != nullptr &&
+		    dynamic_cast<Instance*>(argv[0]) != nullptr) {
+			Pycp::push_current_self(static_cast<Instance*>(argv[0]));
+			pushed_self_ = true;
+		}
+	}
+	~MethodCallContext() {
+		if (pushed_self_) Pycp::pop_current_self();
+		Pycp::leave_internal_access();
+		if (pushed_class_) Pycp::pop_current_class();
+	}
+	MethodCallContext(const MethodCallContext&) = delete;
+	MethodCallContext& operator=(const MethodCallContext&) = delete;
+
+private:
+	bool pushed_self_;
+	bool pushed_class_;
+};
+
+} // anonymous namespace
+
 Object* BytecodeFunction::invoke(Object** argv, std::size_t argc) {
+	MethodCallContext ctx(owner_class_, argv, argc);
 	if (native_fn_ != nullptr) {
-		// native 模式：self 传 this，使生成的 pycp_fn_N 能经 get_captured 取捕获环境。
+		// native 模式（AOT）：self 传 this，使生成的 pycp_fn_N 能经
+		// get_captured 取捕获环境。
 		return native_fn_(this, argv, argc);
 	}
-	// 进入类方法：压入所属类，供 super() 正确解析父类（而非最派生实例类）。
-	Pycp::push_current_class(owner_class_);
-	try {
-		Object* ret = vm->call(module, code_idx, argv, argc, captured);
-		Pycp::pop_current_class();
-		return ret;
-	} catch (...) {
-		Pycp::pop_current_class();
-		throw;
-	}
+	return vm->call(module, code_idx, argv, argc, captured);
 }
 
 } // namespace Pycp

@@ -93,8 +93,8 @@ Object* Module::__introspect__() {
 }
 
 Object* Module::__string__(){
-  // 默认表示："<name at 0xADDR>"（作为所有未显式定义 __string__ 的
-  // 对象的兜底输出；匿名对象 name 为 @anonymous）。
+  // 模块的字符串表示："<module \"name\">"，name 为模块名（恒非空，
+  // 由 VM 的 MODULE_ENTRY_NAME 兜底）。
   return String::FromCString(("<module \"" + std::string(get_name()) + "\">").c_str());
 }
 

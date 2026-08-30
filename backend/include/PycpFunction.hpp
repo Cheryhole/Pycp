@@ -55,8 +55,9 @@ class PYCP_API Function : public Object{
 		Class* get_owner_class() const { return owner_class_; }
 		void set_owner_class(Class* cls) { owner_class_ = cls; }
 
-		// 字符串表示：普通函数 "<function \"name\" at 0xADDR>"，
-		// 匿名函数（name 为空或 @anonymous）输出 "@anonymous"。
+		// 字符串表示："<function \"name\" at 0xADDR>"。
+		// 匿名函数（name 为空或 @anonymous）沿用同一格式，名字位置显示
+		// @anonymous，即 <function "@anonymous" at 0xADDR>（不再是裸 @anonymous）。
 		Object* __string__() override;
 
 		// 内部调用：经统一 argv/argc 形态
