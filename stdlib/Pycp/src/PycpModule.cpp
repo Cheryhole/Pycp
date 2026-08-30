@@ -13,6 +13,7 @@
 #include "PycpABI.hpp"
 #include "PycpClass.hpp"
 #include "PycpMagic.hpp"     // GetMagicMethodFunction
+#include "PycpExt.h"         // PYCP_EXPORT_MODULE（Windows 下带 dllexport）
 
 namespace Pycp {
 
@@ -293,7 +294,10 @@ Module* make_pycp_module() {
 
 // 动态库入口（符号名 PycpModule_Pycp，按模块名导出）。
 // 由 VM::load_module 经 LoadNativeModule 的 dlsym("PycpModule_Pycp") 调用。
-extern "C" Module* PycpModule_Pycp() {
+// 必须走 PYCP_EXPORT_MODULE：Windows 下没有 __declspec(dllexport) 时，
+// 只有"整库无任何显式导出"才会被 MinGW 自动全导出，一旦本 TU 出现任何
+// 其它导出符号，GetProcAddress 就找不到入口，import Pycp 会静默失效。
+PYCP_EXPORT_MODULE(Pycp) {
 	return make_pycp_module();
 }
 

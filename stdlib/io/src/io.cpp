@@ -10,6 +10,7 @@
 #include "PycpException.hpp"
 #include "PycpConfig.hpp"
 #include "PycpABI.hpp"
+#include "PycpExt.h"       // PYCP_EXPORT_MODULE（Windows 下带 dllexport）
 
 #include <iostream>
 
@@ -147,7 +148,10 @@ Module* make_io_module() {
 
 // 动态库入口（符号名 PycpModule_io，按模块名导出）。
 // 由 VM::load_module 经 LoadNativeModule 的 dlsym("PycpModule_io") 调用。
-extern "C" Module* PycpModule_io() {
+// 必须走 PYCP_EXPORT_MODULE：Windows 下没有 __declspec(dllexport) 时，
+// 只有"整库无任何显式导出"才会被 MinGW 自动全导出，一旦本 TU 出现任何
+// 其它导出符号，GetProcAddress 就找不到入口，import io 会静默失效。
+PYCP_EXPORT_MODULE(io) {
 	return make_io_module();
 }
 
