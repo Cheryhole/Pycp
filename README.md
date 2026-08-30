@@ -72,6 +72,38 @@ sudo apt update
 sudo apt install cmake build-essential flex bison
 ```
 
+### Windows 构建（MinGW-w64 + win_flex_bison）
+
+Windows 通常没有系统自带的 Flex/Bison，需安装
+[win_flex_bison](https://github.com/lexxmark/winflexbison/releases) 并把其
+所在目录加入 `PATH`，或显式指定：
+
+```powershell
+cmake -S . -B build -DBISON_EXECUTABLE=D:/winflex/bison.exe -DFLEX_EXECUTABLE=D:/winflex/flex.exe
+cmake --build build -j
+```
+
+> **已知工具链缺陷（非本项目问题）**：`win_flex.exe` / `win_bison.exe` 用
+> `_tempnam` + `fopen` 申请临时文件，**并行运行多个实例会共用同一个临时文件并互相覆盖**
+> （[winflexbison#86](https://github.com/lexxmark/winflexbison/issues/86)、
+> [westes/flex#580](https://github.com/westes/flex/issues/580)）。此时产出的
+> `.cpp` 是"未展开的 m4 骨架"，编译时报出几百行看似无关的错误，例如：
+>
+> ```
+> error: '#endif' without '#if'
+> error: stray '#' in program
+> error: 'out_ALREADY_DEFINED' does not name a type
+> error: expected unqualified-id before ']' token
+> ```
+>
+> 由于损坏产物比 `.l` / `.y` 新，不手动删除就不会重新生成，问题会一直卡住。
+> Linux/WSL 的 GNU flex/bison 用 `mkstemp`，并发安全，因此该问题只在 Windows 出现。
+>
+> 本项目已在 CMake 层处理：把 4 步生成串成依赖链（仅 `WIN32` 串行化，Linux/WSL 仍并行），
+> 并在每条生成命令后执行 `cmake/PycpCheckGenerated.cmake` 自检——一旦检出 m4 模板残留
+> 或前缀错位，会**删除损坏产物**并给出可操作的错误，直接重新构建即可恢复。
+> 若仍遇到异常，删除 `build/generated` 目录后重建，或以 `-j1` 构建。
+
 ### 构建
 
 ```bash

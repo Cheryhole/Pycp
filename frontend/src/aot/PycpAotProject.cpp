@@ -81,8 +81,10 @@ bool EmitProject(
 
 		if (written != nullptr) written->clear();
 		for (const auto& kv : spec.sources) {
+			// 显式 .string()：Windows 下 path::value_type 为 wchar_t，
+			// path -> std::string 无隐式转换（Linux 下为 char 故可隐式转换）。
 			const std::string path =
-				std::filesystem::path(output_dir) / kv.first;
+				(std::filesystem::path(output_dir) / kv.first).string();
 			write_file(path, kv.second);
 			if (written != nullptr) written->push_back(path);
 		}
@@ -116,8 +118,9 @@ bool EmitProject(
 		// 7) 调生成器渲染并写构建脚本。
 		for (const IBuildScriptGenerator* g : gens) {
 			const std::string content = g->Generate(spec);
+			// 同上：显式转换，避免 Windows 下 path -> std::string 编译失败。
 			const std::string path =
-				std::filesystem::path(output_dir) / g->file_name();
+				(std::filesystem::path(output_dir) / g->file_name()).string();
 			write_file(path, content);
 			if (written != nullptr) written->push_back(path);
 		}

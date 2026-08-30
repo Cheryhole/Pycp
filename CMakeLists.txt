@@ -163,78 +163,159 @@ set(FLEX_INPUT
 )
 
 # =====================================================================
-# 生成解析器
-# =====================================================================
-bison_target(
-    PycpParser
-
-    ${BISON_INPUT}
-
-    ${PYCP_GENERATED_DIR}/PycpParser.cpp
-
-    DEFINES_FILE
-    ${PYCP_GENERATED_DIR}/PycpParser.hpp
-
-    COMPILE_FLAGS
-    "-v -Wcounterexamples"
-)
-
-# =====================================================================
-# 生成词法分析器
-# =====================================================================
-flex_target(
-    PycpLexer
-
-    ${FLEX_INPUT}
-
-    ${PYCP_GENERATED_DIR}/PycpLexer.cpp
-
-    DEFINES_FILE
-    ${PYCP_GENERATED_DIR}/PycpLexer.hpp
-)
-
-# =====================================================================
-# 词法分析器依赖解析器
-# =====================================================================
-add_flex_bison_dependency(
-    PycpLexer
-    PycpParser
-)
-
-# =====================================================================
-# 预处理指令解析器（Flex/Bison，独立于主解析器）
+# 生成解析器与词法分析器（Flex / Bison）
 # ---------------------------------------------------------------------
-# 生成 PycpPreprocessorParser.cpp/.hpp 与 PycpPreprocessorLexer.cpp/.hpp，
-# 由 PREPROCESSOR_SOURCES 中的 PycpPreprocessor.cpp 驱动（接口文件）。
+# 不使用 bison_target / flex_target / add_flex_bison_dependency，改为手写
+# add_custom_command。原因：Windows 下的 win_flex / win_bison
+# （winflexbison）并发不安全——它用 _tempnam + fopen 申请临时文件（TOCTOU），
+# 并行运行的多个实例会共用同一个临时文件并互相覆盖，产出"未展开的 m4 骨架"
+# （残留 M4_YY_PREFIX / m4_ifdef / [[#ifndef 等模板文本）。拿去编译会得到
+# 数百行毫无意义的错误，例如：
+#   error: '#endif' without '#if'
+#   error: stray '#' in program
+#   error: 'out_ALREADY_DEFINED' does not name a type
+#   error: expected unqualified-id before ']' token
+# 而且产物比 .l/.y 新，不手动删除就不会重新生成，问题会一直卡住。
+# 上游已知缺陷：
+#   https://github.com/lexxmark/winflexbison/issues/86
+#   https://github.com/westes/flex/issues/580
+# Linux/WSL 的 GNU flex/bison 用 mkstemp，并发安全，故只有 WIN32 需要串行化。
+#
+# flex_target 不支持追加 DEPENDS，无法表达"第二个 flex 必须等第一个 flex
+# 结束"，所以必须手写命令才能建立下面的依赖链：
+#   PycpParser -> PycpLexer -> PycpPreprocessorParser -> PycpPreprocessorLexer
+# 每条命令末尾再跑一次生成物自检（cmake/PycpCheckGenerated.cmake），在编译器
+# 介入前把"几百行莫名报错"变成一条可操作的错误。
 # =====================================================================
-bison_target(
-    PycpPreprocessorParser
 
-    ${PREPROCESSOR_BISON_INPUT}
+# 生成产物（显式列出，便于建立依赖链与自检）
+set(PYCP_GEN_PARSER_CPP    ${PYCP_GENERATED_DIR}/PycpParser.cpp)
+set(PYCP_GEN_PARSER_HPP    ${PYCP_GENERATED_DIR}/PycpParser.hpp)
+set(PYCP_GEN_PARSER_REPORT ${PYCP_GENERATED_DIR}/PycpParser.output)
 
-    ${PYCP_GENERATED_DIR}/PycpPreprocessorParser.cpp
+set(PYCP_GEN_LEXER_CPP     ${PYCP_GENERATED_DIR}/PycpLexer.cpp)
+set(PYCP_GEN_LEXER_HPP     ${PYCP_GENERATED_DIR}/PycpLexer.hpp)
 
-    DEFINES_FILE
-    ${PYCP_GENERATED_DIR}/PycpPreprocessorParser.hpp
+set(PYCP_GEN_PP_PARSER_CPP    ${PYCP_GENERATED_DIR}/PycpPreprocessorParser.cpp)
+set(PYCP_GEN_PP_PARSER_HPP    ${PYCP_GENERATED_DIR}/PycpPreprocessorParser.hpp)
+set(PYCP_GEN_PP_PARSER_REPORT ${PYCP_GENERATED_DIR}/PycpPreprocessorParser.output)
 
-    COMPILE_FLAGS
-    "-v -Wcounterexamples"
+set(PYCP_GEN_PP_LEXER_CPP     ${PYCP_GENERATED_DIR}/PycpPreprocessorLexer.cpp)
+set(PYCP_GEN_PP_LEXER_HPP     ${PYCP_GENERATED_DIR}/PycpPreprocessorLexer.hpp)
+
+set(PYCP_GEN_CHECK_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PycpCheckGenerated.cmake)
+
+# Windows 串行化：每一步额外依赖上一步的全部产物。
+# 词法器对语法头文件的依赖（token 常量）在所有平台都保留；
+# 跨解析器的依赖仅在 WIN32 下追加，Linux/WSL 仍是并行。
+if(WIN32)
+    set(PYCP_GEN_PP_PARSER_EXTRA_DEPS
+        ${PYCP_GEN_LEXER_CPP} ${PYCP_GEN_LEXER_HPP})
+else()
+    set(PYCP_GEN_PP_PARSER_EXTRA_DEPS)
+endif()
+
+# ---------------------------------------------------------------------
+# 1) 主解析器：PycpParser.y -> PycpParser.cpp / .hpp（+ .output 报告）
+# ---------------------------------------------------------------------
+add_custom_command(
+    OUTPUT
+        ${PYCP_GEN_PARSER_CPP}
+        ${PYCP_GEN_PARSER_HPP}
+        ${PYCP_GEN_PARSER_REPORT}
+    # bison / flex 不会自建输出目录，且在 WIN32 下两条命令可能先于
+    # file(MAKE_DIRECTORY) 被触发，故每条生成命令都自带建目录步骤。
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${PYCP_GENERATED_DIR}
+    COMMAND ${BISON_EXECUTABLE}
+        -v -Wcounterexamples
+        --defines=${PYCP_GEN_PARSER_HPP}
+        -o ${PYCP_GEN_PARSER_CPP}
+        ${BISON_INPUT}
+    COMMAND ${CMAKE_COMMAND}
+        -DFILE=${PYCP_GEN_PARSER_CPP}
+        -DEXPECT=Pycpparse
+        -DLABEL=PycpParser.cpp
+        -P ${PYCP_GEN_CHECK_SCRIPT}
+    DEPENDS ${BISON_INPUT}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "[BISON][PycpParser] Generating parser"
+    VERBATIM
 )
 
-flex_target(
-    PycpPreprocessorLexer
-
-    ${PREPROCESSOR_FLEX_INPUT}
-
-    ${PYCP_GENERATED_DIR}/PycpPreprocessorLexer.cpp
-
-    DEFINES_FILE
-    ${PYCP_GENERATED_DIR}/PycpPreprocessorLexer.hpp
+# ---------------------------------------------------------------------
+# 2) 主词法器：PycpLexer.l -> PycpLexer.cpp / .hpp（依赖解析器头文件）
+# ---------------------------------------------------------------------
+add_custom_command(
+    OUTPUT
+        ${PYCP_GEN_LEXER_CPP}
+        ${PYCP_GEN_LEXER_HPP}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${PYCP_GENERATED_DIR}
+    COMMAND ${FLEX_EXECUTABLE}
+        --header-file=${PYCP_GEN_LEXER_HPP}
+        -o${PYCP_GEN_LEXER_CPP}
+        ${FLEX_INPUT}
+    COMMAND ${CMAKE_COMMAND}
+        -DFILE=${PYCP_GEN_LEXER_CPP}
+        -DEXPECT=Pycp_create_buffer
+        -DLABEL=PycpLexer.cpp
+        -P ${PYCP_GEN_CHECK_SCRIPT}
+    DEPENDS ${FLEX_INPUT} ${PYCP_GEN_PARSER_HPP}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "[FLEX][PycpLexer] Generating scanner"
+    VERBATIM
 )
 
-add_flex_bison_dependency(
-    PycpPreprocessorLexer
-    PycpPreprocessorParser
+# ---------------------------------------------------------------------
+# 3) 预处理指令解析器（独立于主解析器）：
+#    PycpPreprocessorParser.y -> .cpp / .hpp（+ .output 报告）
+# ---------------------------------------------------------------------
+add_custom_command(
+    OUTPUT
+        ${PYCP_GEN_PP_PARSER_CPP}
+        ${PYCP_GEN_PP_PARSER_HPP}
+        ${PYCP_GEN_PP_PARSER_REPORT}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${PYCP_GENERATED_DIR}
+    COMMAND ${BISON_EXECUTABLE}
+        -v -Wcounterexamples
+        --defines=${PYCP_GEN_PP_PARSER_HPP}
+        -o ${PYCP_GEN_PP_PARSER_CPP}
+        ${PREPROCESSOR_BISON_INPUT}
+    COMMAND ${CMAKE_COMMAND}
+        -DFILE=${PYCP_GEN_PP_PARSER_CPP}
+        -DEXPECT=Pycppparse
+        -DLABEL=PycpPreprocessorParser.cpp
+        -P ${PYCP_GEN_CHECK_SCRIPT}
+    DEPENDS ${PREPROCESSOR_BISON_INPUT} ${PYCP_GEN_PP_PARSER_EXTRA_DEPS}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "[BISON][PycpPreprocessorParser] Generating parser"
+    VERBATIM
+)
+
+# ---------------------------------------------------------------------
+# 4) 预处理指令词法器：
+#    PycpPreprocessorLexer.l -> .cpp / .hpp（依赖其解析器头文件）
+# ---------------------------------------------------------------------
+add_custom_command(
+    OUTPUT
+        ${PYCP_GEN_PP_LEXER_CPP}
+        ${PYCP_GEN_PP_LEXER_HPP}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${PYCP_GENERATED_DIR}
+    COMMAND ${FLEX_EXECUTABLE}
+        --header-file=${PYCP_GEN_PP_LEXER_HPP}
+        -o${PYCP_GEN_PP_LEXER_CPP}
+        ${PREPROCESSOR_FLEX_INPUT}
+    COMMAND ${CMAKE_COMMAND}
+        -DFILE=${PYCP_GEN_PP_LEXER_CPP}
+        -DEXPECT=Pycpp_create_buffer
+        -DLABEL=PycpPreprocessorLexer.cpp
+        -P ${PYCP_GEN_CHECK_SCRIPT}
+    DEPENDS
+        ${PREPROCESSOR_FLEX_INPUT}
+        ${PYCP_GEN_PP_PARSER_HPP}
+        ${PYCP_GEN_PP_PARSER_CPP}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "[FLEX][PycpPreprocessorLexer] Generating scanner"
+    VERBATIM
 )
 
 # =====================================================================
@@ -253,10 +334,23 @@ add_executable(pycp
     ${LOADER_SOURCES}
     ${LEXER_SOURCES}
     ${PREPROCESSOR_SOURCES}
-    ${BISON_PycpParser_OUTPUTS}
-    ${FLEX_PycpLexer_OUTPUTS}
-    ${BISON_PycpPreprocessorParser_OUTPUTS}
-    ${FLEX_PycpPreprocessorLexer_OUTPUTS}
+
+    # Flex / Bison 生成物（见上方"生成解析器与词法分析器"一节）
+    ${PYCP_GEN_PARSER_CPP}
+    ${PYCP_GEN_PARSER_HPP}
+    ${PYCP_GEN_LEXER_CPP}
+    ${PYCP_GEN_LEXER_HPP}
+    ${PYCP_GEN_PP_PARSER_CPP}
+    ${PYCP_GEN_PP_PARSER_HPP}
+    ${PYCP_GEN_PP_LEXER_CPP}
+    ${PYCP_GEN_PP_LEXER_HPP}
+)
+
+# PycpParser.y 顶部 #include "PycpLexer.hpp"，该头文件本身也是生成物。
+# 显式声明这一编译单元的依赖，避免并行构建下"编译先于生成"
+# （Ninja 下会退化成 missing and no known rule to make it）。
+set_source_files_properties(${PYCP_GEN_PARSER_CPP} PROPERTIES
+    OBJECT_DEPENDS ${PYCP_GEN_LEXER_HPP}
 )
 
 # =====================================================================

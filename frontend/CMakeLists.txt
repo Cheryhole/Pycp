@@ -95,80 +95,135 @@ set(FLEX_INPUT
 )
 
 # =====================================================================
-# 生成解析器
+# 生成解析器与词法分析器（Flex / Bison）
+# ---------------------------------------------------------------------
+# 与顶层 CMakeLists.txt 保持同一套写法：手写 add_custom_command，不用
+# bison_target / flex_target / add_flex_bison_dependency。
+# 原因：Windows 下的 win_flex / win_bison（winflexbison）并发不安全，它用
+# _tempnam + fopen 申请临时文件，并行运行的多个实例会共用同一临时文件互相
+# 覆盖，产出"未展开的 m4 骨架"（残留 M4_YY_PREFIX / m4_ifdef），编译时表现
+# 为数百行 '#endif without #if' / "stray '#'" 等令人困惑的错误。
+# 上游已知缺陷：lexxmark/winflexbison#86、westes/flex#580。
+# 因此把 4 步生成串成一条依赖链（仅 WIN32；GNU flex/bison 用 mkstemp，
+# 并发安全，保持并行），并在每条命令末尾执行生成物自检。
 # =====================================================================
 message(STATUS "binary : ${CMAKE_CURRENT_BINARY_DIR}")
 
-bison_target(
-    PycpParser
+# 生成产物（显式列出，便于建立依赖链与自检）
+set(PYCP_GEN_PARSER_CPP    ${CMAKE_CURRENT_BINARY_DIR}/PycpParser.cpp)
+set(PYCP_GEN_PARSER_HPP    ${CMAKE_CURRENT_BINARY_DIR}/PycpParser.hpp)
+set(PYCP_GEN_PARSER_REPORT ${CMAKE_CURRENT_BINARY_DIR}/PycpParser.output)
 
-    ${BISON_INPUT}
+set(PYCP_GEN_LEXER_CPP     ${CMAKE_CURRENT_BINARY_DIR}/PycpLexer.cpp)
+set(PYCP_GEN_LEXER_HPP     ${CMAKE_CURRENT_BINARY_DIR}/PycpLexer.hpp)
 
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpParser.cpp
+set(PYCP_GEN_PP_PARSER_CPP    ${CMAKE_CURRENT_BINARY_DIR}/PycpPreprocessorParser.cpp)
+set(PYCP_GEN_PP_PARSER_HPP    ${CMAKE_CURRENT_BINARY_DIR}/PycpPreprocessorParser.hpp)
+set(PYCP_GEN_PP_PARSER_REPORT ${CMAKE_CURRENT_BINARY_DIR}/PycpPreprocessorParser.output)
 
-    DEFINES_FILE
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpParser.hpp
+set(PYCP_GEN_PP_LEXER_CPP     ${CMAKE_CURRENT_BINARY_DIR}/PycpPreprocessorLexer.cpp)
+set(PYCP_GEN_PP_LEXER_HPP     ${CMAKE_CURRENT_BINARY_DIR}/PycpPreprocessorLexer.hpp)
 
-    COMPILE_FLAGS
-    "-v -Wcounterexamples"
+set(PYCP_GEN_CHECK_SCRIPT
+    ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/PycpCheckGenerated.cmake)
+
+if(WIN32)
+    set(PYCP_GEN_PP_PARSER_EXTRA_DEPS
+        ${PYCP_GEN_LEXER_CPP} ${PYCP_GEN_LEXER_HPP})
+else()
+    set(PYCP_GEN_PP_PARSER_EXTRA_DEPS)
+endif()
+
+# 1) 主解析器：PycpParser.y -> PycpParser.cpp / .hpp（+ .output 报告）
+add_custom_command(
+    OUTPUT
+        ${PYCP_GEN_PARSER_CPP}
+        ${PYCP_GEN_PARSER_HPP}
+        ${PYCP_GEN_PARSER_REPORT}
+    # bison / flex 不会自建输出目录，故每条生成命令自带建目录步骤。
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND ${BISON_EXECUTABLE}
+        -v -Wcounterexamples
+        --defines=${PYCP_GEN_PARSER_HPP}
+        -o ${PYCP_GEN_PARSER_CPP}
+        ${BISON_INPUT}
+    COMMAND ${CMAKE_COMMAND}
+        -DFILE=${PYCP_GEN_PARSER_CPP}
+        -DEXPECT=Pycpparse
+        -DLABEL=PycpParser.cpp
+        -P ${PYCP_GEN_CHECK_SCRIPT}
+    DEPENDS ${BISON_INPUT}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "[BISON][PycpParser] Generating parser"
+    VERBATIM
 )
 
-# =====================================================================
-# 生成词法分析器
-# =====================================================================
-flex_target(
-    PycpLexer
-
-    ${FLEX_INPUT}
-
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpLexer.cpp
-
-    DEFINES_FILE
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpLexer.hpp
+# 2) 主词法器：PycpLexer.l -> PycpLexer.cpp / .hpp（依赖解析器头文件）
+add_custom_command(
+    OUTPUT
+        ${PYCP_GEN_LEXER_CPP}
+        ${PYCP_GEN_LEXER_HPP}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND ${FLEX_EXECUTABLE}
+        --header-file=${PYCP_GEN_LEXER_HPP}
+        -o${PYCP_GEN_LEXER_CPP}
+        ${FLEX_INPUT}
+    COMMAND ${CMAKE_COMMAND}
+        -DFILE=${PYCP_GEN_LEXER_CPP}
+        -DEXPECT=Pycp_create_buffer
+        -DLABEL=PycpLexer.cpp
+        -P ${PYCP_GEN_CHECK_SCRIPT}
+    DEPENDS ${FLEX_INPUT} ${PYCP_GEN_PARSER_HPP}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "[FLEX][PycpLexer] Generating scanner"
+    VERBATIM
 )
 
-# =====================================================================
-# 词法分析器依赖解析器
-# =====================================================================
-add_flex_bison_dependency(
-    PycpLexer
-    PycpParser
+# 3) 预处理指令解析器（独立于主解析器）
+add_custom_command(
+    OUTPUT
+        ${PYCP_GEN_PP_PARSER_CPP}
+        ${PYCP_GEN_PP_PARSER_HPP}
+        ${PYCP_GEN_PP_PARSER_REPORT}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND ${BISON_EXECUTABLE}
+        -v -Wcounterexamples
+        --defines=${PYCP_GEN_PP_PARSER_HPP}
+        -o ${PYCP_GEN_PP_PARSER_CPP}
+        ${PREPROCESSOR_BISON_INPUT}
+    COMMAND ${CMAKE_COMMAND}
+        -DFILE=${PYCP_GEN_PP_PARSER_CPP}
+        -DEXPECT=Pycppparse
+        -DLABEL=PycpPreprocessorParser.cpp
+        -P ${PYCP_GEN_CHECK_SCRIPT}
+    DEPENDS ${PREPROCESSOR_BISON_INPUT} ${PYCP_GEN_PP_PARSER_EXTRA_DEPS}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "[BISON][PycpPreprocessorParser] Generating parser"
+    VERBATIM
 )
 
-# =====================================================================
-# 预处理指令解析器（Flex/Bison，独立于主解析器）
-# ---------------------------------------------------------------------
-# 生成 Pycpp* 解析器/词法器，由 PREPROCESSOR_SOURCES 驱动（接口文件）。
-# 与顶层 CMakeLists 对齐，保证独立构建入口可链接。
-# =====================================================================
-bison_target(
-    PycpPreprocessorParser
-
-    ${PREPROCESSOR_BISON_INPUT}
-
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpPreprocessorParser.cpp
-
-    DEFINES_FILE
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpPreprocessorParser.hpp
-
-    COMPILE_FLAGS
-    "-v -Wcounterexamples"
-)
-
-flex_target(
-    PycpPreprocessorLexer
-
-    ${PREPROCESSOR_FLEX_INPUT}
-
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpPreprocessorLexer.cpp
-
-    DEFINES_FILE
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpPreprocessorLexer.hpp
-)
-
-add_flex_bison_dependency(
-    PycpPreprocessorLexer
-    PycpPreprocessorParser
+# 4) 预处理指令词法器（依赖其解析器头文件）
+add_custom_command(
+    OUTPUT
+        ${PYCP_GEN_PP_LEXER_CPP}
+        ${PYCP_GEN_PP_LEXER_HPP}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND ${FLEX_EXECUTABLE}
+        --header-file=${PYCP_GEN_PP_LEXER_HPP}
+        -o${PYCP_GEN_PP_LEXER_CPP}
+        ${PREPROCESSOR_FLEX_INPUT}
+    COMMAND ${CMAKE_COMMAND}
+        -DFILE=${PYCP_GEN_PP_LEXER_CPP}
+        -DEXPECT=Pycpp_create_buffer
+        -DLABEL=PycpPreprocessorLexer.cpp
+        -P ${PYCP_GEN_CHECK_SCRIPT}
+    DEPENDS
+        ${PREPROCESSOR_FLEX_INPUT}
+        ${PYCP_GEN_PP_PARSER_HPP}
+        ${PYCP_GEN_PP_PARSER_CPP}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "[FLEX][PycpPreprocessorLexer] Generating scanner"
+    VERBATIM
 )
 
 # =====================================================================
@@ -192,10 +247,22 @@ add_executable(pycp
     ${LOADER_SOURCES}
     ${AOT_SOURCES}
     ${PREPROCESSOR_SOURCES}
-    ${BISON_PycpParser_OUTPUTS}
-    ${FLEX_PycpLexer_OUTPUTS}
-    ${BISON_PycpPreprocessorParser_OUTPUTS}
-    ${FLEX_PycpPreprocessorLexer_OUTPUTS}
+
+    # Flex / Bison 生成物（见上方"生成解析器与词法分析器"一节）
+    ${PYCP_GEN_PARSER_CPP}
+    ${PYCP_GEN_PARSER_HPP}
+    ${PYCP_GEN_LEXER_CPP}
+    ${PYCP_GEN_LEXER_HPP}
+    ${PYCP_GEN_PP_PARSER_CPP}
+    ${PYCP_GEN_PP_PARSER_HPP}
+    ${PYCP_GEN_PP_LEXER_CPP}
+    ${PYCP_GEN_PP_LEXER_HPP}
+)
+
+# PycpParser.cpp（生成物）会 #include "PycpLexer.hpp"（PycpParser.y 顶部），
+# 而该头文件也是生成物：显式声明依赖，避免并行构建下"编译先于生成"。
+set_source_files_properties(${PYCP_GEN_PARSER_CPP} PROPERTIES
+    OBJECT_DEPENDS ${PYCP_GEN_LEXER_HPP}
 )
 
 # =====================================================================
@@ -278,19 +345,28 @@ add_test(
 add_custom_target(show-generated
     COMMAND ${CMAKE_COMMAND} -E echo ""
     COMMAND ${CMAKE_COMMAND} -E echo "========== Generated Files =========="
-    COMMAND ${CMAKE_COMMAND} -E echo "Parser : ${BISON_PycpParser_OUTPUT_SOURCE}"
-    COMMAND ${CMAKE_COMMAND} -E echo "Header : ${BISON_PycpParser_OUTPUT_HEADER}"
-    COMMAND ${CMAKE_COMMAND} -E echo "Lexer  : ${FLEX_PycpLexer_OUTPUTS}"
+    COMMAND ${CMAKE_COMMAND} -E echo "Parser : ${PYCP_GEN_PARSER_CPP}"
+    COMMAND ${CMAKE_COMMAND} -E echo "Header : ${PYCP_GEN_PARSER_HPP}"
+    COMMAND ${CMAKE_COMMAND} -E echo "Lexer  : ${PYCP_GEN_LEXER_CPP}"
+    COMMAND ${CMAKE_COMMAND} -E echo "PPParser : ${PYCP_GEN_PP_PARSER_CPP}"
+    COMMAND ${CMAKE_COMMAND} -E echo "PPLexer  : ${PYCP_GEN_PP_LEXER_CPP}"
     COMMAND ${CMAKE_COMMAND} -E echo "===================================="
 )
 
 add_custom_target(clean-generated
     COMMAND ${CMAKE_COMMAND} -E remove
 
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpParser.cpp
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpParser.hpp
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpParser.output
+    ${PYCP_GEN_PARSER_CPP}
+    ${PYCP_GEN_PARSER_HPP}
+    ${PYCP_GEN_PARSER_REPORT}
 
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpLexer.cpp
-    ${CMAKE_CURRENT_BINARY_DIR}/PycpLexer.hpp
+    ${PYCP_GEN_LEXER_CPP}
+    ${PYCP_GEN_LEXER_HPP}
+
+    ${PYCP_GEN_PP_PARSER_CPP}
+    ${PYCP_GEN_PP_PARSER_HPP}
+    ${PYCP_GEN_PP_PARSER_REPORT}
+
+    ${PYCP_GEN_PP_LEXER_CPP}
+    ${PYCP_GEN_PP_LEXER_HPP}
 )
