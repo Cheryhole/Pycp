@@ -333,8 +333,7 @@ void SetModuleSearchDir(const std::string& dir) {
 }
 
 // =============================================================
-// 模块导入（类似 CPython 的 PyImport_ImportModule）
-// 统一入口：进程级缓存 → ①进程内符号 → ②exe 目录/stdlib → ③cwd 与脚本目录。
+//  ①进程内符号 → ②exe 目录/stdlib → ③cwd 与脚本目录。
 // 全部未命中返回 nullptr（out_source 亦为空），调用方回退到自身机制
 // （如 VM::load_module 的 registry 路径）并抛出 ImportError。
 // =============================================================

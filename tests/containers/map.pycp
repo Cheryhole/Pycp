@@ -2,7 +2,7 @@ import io
 import Pycp
 
 // ===== Map 基本功能 =====
-// 空构造（不再支持 Pycp.Map(other) 转换）
+// 空构造（Pycp.Map(x) 转换见文末）
 m = Pycp.Map()
 io.print(m)
 io.print(m.length())
@@ -221,5 +221,59 @@ func first_key(m) {
 	return m[1]
 }
 io.print(first_key({1: "a"}))               // a
+
+// ===== keys() 方法 =====
+km = {"x": 1, "y": 2}
+io.print(km.keys().length())        // 2
+io.print(Pycp.Boolean(km.keys().length() == km.length()))
+
+// ===== Pycp.Map(x) 转换 =====
+// 1) Map -> 独立浅拷贝（互不影响）
+cp = Pycp.Map(km)
+io.print(cp.length())               // 2
+io.print(cp["x"])                   // 1
+cp["z"] = 3
+io.print(cp.length())               // 3
+io.print(km.length())               // 2（原映射不受影响）
+
+// 2) 二元组序列 -> Map
+pm = Pycp.Map([["a", 1], ["b", 2]])
+io.print(pm.length())               // 2
+io.print(pm["a"] + pm["b"])         // 3
+
+// 3) __map__ 视图 -> 独立快照（不再同步原对象）
+class Bag {
+	v = 7
+}
+bg = Bag()
+snap = Pycp.Map(bg.__map__())
+io.print(snap["v"])                 // 7
+snap["v"] = 100
+io.print(bg.v)                      // 7（快照独立，不影响实例）
+
+// 4) 自定义类实现 keys() + __get_item__ 即可转换
+class Store {
+	data = None
+	func __initialize__(self) {
+		self.data = Pycp.Map()
+		self.data["k1"] = 10
+		self.data["k2"] = 20
+	}
+	func keys(self) {
+		return self.data.keys()
+	}
+	func __get_item__(self, key) {
+		return self.data[key]
+	}
+}
+st = Store()
+sm = Pycp.Map(st)
+io.print(sm.length())               // 2
+io.print(sm["k1"])                  // 10
+io.print(sm["k2"])                  // 20
+
+// keys 应出现在 introspect 列表中
+io.print(Pycp.introspect(Pycp.Map))
+io.print(km.__introspect__())
 
 io.print("done")

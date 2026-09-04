@@ -5,7 +5,14 @@
 // Pycp Map 对象（Map）
 //
 // 对应 Python 的 dict 对象，行为尽可能对齐 Python dict：
-//   - Pycp.Map() 构造空映射；Pycp.Map(other) 经 __map__ 转换
+//   - Pycp.Map() 构造空映射
+//   - Pycp.Map(other) 转换（对齐 Python dict(x)）：
+//       * other 为 Map（含 __map__ 视图）-> 独立浅拷贝/材料化
+//       * other 提供 keys() 与 __get_item__(k) -> 按键取值构造
+//         （自定义类同样适用）
+//       * other 为二元组 List（[[k, v], ...]）-> 逐对构造
+//       * 其余类型 -> TypeError
+//   - keys() 返回含全部键的 List（视图模式返回成员名）
 //   - 下标设置 self[key] = value（__set_item__）
 //   - 下标获取 self[key]（__get_item__）；键不存在抛 KeyError
 //   - length() 方法获取键值对个数
@@ -58,8 +65,9 @@ class Map : public Object {
 private:
 	// 键值对表：Map 持有键与值的引用。
 	std::unordered_map<Object*, Object*, MapKeyHash, MapKeyEqual> items_;
-	// length 方法对象（懒创建，析构 Decref）。
+	// length / keys 方法对象（懒创建，析构 Decref）。
 	Function* length_fn_ = nullptr;
+	Function* keys_fn_ = nullptr;
 
 	// 视图模式：当 is_view_ 为真，本 Map 为某对象 owner_ 的成员字典视图
 	// （类似 Python 的 __dict__）。读写/删除操作转发到 owner_ 的属性系统
@@ -81,6 +89,16 @@ public:
 	// 元素个数（视图模式返回 owner 合并成员数）。
 	std::size_t size() const;
 
+	// 键列表（返回 Owned List，refcount=1）：
+	//   - 普通 Map：items_ 的全部键（顺序为哈希表序）
+	//   - 视图模式：owner_ 的成员名（String），顺序与 member_pairs() 一致
+	List* keys() const;
+
+	// 浅拷贝（返回 Owned Map，refcount=1）：
+	//   - 普通 Map：复制 items_ 的键值对（键/值各自 Incref）
+	//   - 视图模式：按 owner_ 的成员材料化为独立 Map（不再同步 owner）
+	Map* copy_shallow() const;
+
 	// 魔术方法。
 	Object* __get_item__(Object* key) override;
 	Object* __set_item__(Object* key, Object* value) override;
@@ -95,9 +113,10 @@ public:
 	void foreach_ref(const std::function<void(Object*)>& visit) override;
 };
 
-// Map 实例方法 length 的原生实现函数访问器（PycpNativeFunction 签名），供
-// stdlib/Pycp 注册进 Map 类型类 BuiltinTypeClass 的 methods_。argv[0] 为 self。
+// Map 实例方法 length / keys 的原生实现函数访问器（PycpNativeFunction 签名），
+// 供 stdlib/Pycp 注册进 Map 类型类 BuiltinTypeClass 的 methods_。argv[0] 为 self。
 PycpNativeFunction Map_length_fn();
+PycpNativeFunction Map_keys_fn();
 
 } // namespace Pycp
 

@@ -60,16 +60,120 @@ Object* _builtin_list_ctor(Object*, Object** argv, std::size_t argc) {
 	return r;
 }
 
-// Map()：Map 类型构造器。
+// Map(x) 的 keys 协议（对齐 Python dict(mapping)）：
+// 对象同时提供 keys()（返回键 List）与 __get_item__(k) 时，遍历 keys()
+// 的每个键、经下标取值后写入新 Map；自定义类定义这两个方法同样生效。
+// 返回 nullptr 表示本协议不适用（无 keys 方法，交由下一协议尝试）；
+// 命中协议但用法错误（keys 不可调用 / 返回值非 List / 缺 __get_item__）
+// 直接抛 TypeError，不静默降级，避免掩盖用户代码错误。
+static Object* _map_from_keys_protocol(Object* src) {
+	Object* keys_fn = nullptr;
+	try {
+		keys_fn = GetAttr(src, "keys");
+	} catch (const AttributeError&) {
+		return nullptr; // 无 keys：交给二元组协议
+	}
+	if (keys_fn == nullptr) return nullptr;
+	if (!keys_fn->is_type("Function")) {
+		Decref(keys_fn);
+		throw TypeError("Map() argument 'keys' is not callable.");
+	}
+	// keys 无参：BoundMethod 自动注入 self，argv 传 nullptr 安全。
+	Object* kl = Call(keys_fn, nullptr, 0); // Owned
+	Decref(keys_fn);
+	if (kl == nullptr || !kl->is_type("List")) {
+		if (kl != nullptr) Decref(kl);
+		throw TypeError("Map() argument keys() must return a List.");
+	}
+	// __get_item__ 探测（实际取值走 GetItem，与 x[k] 语义一致）。
+	Object* getitem = nullptr;
+	try {
+		getitem = GetAttr(src, "__get_item__");
+	} catch (const AttributeError&) {
+		getitem = nullptr;
+	}
+	bool has_item = (getitem != nullptr && getitem->is_type("Function"));
+	if (getitem != nullptr) Decref(getitem); // 仅探测，用完释放
+	if (!has_item) {
+		Decref(kl);
+		throw TypeError("Map() argument must support keys() and __get_item__().");
+	}
+	List* lst = static_cast<List*>(kl);
+	Map* m = Map::New();
+	try {
+		for (std::size_t i = 0; i < lst->size(); ++i) {
+			Object* k = lst->at(i);
+			if (k == nullptr) {
+				throw TypeError("Map() got a null key from keys().");
+			}
+			// GetItem 返回 Borrowed（与 VM 的 GET_ITEM 一致），写入时由
+			// __set_item__ 负责 Incref，此处不额外 Decref。
+			Object* v = GetItem(src, k);
+			if (v == nullptr) {
+				throw TypeError("Map() got a null value from __get_item__().");
+			}
+			Object* r = m->__set_item__(k, v);
+			if (r != nullptr) Decref(r);
+		}
+	} catch (...) {
+		// 异常路径：释放已构造的 Map 与键 List 后原样抛出。
+		Decref(m);
+		Decref(kl);
+		throw;
+	}
+	Decref(kl);
+	return m;
+}
+
+// Map(x) 的二元组协议（对齐 Python dict(pairs)）：
+// 入参为 List 且每个元素为 2 元 List（[k, v]）时逐对写入新 Map；
+// 元素形态不符直接抛 TypeError。非 List 入参返回 nullptr 表示协议不适用。
+static Object* _map_from_pairs(Object* src) {
+	if (!src->is_type("List")) return nullptr;
+	List* lst = static_cast<List*>(src);
+	Map* m = Map::New();
+	for (std::size_t i = 0; i < lst->size(); ++i) {
+		Object* pair = lst->at(i);
+		if (pair == nullptr || !pair->is_type("List") ||
+		    static_cast<List*>(pair)->size() != 2) {
+			Decref(m);
+			throw TypeError("Map() expects a sequence of 2-element lists.");
+		}
+		Object* k = static_cast<List*>(pair)->at(0);
+		Object* v = static_cast<List*>(pair)->at(1);
+		if (k == nullptr || v == nullptr) {
+			Decref(m);
+			throw TypeError("Map() pair contains a null key or value.");
+		}
+		Object* r = m->__set_item__(k, v);
+		if (r != nullptr) Decref(r);
+	}
+	return m;
+}
+
+// Map() / Map(x)：Map 类型构造器。
 //   - 无参数：返回空 Map。
-//   - 1 参数：调用对象的 __map__ 转换（Map 幂等；List 从二元组构造）。
-Object* _builtin_map_ctor(Object*, [[maybe_unused]] Object** argv, std::size_t argc) {
+//   - 1 参数：转换（对齐 Python dict(x)），按序尝试
+//       * Map（含 __map__ 视图）-> 独立浅拷贝（视图材料化为独立快照）
+//       * 提供 keys() + __get_item__(k) 的对象 -> 逐键取值构造
+//       * 二元组 List（[[k, v], ...]）-> 逐对构造
+//       * 其余类型 -> TypeError
+Object* _builtin_map_ctor(Object*, Object** argv, std::size_t argc) {
 	if (argc == 0) {
 		// 空构造：调用方应按约定提供非空 argv 数组（元素为 null）。
 		return Map::New();
 	}
-	// 不再支持 Pycp.Map(other) 转换：__map__ 已改为成员视图语义。
-	throw TypeError("Map() expects 0 arguments (use Pycp.Map()).");
+	if (argc != 1) {
+		throw TypeError("Map() expects 0 or 1 argument.");
+	}
+	Object* src = argv[0];
+	if (src == nullptr) throw TypeError("Map() argument is null.");
+	if (Map* m = dynamic_cast<Map*>(src)) {
+		return m->copy_shallow();
+	}
+	if (Object* r = _map_from_keys_protocol(src)) return r;
+	if (Object* r = _map_from_pairs(src)) return r;
+	throw TypeError("cannot convert '" + src->type_name() + "' to Map.");
 }
 
 // introspect(obj)：返回包含 obj 所有成员名称（含方法）的 List。
@@ -242,8 +346,9 @@ Module* make_pycp_module() {
 		"__get_item__", "__set_item__",
 	});
 
-	// Map 的公开方法（真实实例方法）：length。
+	// Map 的公开方法（真实实例方法）：length / keys。
 	map_cls->add_method("length", New<Function>("length", Map_length_fn()));
+	map_cls->add_method("keys",   New<Function>("keys",   Map_keys_fn()));
 	// Map 魔术方法（Map 本身不可哈希，故不注册 __hash__）。
 	add_magic_methods(map_cls, {
 		"__map__", "__boolean__", "__string__",

@@ -23,10 +23,20 @@ Object* _map_length(Object*, Object** argv, std::size_t argc) {
 	return Integer::FromLong(static_cast<long long>(m->size()));
 }
 
+// keys 方法的原生实现：返回含全部键的 List（视图模式返回成员名）。
+Object* _map_keys(Object*, Object** argv, std::size_t argc) {
+	Map* m = static_cast<Map*>(argv[0]);
+	if (argc != 1) {
+		throw TypeError("keys() expects no arguments.");
+	}
+	return m->keys();
+}
+
 } // anonymous namespace
 
 // ---- 实例方法函数访问器：暴露给 stdlib/Pycp 注册 Map 类型类方法 ----
 PycpNativeFunction Map_length_fn() { return _map_length; }
+PycpNativeFunction Map_keys_fn() { return _map_keys; }
 
 Map* Map::New() {
 	return Pycp::New<Map>();
@@ -45,6 +55,8 @@ Map::Map() : Object("Map") {}
 Map::~Map() {
 	if (length_fn_ != nullptr) Decref(length_fn_);
 	length_fn_ = nullptr;
+	if (keys_fn_ != nullptr) Decref(keys_fn_);
+	keys_fn_ = nullptr;
 	for (auto& kv : items_) {
 		if (kv.first != nullptr) Decref(kv.first);
 		if (kv.second != nullptr) Decref(kv.second);
@@ -130,6 +142,57 @@ Object* Map::__delete_item__(Object* key) {
 Object* Map::__map__() {
 	// 返回成员视图（含属性与方法名），对齐 Object/Instance 的语义。
 	return Map::NewView(this);
+}
+
+List* Map::keys() const {
+	List* out = List::New();
+	if (is_view_ && owner_ != nullptr) {
+		// 视图：键为 owner 的成员名（与 __string__ / size() 同源、同序）。
+		for (const auto& kv : owner_->member_pairs()) {
+			// append 内部 Incref，故临时 String 用完需 Decref。
+			Object* s = String::FromCString(kv.first.c_str());
+			out->append(s);
+			Decref(s);
+		}
+	} else {
+		for (const auto& kv : items_) {
+			if (kv.first != nullptr) out->append(kv.first);
+		}
+	}
+	return out;
+}
+
+Map* Map::copy_shallow() const {
+	Map* out = Map::New();
+	if (is_view_ && owner_ != nullptr) {
+		// 视图材料化：按 owner 成员逐个写入独立 Map，此后不再与 owner 同步。
+		for (const auto& kv : owner_->member_pairs()) {
+			Object* k = String::FromCString(kv.first.c_str()); // Owned
+			Object* v = kv.second;
+			if (v == nullptr) {
+				// 方法名项：经 __get_attribute__ 取真实可调用对象后按借用
+				// 处理（Incref/Decref 包一层，与 __string__ 保持一致，避免
+				// 对魔术方法缓存这类 Borrowed 值误减引用计数）。
+				v = owner_->__get_attribute__(kv.first);
+			}
+			if (v == nullptr) {
+				Decref(k);
+				continue;
+			}
+			Incref(v);
+			Object* r = out->__set_item__(k, v);
+			if (r != nullptr) Decref(r); // __set_item__ 返回 Owned None
+			Decref(v);
+			Decref(k);
+		}
+	} else {
+		for (const auto& kv : items_) {
+			if (kv.first == nullptr || kv.second == nullptr) continue;
+			Object* r = out->__set_item__(kv.first, kv.second);
+			if (r != nullptr) Decref(r);
+		}
+	}
+	return out;
 }
 
 std::size_t Map::size() const {
@@ -226,6 +289,12 @@ Object* Map::__get_attribute__(const std::string& name) {
 		}
 		return length_fn_;
 	}
+	if (name == "keys") {
+		if (keys_fn_ == nullptr) {
+			keys_fn_ = Pycp::New<Function>("keys", _map_keys);
+		}
+		return keys_fn_;
+	}
 	// 3) 魔术方法：回退到通用分派（可调用 C++ 虚方法）。
 	if (Object* magic = GetMagicMethodFunction(name)) {
 		return magic;
@@ -237,7 +306,7 @@ Object* Map::__introspect__() {
 	// 先收集基类 members_ 中的 key，再添加 map 特有的方法名和魔术方法名。
 	List* lst = static_cast<List*>(Object::__introspect__());
 	std::vector<std::string> extra = {
-		"length",
+		"length", "keys",
 		"__map__", "__boolean__", "__string__",
 		"__get_item__", "__set_item__", "__delete_item__",
 		"__get_attribute__", "__set_attribute__", "__introspect__",
@@ -259,6 +328,7 @@ Object* Map::__introspect__() {
 
 void Map::foreach_ref(const std::function<void(Object*)>& visit) {
 	if (length_fn_ != nullptr) visit(length_fn_);
+	if (keys_fn_ != nullptr) visit(keys_fn_);
 	if (is_view_ && owner_ != nullptr) visit(owner_);
 	for (auto& kv : items_) {
 		if (kv.first != nullptr) visit(kv.first);

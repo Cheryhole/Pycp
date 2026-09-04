@@ -1,0 +1,11 @@
+import io
+import Pycp
+
+// ===== Pycp.Map(x) 不可转换时应报错 =====
+// Pycp 无 try/except，故每个错误用例单独成文件、写在末行：
+// 期望进程以 TypeError 非零退出，其后语句不会执行。
+
+// 标量类型既无 keys() 也非二元组序列 -> TypeError
+io.print(Pycp.Map(42))
+
+io.print("unreachable")
