@@ -6,13 +6,13 @@
 # replace B with 1
 
 import io
-import Pycp
+import pycp
 
 pi = PI
-io.stdout.write(Pycp.String(pi) + "\n")
+io.stdout.write(pycp.String(pi) + "\n")
 
 e = E
-io.stdout.write(Pycp.String(e) + "\n")
+io.stdout.write(pycp.String(e) + "\n")
 
 // APPLE 中的 PI 子串不应替换
 apple = "APPLE"
@@ -24,10 +24,10 @@ io.stdout.write(s + "\n")
 
 // 行内注释中的 PI 不应替换 // PI
 r = 100
-io.stdout.write(Pycp.String(r) + "\n")
+io.stdout.write(pycp.String(r) + "\n")
 
 // 递归展开：A -> B -> 1
 a = A
-io.stdout.write(Pycp.String(a) + "\n")
+io.stdout.write(pycp.String(a) + "\n")
 
 io.stdout.write(MOD_A + "\n")

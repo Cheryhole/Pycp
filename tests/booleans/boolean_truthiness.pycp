@@ -1,6 +1,6 @@
 // __boolean__ 魔术方法与 if 隐式 Boolean 转换验证
 import io
-import Pycp
+import pycp
 
 // 字符串 truthiness
 if "" {
@@ -67,45 +67,45 @@ if b {
     io.stdout.write("FAIL custom class is false\n")
 }
 
-// Pycp.Boolean 隐式转换（对齐 __boolean__）
-if Pycp.Boolean("") {
+// pycp.Boolean 隐式转换（对齐 __boolean__）
+if pycp.Boolean("") {
     io.stdout.write("FAIL Boolean empty string is true\n")
 } else {
     io.stdout.write("boolean_empty_str_false_ok\n")
 }
 
-if Pycp.Boolean("x") {
+if pycp.Boolean("x") {
     io.stdout.write("boolean_nonempty_str_true_ok\n")
 } else {
     io.stdout.write("FAIL Boolean nonempty string is false\n")
 }
 
-if Pycp.Boolean(0) {
+if pycp.Boolean(0) {
     io.stdout.write("FAIL Boolean 0 is true\n")
 } else {
     io.stdout.write("boolean_zero_false_ok\n")
 }
 
-if Pycp.Boolean(7) {
+if pycp.Boolean(7) {
     io.stdout.write("boolean_nonzero_true_ok\n")
 } else {
     io.stdout.write("FAIL Boolean 7 is false\n")
 }
 
-if Pycp.Boolean([]) {
+if pycp.Boolean([]) {
     io.stdout.write("FAIL Boolean empty list is true\n")
 } else {
     io.stdout.write("boolean_empty_list_false_ok\n")
 }
 
-if Pycp.Boolean([1]) {
+if pycp.Boolean([1]) {
     io.stdout.write("boolean_nonempty_list_true_ok\n")
 } else {
     io.stdout.write("FAIL Boolean nonempty list is false\n")
 }
 
-// Pycp.Boolean(None) 必须返回 False
-none_bool = Pycp.Boolean(None)
+// pycp.Boolean(None) 必须返回 False
+none_bool = pycp.Boolean(None)
 if none_bool {
     io.stdout.write("FAIL Boolean(None) is true\n")
 } else {
@@ -113,7 +113,7 @@ if none_bool {
 }
 
 // __boolean__ 作为魔术方法可被属性访问（introspect 可见，人工观察输出）
-io.stdout.write(Pycp.introspect("abc"))
+io.stdout.write(pycp.introspect("abc"))
 io.stdout.write("\n")
 
 io.stdout.write("IMPORT TEST PASS\n")

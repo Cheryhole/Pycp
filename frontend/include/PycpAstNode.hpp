@@ -433,7 +433,7 @@ struct IndexExpression : Expression {
 // ============================================================
 // ClassExpression 节点（匿名类：class [inherits parent]{...}）
 // ============================================================
-// 匿名类作为表达式（如 X = class inherits Pycp.Object{...}）。
+// 匿名类作为表达式（如 X = class inherits pycp.Object{...}）。
 // 字段与 ClassDefinition 一致，name 恒为 nullptr（内部名由 Codegen 填）。
 struct ClassExpression : Expression {
 	std::string* parent_name;

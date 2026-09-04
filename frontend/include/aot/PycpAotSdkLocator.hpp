@@ -13,7 +13,7 @@
 //   <root>/include/*.h*       AOT / 原生扩展所需的后端头文件
 //   <root>/lib/libPycpRuntime.{a,so}  运行时库
 //   <root>/lib/libPycpExt_<name>.a    标准库扩展的静态库（--static 用）
-//   <root>/stdlib/*.so        标准库原生扩展（io / Pycp / classtools）
+//   <root>/stdlib/*.so        标准库原生扩展（io / pycp / classtools）
 //   <root>/{lib,}PycpRuntime.dll  Windows 额外一份（加载 DLL 不搜 lib/）；
 //                             文件名随编译器而异：MinGW 带 lib 前缀，MSVC 不带
 //
@@ -49,7 +49,7 @@ struct SdkInfo {
 	// 这些产物非必需（SDK 可能只构建了 shared 运行时），缺失时仅置空、
 	// 不影响 valid —— 与 root_dll 一致的处理：只有当用户实际使用 --static
 	// 时才由 ProjectSpec::Validate 报错，避免给 shared 用户制造噪音。
-	std::vector<std::string> builtin_modules;    // {"io", "Pycp", "classtools"}
+	std::vector<std::string> builtin_modules;    // {"io", "pycp", "classtools"}
 	std::vector<std::string> stdlib_static_libs; // libPycpExt_*.a 绝对路径
 	std::string              static_runtime;     // libPycpRuntime.a / PycpRuntime.lib 绝对路径
 

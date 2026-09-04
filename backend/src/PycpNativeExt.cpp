@@ -24,7 +24,7 @@ namespace Pycp {
 
 // 原生扩展入口符号约定：每个动态库按其模块名导出符号
 //   extern "C" Module* PycpModule_<name>();
-// （如 io 库导出 PycpModule_io，Pycp 库导出 PycpModule_Pycp）。运行时
+// （如 io 库导出 PycpModule_io，pycp 库导出 PycpModule_pycp）。运行时
 // 按导入名 name 拼出 "PycpModule_<name>" 解析，与 AOT 子模块符号命名统一。
 namespace {
 // 模块初始化入口函数指针类型。

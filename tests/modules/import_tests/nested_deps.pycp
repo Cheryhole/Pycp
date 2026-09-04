@@ -1,7 +1,7 @@
 // 场景：多层依赖导入图（A 本文件 -> B、C 各自独立被导入）。
 // 验证入口 import 多个模块后，均可经 mod.xxx 访问并组合调用。
 import io
-import Pycp
+import pycp
 import mod_nested_b as nested_b
 import mod_nested_c as nested_c
 
@@ -10,7 +10,7 @@ func main() {
 	area = nested_c.nested_c_area(2, nested_c.nested_c_pi)   // 3 * 2 * 2 = 12
 	combined = nested_b.nested_b_combine(area)
 	if (combined != 24) {
-		io.print("nested_deps: combine mismatch got " + Pycp.String(combined))
+		io.print("nested_deps: combine mismatch got " + pycp.String(combined))
 		return None
 	}
 	if (nested_c.nested_c_pi + 1 != 4) {

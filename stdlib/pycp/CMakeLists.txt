@@ -1,15 +1,15 @@
 # =====================================================================
-# Pycp 标准库构建脚本（动态库）
+# pycp 标准库构建脚本（动态库）
 # ---------------------------------------------------------------------
 # 提供数据类型转换等内建功能：
-#   Pycp.String(x)：内置类型类，调用时返回字符串表示（语义对齐 Python str(x)）。
-#   Pycp.Integer(x)：内置类型类，调用时返回整数（语义对齐 Python int(x)）。
+#   pycp.String(x)：内置类型类，调用时返回字符串表示（语义对齐 Python str(x)）。
+#   pycp.Integer(x)：内置类型类，调用时返回整数（语义对齐 Python int(x)）。
 #
 # 产物：
-#   动态库 Pycp（Pycp.so / Pycp.dll / Pycp.dylib），输出到 build/stdlib/。
-#     入口：导出符号 PycpModule_Pycp（按模块名命名，extern "C"），
-#           import Pycp 时动态加载。
-#   静态库 PycpExt_Pycp（libPycpExt_Pycp.a / PycpExt_Pycp.lib），输出到 build/lib/。
+#   动态库 pycp（pycp.so / pycp.dll / pycp.dylib），输出到 build/stdlib/。
+#     入口：导出符号 PycpModule_pycp（按模块名命名，extern "C"），
+#           import pycp 时动态加载。
+#   静态库 PycpExt_pycp（libPycpExt_pycp.a / PycpExt_pycp.lib），输出到 build/lib/。
 #     供 AOT 的 --static 模式链接进产物 exe。
 # 依赖：PycpRuntime。
 # =====================================================================
@@ -35,7 +35,7 @@ set_target_properties(PycpBuiltin_pycp_obj PROPERTIES POSITION_INDEPENDENT_CODE 
 # 动态库
 add_library(PycpBuiltin_pycp_shared SHARED $<TARGET_OBJECTS:PycpBuiltin_pycp_obj>)
 set_target_properties(PycpBuiltin_pycp_shared PROPERTIES
-    OUTPUT_NAME "Pycp"
+    OUTPUT_NAME "pycp"
     PREFIX ""
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/stdlib
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/stdlib
@@ -46,10 +46,11 @@ set_target_properties(PycpBuiltin_pycp_shared PROPERTIES
 # 小整数池、扩展句柄缓存），避免每个扩展 .so 内嵌一份副本。
 if(BUILD_RUNTIME_SHARED)
     target_link_libraries(PycpBuiltin_pycp_shared PUBLIC PycpRuntime_shared)
-    # rpath：dist/stdlib/*.so -> dist/lib；build/stdlib/*.so -> build/backend。
+    # rpath：运行时 libPycpRuntime.so 置于 pycp 可执行文件同级目录（dist/ / build/），
+    # 故 stdlib 扩展经 $ORIGIN/../ 即可定位，与 pycp 主程序共用同一份运行时。
     set_target_properties(PycpBuiltin_pycp_shared PROPERTIES
-        BUILD_RPATH "$ORIGIN/../lib;$ORIGIN/../backend"
-        INSTALL_RPATH "$ORIGIN/../lib"
+        BUILD_RPATH "$ORIGIN/../;$ORIGIN/../backend"
+        INSTALL_RPATH "$ORIGIN/../"
     )
 else()
     target_link_libraries(PycpBuiltin_pycp_shared PUBLIC PycpRuntime_static)
@@ -78,7 +79,7 @@ target_compile_definitions(PycpBuiltin_pycp_obj_static PUBLIC PYCP_STATIC)
 
 add_library(PycpBuiltin_pycp_static STATIC $<TARGET_OBJECTS:PycpBuiltin_pycp_obj_static>)
 set_target_properties(PycpBuiltin_pycp_static PROPERTIES
-    OUTPUT_NAME "PycpExt_Pycp"
+    OUTPUT_NAME "PycpExt_pycp"
     ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
 )
 target_link_libraries(PycpBuiltin_pycp_static PUBLIC PycpRuntime_static)

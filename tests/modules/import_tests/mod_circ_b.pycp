@@ -1,6 +1,6 @@
 // 导入图辅助模块 B：单向 import A（不构成循环）。
 import io
-import Pycp
+import pycp
 import mod_circ_a
 
 B_VAL = "B"

@@ -1,6 +1,6 @@
 // 真正循环导入的一端：import 对方。
 import io
-import Pycp
+import pycp
 import mod_circ_y
 
 X_VAL = "X"

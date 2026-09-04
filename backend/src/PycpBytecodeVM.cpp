@@ -644,10 +644,10 @@ Object* VM::execute(CodeObject* co,
 				Class* cls = New<Class>(cdef.name);
 
 				// 继承：查找父类，复制其成员与方法（子类同名覆盖）。
-				// 未显式 inherits 时默认自动继承 Pycp.Object（对齐 Python object）。
+				// 未显式 inherits 时默认自动继承 pycp.Object（对齐 Python object）。
 				// 父类引用：单标识符（全局变量）或属性访问路径（模块.类）。
 				std::string parent_ref = cdef.parent_name.empty()
-					? std::string("Pycp.Object") : cdef.parent_name;
+					? std::string("pycp.Object") : cdef.parent_name;
 				if (!parent_ref.empty()) {
 					Object* parent_obj = nullptr;
 					std::size_t dot = parent_ref.find('.');
@@ -658,9 +658,9 @@ Object* VM::execute(CodeObject* co,
 						std::string mod_name = parent_ref.substr(0, dot);
 						std::string attr_name = parent_ref.substr(dot + 1);
 						Object* mod_obj = Environment_Lookup(env.get(), mod_name);
-						if (mod_obj == nullptr && mod_name == "Pycp") {
-							// Pycp 可能尚未被当前模块显式 import，经 VM 加载。
-							Pycp::Module* pm = load_module("Pycp");
+						if (mod_obj == nullptr && mod_name == "pycp") {
+							// pycp 可能尚未被当前模块显式 import，经 VM 加载。
+							Pycp::Module* pm = load_module("pycp");
 							mod_obj = pm;
 						}
 						if (mod_obj != nullptr && dynamic_cast<Pycp::Module*>(mod_obj) != nullptr) {

@@ -1,13 +1,13 @@
 // 入口：import 一个仅存在于 exe 目录 stdlib/ 下的 .pycp 源码模块。
 // cwd（第 3 层）中不存在同名文件，因此必然命中第 2 层。
 import io
-import Pycp
+import pycp
 import stdlib_src
 
 func main() {
 	v = stdlib_src.stdlib_src_value
 	if (v != 7) {
-		io.print("mismatch: got " + Pycp.String(v))
+		io.print("mismatch: got " + pycp.String(v))
 		return None
 	}
 	io.print("LOOKUP PASS: stdlib pycp source")

@@ -9,5 +9,5 @@
 # =====================================================================
 
 add_subdirectory(io)
-add_subdirectory(Pycp)
+add_subdirectory(pycp)
 add_subdirectory(classtools)

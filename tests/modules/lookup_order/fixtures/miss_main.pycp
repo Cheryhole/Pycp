@@ -2,7 +2,7 @@
 // 静态链接、非内置扩展）。期望 ImportError 非零退出，错误信息附带各层
 // 候选目录诊断（No module named '<name>'. + 各层）。
 import io
-import Pycp
+import pycp
 import totally_missing
 
 io.print("unreachable")

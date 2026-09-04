@@ -1,11 +1,11 @@
 import io
-import Pycp
+import pycp
 
 class new_tp{
 	v_ = 0
 
 	func __initialize__(self, value){
-		io.print("Initializing, value = " + Pycp.String(value))
+		io.print("Initializing, value = " + pycp.String(value))
 		self.v_ = value
 	}
 

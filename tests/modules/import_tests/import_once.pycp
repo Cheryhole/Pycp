@@ -3,7 +3,7 @@
 // （load_all 按路径去重，模块缓存复用，顶层只跑一遍）。
 // 入口也 import c 以访问其计数器。
 import io
-import Pycp
+import pycp
 import mod_once_a
 import mod_once_b
 import mod_once_c  // a、b 也都 import 了 c
@@ -14,7 +14,7 @@ func main() {
 
 	// mod_once_c 顶层 once_counter 应为 1（仅执行一次）。
 	if (mod_once_c.once_counter != 1) {
-		io.print("import_once: c executed " + Pycp.String(mod_once_c.once_counter) + " times, expected 1")
+		io.print("import_once: c executed " + pycp.String(mod_once_c.once_counter) + " times, expected 1")
 		return None
 	}
 	io.print("IMPORT TEST PASS: import_once")

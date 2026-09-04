@@ -1,6 +1,6 @@
 // 场景：import classtools，验证模块与 super/private/public 成员可访问。
 import io
-import Pycp
+import pycp
 import classtools
 
 func main() {

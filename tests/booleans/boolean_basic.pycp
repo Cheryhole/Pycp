@@ -1,7 +1,7 @@
 // Boolean 类型基础行为验证。
 // 约束：断言用整数比较（String 比较受限），输出用 io.print 展示。
 import io
-import Pycp
+import pycp
 
 func main() {
 	// 1) 关键字打印：io.print(True) -> "True"，io.print(False) -> "False"
@@ -49,29 +49,29 @@ func main() {
 		return None
 	}
 
-	// 7) Pycp 模块：Pycp.Boolean 根据真值返回 True/False
-	if (Pycp.Boolean(1) != True) {
-		io.print("Pycp.Boolean(1) mismatch")
+	// 7) Pycp 模块：pycp.Boolean 根据真值返回 True/False
+	if (pycp.Boolean(1) != True) {
+		io.print("pycp.Boolean(1) mismatch")
 		return None
 	}
-	if (Pycp.Boolean(0) != False) {
-		io.print("Pycp.Boolean(0) mismatch")
+	if (pycp.Boolean(0) != False) {
+		io.print("pycp.Boolean(0) mismatch")
 		return None
 	}
-	// Pycp.Boolean(0) 应为 False 值，Pycp.Boolean(1) 应为 True 值
-	b0 = Pycp.Boolean(0)
-	b1 = Pycp.Boolean(1)
+	// pycp.Boolean(0) 应为 False 值，pycp.Boolean(1) 应为 True 值
+	b0 = pycp.Boolean(0)
+	b1 = pycp.Boolean(1)
 	if (b0 != False) {
-		io.print("Pycp.Boolean(0) mismatch")
+		io.print("pycp.Boolean(0) mismatch")
 		return None
 	}
 	if (b1 != True) {
-		io.print("Pycp.Boolean(1) mismatch")
+		io.print("pycp.Boolean(1) mismatch")
 		return None
 	}
 
 	// 8) 类型名
-	io.print(Pycp.Boolean(1).__name__)
+	io.print(pycp.Boolean(1).__name__)
 
 	io.print("IMPORT TEST PASS: boolean_basic")
 }

@@ -515,10 +515,10 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 				   << cpp_string_literal(cdef.name) << ");\n";
 
 				// 2) 继承：父类引用（单标识符或模块.类路径），复制父类成员与方法。
-				//    未显式 inherits 时默认自动继承 Pycp.Object（对齐 Python object）。
+				//    未显式 inherits 时默认自动继承 pycp.Object（对齐 Python object）。
 				{
 					std::string parent_ref = cdef.parent_name.empty()
-						? std::string("Pycp.Object") : cdef.parent_name;
+						? std::string("pycp.Object") : cdef.parent_name;
 					os << "      Pycp::Object* parent_obj = nullptr;\n";
 					std::size_t dot = parent_ref.find('.');
 					if (dot == std::string::npos) {
@@ -529,9 +529,9 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 						std::string attr_name = parent_ref.substr(dot + 1);
 						os << "      { Pycp::Object* mobj = Pycp::Environment_Lookup(env.get(), "
 						   << cpp_string_literal(mod_name) << ");\n";
-						// Pycp 可能尚未被当前模块显式 import：经统一导入入口取。
-						if (mod_name == "Pycp") {
-							os << "        if (mobj == nullptr) mobj = Pycp::ImportModule(\"Pycp\");\n";
+						// pycp 可能尚未被当前模块显式 import：经统一导入入口取。
+						if (mod_name == "pycp") {
+							os << "        if (mobj == nullptr) mobj = Pycp::ImportModule(\"pycp\");\n";
 						}
 						os << "        if (mobj != nullptr && dynamic_cast<Pycp::Module*>(mobj) != nullptr) {\n";
 						os << "          Pycp::Module* mo = static_cast<Pycp::Module*>(mobj);\n";

@@ -1,6 +1,6 @@
 // 场景：普通 import foo，访问其顶层变量、函数、类实例。
 import io
-import Pycp
+import pycp
 import mod_basic
 
 func main() {

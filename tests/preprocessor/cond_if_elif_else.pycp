@@ -50,9 +50,9 @@ msg = GREETING
 #end
 
 import io
-import Pycp
-io.stdout.write(Pycp.String(debug_only) + "\n")
-io.stdout.write(Pycp.String(b_branch) + "\n")
-io.stdout.write(Pycp.String(nested_debug_only) + "\n")
-io.stdout.write(Pycp.String(negated_kept) + "\n")
+import pycp
+io.stdout.write(pycp.String(debug_only) + "\n")
+io.stdout.write(pycp.String(b_branch) + "\n")
+io.stdout.write(pycp.String(nested_debug_only) + "\n")
+io.stdout.write(pycp.String(negated_kept) + "\n")
 io.stdout.write(msg + "\n")

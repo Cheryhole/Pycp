@@ -1,7 +1,7 @@
 // 错误路径场景：import 不存在的模块，应抛 ImportError，进程非零退出。
 // 该用例被 runner 单独判定为 EXPECTED-FAIL（即预期 EXIT != 0）。
 import io
-import Pycp
+import pycp
 import this_module_does_not_exist_anywhere
 
 func main() {

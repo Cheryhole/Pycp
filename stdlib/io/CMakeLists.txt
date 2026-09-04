@@ -53,8 +53,10 @@ if(BUILD_RUNTIME_SHARED)
     # BUILD_RPATH 排在 CMake 自动追加的链接目录之前，故 dist 产物不会被
     # 构建树里的旧 .so 抢先命中，保证自包含。
     set_target_properties(PycpBuiltin_io_shared PROPERTIES
-        BUILD_RPATH "$ORIGIN/../lib;$ORIGIN/../backend"
-        INSTALL_RPATH "$ORIGIN/../lib"
+        # 运行时 libPycpRuntime.so 置于 pycp 可执行文件同级目录（dist/ / build/），
+        # 故 stdlib 扩展经 $ORIGIN/../ 即可定位，与 pycp 主程序共用同一份运行时。
+        BUILD_RPATH "$ORIGIN/../;$ORIGIN/../backend"
+        INSTALL_RPATH "$ORIGIN/../"
     )
 else()
     target_link_libraries(PycpBuiltin_io_shared PUBLIC PycpRuntime_static)

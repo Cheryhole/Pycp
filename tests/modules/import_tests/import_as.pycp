@@ -1,6 +1,6 @@
 // 场景：import foo as bar，经别名访问模块成员。
 import io
-import Pycp
+import pycp
 import mod_as as helper
 
 func main() {

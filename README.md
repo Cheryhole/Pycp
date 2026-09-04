@@ -14,7 +14,7 @@ Pycp 将源码 `.pycp` 编译为自定义字节码 `.cpycp`（类似 Python 的 
 | 运行时 | GC、对象模型（Integer / String / None / Function / Class / Instance / Module / File / List）、ABI 接口 |
 | 虚拟机 | 栈式字节码 VM，支持函数调用、闭包、类定义、继承、装饰器、控制流 |
 | 字节码 | `.cpycp` 二进制格式（小端 + LEB128 编码），可序列化 / 反序列化 |
-| 标准库 | C++ 原生动态库（`io` / `Pycp` / `classtools`），`import` 时动态加载 |
+| 标准库 | C++ 原生动态库（`io` / `pycp` / `classtools`），`import` 时动态加载 |
 | AOT | 将字节码逐指令翻译为依赖 PycpABI 的独立 C++ 源文件（真正的指令翻译，非骨架占位） |
 
 ### 对象命名规范
@@ -43,7 +43,7 @@ Pycp 对象的类型判定使用**字符串**（而非枚举），与 ABI 保持
 - 单继承（`class Child inherits Parent{...}`）
 - 运算符重载（`__addition__` / `__subtraction__` / `__power__` 等魔术方法）
 - **列表（List）**：方括号字面量 `[a, b, c]`、下标访问 `obj[key]` 与赋值 `obj[key] = value`、
-  负索引、`length()` 方法、`+` 拼接、字符串表示、`Pycp.List(obj)` 转换
+  负索引、`length()` 方法、`+` 拼接、字符串表示、`pycp.List(obj)` 转换
   （支持 `__get_item__` / `__set_item__` / `__list__` 魔术方法，自定义类可重载）
 - 装饰器语法糖（`@decorator`）：把被装饰对象传给装饰器函数，用返回值替换
 - 成员可见性（`@private` / `@public` 修饰类内成员，控制类外访问）
@@ -136,7 +136,7 @@ pycp [options] <input_file>
 | `--emit-cpp` | 将 `.pycp` 翻译为可直接编译的 **CMake 项目目录**（AOT 指令翻译，输出 `.gen.cpp` + `CMakeLists.txt`） |
 | `--compile-runtime=shared\|static` | 配合 `--emit-cpp`：运行时库 `libPycpRuntime` 的链接方式（默认 `shared`）。`static` 需 SDK 静态产物，且禁止存在任何动态模块（会生成两份运行时） |
 | `--compile-modules=shared\|static` | 配合 `--emit-cpp`：转译 `.pycp` 模块的**全局形态**（默认 `static`：编进主程序；`shared`：编译成动态库运行期加载） |
-| `--compile-module:<name>=shared\|static` | 配合 `--emit-cpp`：**按模块覆盖**（内置扩展 io/Pycp/classtools，或任一转译依赖模块） |
+| `--compile-module:<name>=shared\|static` | 配合 `--emit-cpp`：**按模块覆盖**（内置扩展 io/pycp/classtools，或任一转译依赖模块） |
 | `--show-imports` | 配合 `--emit-cpp`：打印编译期 import 解析清单（translated / unresolved） |
 | `--shared` / `--static` | `--compile-runtime=shared` / `static` 的**旧别名**（deprecated；不能与 `--compile-*` 参数混用） |
 | `-d, --dump` | 查看字节码内容（常量池 / 符号表 / 代码对象 / 指令与行号），接受 `.pycp` 或 `.cpycp` |
@@ -251,7 +251,7 @@ ABI 调用序列（常量内联为 `g_c[]`，控制流翻译为 `goto`，函数�
 
 **三档编译形态：`--compile-runtime` / `--compile-modules` / `--compile-module:<name>`**
 
-`--emit-cpp` 把「运行时库」「内置扩展（io/Pycp/classtools）」「转译的 `.pycp` 依赖模块」
+`--emit-cpp` 把「运行时库」「内置扩展（io/pycp/classtools）」「转译的 `.pycp` 依赖模块」
 三类对象的链接方式拆开控制：
 
 ```bash
@@ -289,7 +289,7 @@ ABI 调用序列（常量内联为 `g_c[]`，控制流翻译为 `goto`，函数�
 | `-rdynamic` / rpath / POST_BUILD | 需要（复制 `stdlib/`、`lib/` 与 DLL 到 exe 同级） | 不需要 |
 | 产物形态 | exe + 同级 `stdlib/`、`lib/`（+ 模块 DLL） | 全静态时单个自包含 exe |
 
-- static 模式通过 `dist/lib/` 下的 `libPycpExt_io.a` / `libPycpExt_Pycp.a` /
+- static 模式通过 `dist/lib/` 下的 `libPycpExt_io.a` / `libPycpExt_pycp.a` /
   `libPycpExt_classtools.a` 静态扩展库 + 生成器发射的注册/拉入桩
   （`RegisterAotModule`）实现"扩展静态链接并强制被链接器拉入"。
 - 转译生成的 `.gen.cpp` 若被编译为 DLL，其 `PycpModule_<name>` 入口由
@@ -309,12 +309,12 @@ ABI 调用序列（常量内联为 `g_c[]`，控制流翻译为 `goto`，函数�
 
 ```
 import io
-import Pycp
+import pycp
 
 a = 23 - 5 * 7
-io.stdout.write(Pycp.String(a))
+io.stdout.write(pycp.String(a))
 io.stdout.write("\n")
-io.stdout.write(Pycp.String(2 ** 3))
+io.stdout.write(pycp.String(2 ** 3))
 io.stdout.write("\n")
 ```
 
@@ -339,12 +339,12 @@ name = io.input("Enter: ")  # 打印提示（不换行）后读取一行
 io.print("Hello " + name)
 ```
 
-装饰器与成员可见性（`public` / `private` 可从 `Pycp` 或 `classtools` 导入）：
+装饰器与成员可见性（`public` / `private` 可从 `pycp` 或 `classtools` 导入）：
 
 ```
-import Pycp
+import pycp
 import io
-from Pycp import public, private
+from pycp import public, private
 
 @public
 func greet(name) {
@@ -446,13 +446,13 @@ build/dist/
 ├── pycp                     主程序（解释器 / 编译器 / REPL）
 ├── stdlib/                  标准库原生扩展，运行时固定在此目录查找
 │   ├── io.so
-│   ├── Pycp.so
+│   ├── pycp.so
 │   └── classtools.so
 ├── lib/                     运行时库
 │   ├── libPycpRuntime.so    动态库（默认构建，pycp 动态链接它）
 │   ├── libPycpRuntime.a     静态库（AOT 生成代码静态链接用）
 │   ├── libPycpExt_io.a      原生扩展静态库（`--emit-cpp --static` 用）
-│   ├── libPycpExt_Pycp.a
+│   ├── libPycpExt_pycp.a
 │   ├── libPycpExt_classtools.a
 │                            Windows 下另有运行时 DLL 与导入库（MinGW：
 │                            libPycpRuntime.dll + libPycpRuntime.dll.a；
@@ -487,14 +487,14 @@ cmake -S . -B build -DPYCP_DIST_DIR=/opt/pycp -DPYCP_DIST_PLATFORM_SUBDIR=ON
 ```
 
 > 注意：`stdlib/` 目录名不可更改——运行时按“可执行文件所在目录 + `/stdlib/`”
-> 查找 `io.so` / `Pycp.so` / `classtools.so`，因此分发时请整目录带走。
+> 查找 `io.so` / `pycp.so` / `classtools.so`，因此分发时请整目录带走。
 
 各产物靠 rpath 相互定位，脱离构建树仍可运行：
 
 | 产物 | rpath | 解析到 |
 |------|-------|--------|
-| `dist/pycp` | `$ORIGIN/lib` | `dist/lib/libPycpRuntime.so` |
-| `dist/stdlib/*.so` | `$ORIGIN/../lib` | `dist/lib/libPycpRuntime.so` |
+| `dist/pycp` | `$ORIGIN`（优先）/ `$ORIGIN/lib` / `$ORIGIN/backend` | `dist/libPycpRuntime.so`（或回退 `dist/lib/libPycpRuntime.so`） |
+| `dist/stdlib/*.so` | `$ORIGIN/../`（优先）/ `$ORIGIN/../backend` | `dist/libPycpRuntime.so`（与 `pycp` 共用同一份） |
 
 因此把整个 `dist/` 拷到任意路径（或拷到别的机器同架构上）都能直接运行。
 `cmake --install` 沿用同一套布局：`bin/pycp`、`bin/stdlib/`、`lib/`、`include/`。
@@ -538,7 +538,7 @@ cmake -S . -B build -DBUILD_PYTHON_BINDING=ON
 ## 项目结构
 
 ```
-Pycp/
+pycp/
 ├── CMakeLists.txt          # 顶层总构建脚本（一键编译整个项目）
 ├── PycpMain.cpp            # 主程序入口（编译 / 解释执行 CLI）
 ├── cmake/                  # 构建辅助脚本
@@ -594,7 +594,7 @@ Pycp/
 │   │       ├── io.cpp             # 模块装配（stdin/stdout/stderr、print/input）
 │   │       ├── PycpFile.cpp       # File 实现（write/readline）
 │   │       └── FileFromStream.cpp # File::FromStream 工厂
-│   ├── Pycp/              # Pycp 标准库（Pycp.so）：类型转换与可见性装饰器
+│   ├── pycp/              # pycp 标准库（pycp.so）：类型转换与可见性装饰器
 │   │   ├── CMakeLists.txt
 │   │   ├── include/
 │   │   │   └── pycp_stdlib.hpp    # 模块名与入口声明
@@ -618,12 +618,12 @@ Pycp/
 | `PycpMain.cpp` | 真正的 `main()` 入口，统一前端解析 + 后端编译/执行 |
 | `frontend/` | 前端：词法/语法分析、AST、代码生成、AOT |
 | `backend/` | 后端：运行时库（对象模型、GC、VM、字节码），**不依赖前端** |
-| `stdlib/` | 标准库：C++ 原生动态库（`io` / `Pycp` / `classtools`），`import` 时由 VM 动态加载 |
+| `stdlib/` | 标准库：C++ 原生动态库（`io` / `pycp` / `classtools`），`import` 时由 VM 动态加载 |
 | 顶层 `CMakeLists.txt` | 全项目统一构建入口，产出 `pycp` 可执行文件 |
 | `frontend/CMakeLists.txt` | 独立构建 `pycp`（不构建 stdlib 原生扩展，`import io` 等不可用） |
 | `backend/CMakeLists.txt` | 独立构建运行时库与 `test_pycp` 测试 |
 
-> 各标准库子库统一采用 `<name>/include`（头文件）+ `<name>/src`（源文件）+ `<name>/CMakeLists.txt` 的目录结构，编译为独立动态库（`io.so` / `Pycp.so` / `classtools.so`），输出到 `build/stdlib/`。
+> 各标准库子库统一采用 `<name>/include`（头文件）+ `<name>/src`（源文件）+ `<name>/CMakeLists.txt` 的目录结构，编译为独立动态库（`io.so` / `pycp.so` / `classtools.so`），输出到 `build/stdlib/`。
 
 ### 模块独立构建
 
@@ -653,7 +653,7 @@ cmake --build build -j
   `__pycp_builtin_modules.gen.cpp` 注册桩（复用既有 `RegisterAotModule`）让
   静态扩展符号被链接器强制拉入；shared 分支逐行保留，二者互不干扰。
   dist 在 `lib/` 下新增三份静态扩展库 `libPycpExt_io.a` /
-  `libPycpExt_Pycp.a` / `libPycpExt_classtools.a`，SDK 定位器扫描 `lib/` 下
+  `libPycpExt_pycp.a` / `libPycpExt_classtools.a`，SDK 定位器扫描 `lib/` 下
   所有 `PycpExt_*` 推导内置扩展清单（新增子库零改动）。新增
   `cmake/PycpAotEquivalence.cmake` + `pycp-aot-equiv` 目标，对全部 `tests/`
   用例分别跑解释器与 AOT 产物（shared 与 static 各一次），地址归一化后逐
@@ -780,8 +780,8 @@ cmake --build build -j
 - **文件级导出**：模块顶层符号默认 public；`@private func foo(){}` 的顶层符号对其他文件 `import` 时不可见。
 - **内置库**（`stdlib/` 目录，C++ 原生实现）：
   - `io`：`io.stdin` / `io.stdout` / `io.stderr` 文件对象（`write` / `readline` 方法），以及 `io.print(value)`（输出内容后自动换行）与 `io.input(prompt)`（打印提示后读取一行）。
-  - `Pycp`：`Pycp.String(x)` / `Pycp.Integer(x)` 类型转换类、`Pycp.Object` 基类，以及 `Pycp.public` / `Pycp.private` 可见性装饰器函数。
-  - `classtools`：`classtools.super()`（返回父类）、`classtools.public` / `classtools.private`（可见性装饰器函数，与 Pycp 库功能一致）。
+  - `pycp`：`pycp.String(x)` / `pycp.Integer(x)` 类型转换类、`pycp.Object` 基类，以及 `pycp.public` / `pycp.private` 可见性装饰器函数。
+  - `classtools`：`classtools.super()`（返回父类）、`classtools.public` / `classtools.private`（可见性装饰器函数，与 pycp 库功能一致）。
 - 本版起不注入任何内建函数（不导入库时命名空间仅含用户定义内容）。
 
 暂不支持：类型注解（`x: int`）、`map` 字面量、`Pointer`、多继承。AOT 后端已支持类定义、属性、列表与下标翻译。

@@ -3,10 +3,10 @@
 # undefine _PREPROCESSING
 
 import io
-import Pycp
+import pycp
 
 pi = PI
-io.stdout.write(Pycp.String(PI) + "\n")   // 314
+io.stdout.write(pycp.String(PI) + "\n")   // 314
 
 // #lineno 展开为当前物理行号（此处为 12）
 io.print(#lineno)

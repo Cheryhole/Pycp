@@ -196,11 +196,11 @@ foreach(_f IN LISTS _runtime_files)
 endforeach()
 
 # =====================================================================
-# 3b. 需与可执行文件同级的运行时文件（Windows DLL 例外）
+# 3b. 需与可执行文件同级的运行时文件（libPycpRuntime.so / libPycpRuntime.dll）
 # ---------------------------------------------------------------------
-# Windows 加载 DLL 只搜索可执行文件所在目录，不会搜索 lib/，因此
-# PycpRuntime.dll 必须在 exe 同级再放一份；POSIX 靠 rpath 定位 lib/，
-# 无需此例外。
+# libPycpRuntime.so（libPycpRuntime.dll）复制到 pycp 同级目录，使其启动即可
+# 定位，无需依赖 lib/ 的 rpath；Windows 加载 DLL 同样只搜索 exe 所在目录。
+# lib/ 仍保留一份供 AOT 链接，二者同源。
 # =====================================================================
 pycp_dist_split(_root_files "${ROOT_FILES}")
 foreach(_f IN LISTS _root_files)

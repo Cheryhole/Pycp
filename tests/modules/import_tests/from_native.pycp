@@ -1,14 +1,14 @@
-// 场景：from 原生模块 import 成员（from io import stdout / from Pycp import String）。
+// 场景：from 原生模块 import 成员（from io import stdout / from pycp import String）。
 import io
-import Pycp
+import pycp
 from io import stdout
-from Pycp import String
+from pycp import String
 
 func main() {
 	// from io import stdout：应可直接使用（写出文本，不比较返回值）
-	stdout.write(Pycp.String("from_native: from io import stdout\n"))
+	stdout.write(pycp.String("from_native: from io import stdout\n"))
 
-	// from Pycp import String：构造并输出验证（避免 String 比较受限）
+	// from pycp import String：构造并输出验证（避免 String 比较受限）
 	str99 = String(99)
 	io.print(str99)
 

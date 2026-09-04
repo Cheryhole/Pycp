@@ -47,8 +47,8 @@ if(BUILD_RUNTIME_SHARED)
     target_link_libraries(PycpBuiltin_classtools_shared PUBLIC PycpRuntime_shared)
     # rpath：dist/stdlib/*.so -> dist/lib；build/stdlib/*.so -> build/backend。
     set_target_properties(PycpBuiltin_classtools_shared PROPERTIES
-        BUILD_RPATH "$ORIGIN/../lib;$ORIGIN/../backend"
-        INSTALL_RPATH "$ORIGIN/../lib"
+        BUILD_RPATH "$ORIGIN/../;$ORIGIN/../backend"
+        INSTALL_RPATH "$ORIGIN/../"
     )
 else()
     target_link_libraries(PycpBuiltin_classtools_shared PUBLIC PycpRuntime_static)

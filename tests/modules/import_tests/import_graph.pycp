@@ -3,7 +3,7 @@
 // （说明：Pycp 中"真正的互相 import"业务可执行但进程退出段错误，
 //  属已知限制；此处用单向依赖图验证多模块导入稳定可用。）
 import io
-import Pycp
+import pycp
 import mod_circ_a
 import mod_circ_b
 

@@ -1,13 +1,13 @@
-import Pycp
+import pycp
 import io
 from classtools import super, public, private
 
-class FileIO inherits Pycp.Object{
+class FileIO inherits pycp.Object{
 	@private
 	// 约定私有成员加一个下划线
-	_filename = Pycp.String("")
+	_filename = pycp.String("")
 
-	mode = Pycp.String("")
+	mode = pycp.String("")
 
 	@public
 	func __initialize__(self, filename, mode){
@@ -30,7 +30,7 @@ class FileIO inherits Pycp.Object{
 
 
 // 匿名对象写法，支持继承
-BetterObject = class inherits Pycp.Object{
+BetterObject = class inherits pycp.Object{
 	@private
 	// 如果对魔术方法修饰为private，应warning
 	func __initialize__(self){
@@ -39,9 +39,9 @@ BetterObject = class inherits Pycp.Object{
 	}
 }
 
-class o1 inherits Pycp.Object{
-	mem1 = Pycp.String("")
-	mem2 = Pycp.String("")
+class o1 inherits pycp.Object{
+	mem1 = pycp.String("")
+	mem2 = pycp.String("")
 	_mem = 0
 
 	func __initialize__(self){
@@ -56,7 +56,7 @@ class o1 inherits Pycp.Object{
 }
 
 class o2 inherits o1{
-	mem3 = Pycp.String("")
+	mem3 = pycp.String("")
 	
 	func __initialize__(self){
 		super().__initialize__(self)
@@ -64,10 +64,10 @@ class o2 inherits o1{
 	}
 }
 
-io.print(Pycp.introspect(o1))
-io.print(Pycp.introspect(o2))
+io.print(pycp.introspect(o1))
+io.print(pycp.introspect(o2))
 o = o2()
-io.print(Pycp.introspect(o))
+io.print(pycp.introspect(o))
 
 
 

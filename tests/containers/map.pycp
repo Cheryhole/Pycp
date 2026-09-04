@@ -1,12 +1,12 @@
 import io
-import Pycp
+import pycp
 
 // ===== Map 基本功能 =====
-// 空构造（Pycp.Map(x) 转换见文末）
-m = Pycp.Map()
+// 空构造（pycp.Map(x) 转换见文末）
+m = pycp.Map()
 io.print(m)
 io.print(m.length())
-io.print(Pycp.Boolean(m))   // 空映射为 False
+io.print(pycp.Boolean(m))   // 空映射为 False
 
 // 设置键值对（__setitem__）
 m["a"] = 1
@@ -14,7 +14,7 @@ m["b"] = 2
 m[42] = "answer"
 io.print(m)
 io.print(m.length())
-io.print(Pycp.Boolean(m))   // 非空为 True
+io.print(pycp.Boolean(m))   // 非空为 True
 
 // 获取（__getitem__）
 io.print(m["a"])
@@ -34,15 +34,15 @@ io.print(m)                 // {a: 100, 42: answer}
 // ===== 哈希：仅 Integer/String 支持 =====
 i = 42
 io.print(i.__hash__())                 // Integer 哈希
-io.print(Pycp.introspect(i))           // Integer 成员含 __hash__
+io.print(pycp.introspect(i))           // Integer 成员含 __hash__
 s = "abc"
 io.print(s.__hash__())                 // String 哈希
-io.print(Pycp.introspect(s))           // String 成员含 __hash__
+io.print(pycp.introspect(s))           // String 成员含 __hash__
 
 // length 方法 + __introspect__
 io.print(m.length())
 io.print(m.__introspect__())
-io.print(Pycp.introspect(Pycp.Map))    // Map 类型类的成员（含方法）
+io.print(pycp.introspect(pycp.Map))    // Map 类型类的成员（含方法）
 
 // ===== 内置类型的 __map__ 视图应含方法成员（非空）=====
 // String 的 __map__ 视图包含 __string__/__hash__ 等方法名
@@ -52,20 +52,20 @@ io.print(sm.__map__())                 // 非空，含方法名
 io.print(m.__map__())                   // 非空，含方法名
 io.print(m.__map__().__introspect__()) // 视图自身的成员名
 
-// ===== Pycp.Boolean 按对象真值判断 =====
-io.print(Pycp.Boolean(""))    // False
-io.print(Pycp.Boolean("x"))   // True
-io.print(Pycp.Boolean(0))     // False
-io.print(Pycp.Boolean(3))     // True
-io.print(Pycp.Boolean(Pycp.Map()))  // 空映射 → False
-io.print(Pycp.Boolean(m))          // 非空 → True
+// ===== pycp.Boolean 按对象真值判断 =====
+io.print(pycp.Boolean(""))    // False
+io.print(pycp.Boolean("x"))   // True
+io.print(pycp.Boolean(0))     // False
+io.print(pycp.Boolean(3))     // True
+io.print(pycp.Boolean(pycp.Map()))  // 空映射 → False
+io.print(pycp.Boolean(m))          // 非空 → True
 
 // ===== __map__ 实时成员视图 =====
 class Point {
 	x = 0
 	y = 0
 	func __str__(self) {
-		return Pycp.String(self.x) + "," + Pycp.String(self.y)
+		return pycp.String(self.x) + "," + pycp.String(self.y)
 	}
 }
 p = Point()
@@ -130,7 +130,7 @@ io.print(n[1].length())             // 1
 // 空 map
 e = {}
 io.print(e.length())                // 0
-io.print(Pycp.Boolean(e))           // False
+io.print(pycp.Boolean(e))           // False
 
 // 字符串键
 s = {"a": 10, "b": 20}
@@ -164,7 +164,7 @@ mixed = {
 }
 io.print(mixed["nums"].length())    // 2
 io.print(mixed["nums"][1])          // 2
-io.print(Pycp.Boolean(mixed["flag"]))  // True
+io.print(pycp.Boolean(mixed["flag"]))  // True
 
 // map 作为函数实参
 func pass_through(m) {
@@ -225,11 +225,11 @@ io.print(first_key({1: "a"}))               // a
 // ===== keys() 方法 =====
 km = {"x": 1, "y": 2}
 io.print(km.keys().length())        // 2
-io.print(Pycp.Boolean(km.keys().length() == km.length()))
+io.print(pycp.Boolean(km.keys().length() == km.length()))
 
-// ===== Pycp.Map(x) 转换 =====
+// ===== pycp.Map(x) 转换 =====
 // 1) Map -> 独立浅拷贝（互不影响）
-cp = Pycp.Map(km)
+cp = pycp.Map(km)
 io.print(cp.length())               // 2
 io.print(cp["x"])                   // 1
 cp["z"] = 3
@@ -237,7 +237,7 @@ io.print(cp.length())               // 3
 io.print(km.length())               // 2（原映射不受影响）
 
 // 2) 二元组序列 -> Map
-pm = Pycp.Map([["a", 1], ["b", 2]])
+pm = pycp.Map([["a", 1], ["b", 2]])
 io.print(pm.length())               // 2
 io.print(pm["a"] + pm["b"])         // 3
 
@@ -246,7 +246,7 @@ class Bag {
 	v = 7
 }
 bg = Bag()
-snap = Pycp.Map(bg.__map__())
+snap = pycp.Map(bg.__map__())
 io.print(snap["v"])                 // 7
 snap["v"] = 100
 io.print(bg.v)                      // 7（快照独立，不影响实例）
@@ -255,7 +255,7 @@ io.print(bg.v)                      // 7（快照独立，不影响实例）
 class Store {
 	data = None
 	func __initialize__(self) {
-		self.data = Pycp.Map()
+		self.data = pycp.Map()
 		self.data["k1"] = 10
 		self.data["k2"] = 20
 	}
@@ -267,13 +267,13 @@ class Store {
 	}
 }
 st = Store()
-sm = Pycp.Map(st)
+sm = pycp.Map(st)
 io.print(sm.length())               // 2
 io.print(sm["k1"])                  // 10
 io.print(sm["k2"])                  // 20
 
 // keys 应出现在 introspect 列表中
-io.print(Pycp.introspect(Pycp.Map))
+io.print(pycp.introspect(pycp.Map))
 io.print(km.__introspect__())
 
 io.print("done")

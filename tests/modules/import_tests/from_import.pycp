@@ -1,6 +1,6 @@
 // 场景：from foo import a, b，直接访问导入的命名空间符号。
 import io
-import Pycp
+import pycp
 from mod_from import mod_from_alpha, mod_from_beta, mod_from_greet
 
 func main() {

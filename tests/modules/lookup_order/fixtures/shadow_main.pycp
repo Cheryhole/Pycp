@@ -1,13 +1,13 @@
 // 入口：同名模块同时存在于 exe 目录 stdlib/ 与 cwd，验证「本地优先」——
 // cwd 排在 stdlib/ 之前，期望取到 cwd 版本的取值 2。
 import io
-import Pycp
+import pycp
 import shadow
 
 func main() {
 	o = shadow.shadow_origin
 	if (o != 2) {
-		io.print("mismatch: got " + Pycp.String(o))
+		io.print("mismatch: got " + pycp.String(o))
 		return None
 	}
 	io.print("LOOKUP PASS: cwd over stdlib")

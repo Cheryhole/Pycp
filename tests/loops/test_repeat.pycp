@@ -3,10 +3,10 @@
 // =============================================================
 
 import io
-import Pycp
+import pycp
 
 func println(x) {
-	io.stdout.write(Pycp.String(x))
+	io.stdout.write(pycp.String(x))
 	io.stdout.write("\n")
 }
 

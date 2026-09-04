@@ -420,9 +420,10 @@ if(UNIX AND NOT APPLE)
     target_link_options(pycp PRIVATE -rdynamic)
 endif()
 
-# Windows 下动态链接运行时时，将 PycpRuntime_shared.dll 复制到可执行文件所在
-# 目录，保证 pycp.exe 启动即可定位该 DLL（stdlib 扩展 DLL 也链接同一份）。
-if(WIN32 AND BUILD_RUNTIME_SHARED)
+# 动态链接运行时时，将 libPycpRuntime.so（libPycpRuntime.dll）复制到 pycp 可执行
+# 文件所在目录，使其启动即可在自身同级目录定位运行时（POSIX 免去对 lib/ 的 rpath
+# 依赖；Windows 加载 DLL 本就不搜索 lib/）。lib/ 仍保留一份供 AOT 链接。
+if(BUILD_RUNTIME_SHARED)
     add_custom_command(TARGET pycp POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "$<TARGET_FILE:PycpRuntime_shared>"
@@ -439,7 +440,9 @@ endif()
 if(BUILD_RUNTIME_SHARED)
     add_dependencies(pycp PycpRuntime_shared)
     set_target_properties(pycp PROPERTIES
-        BUILD_RPATH "$ORIGIN/lib;$ORIGIN/backend"
+        # $ORIGIN：运行时 .so 已复制到 pycp 同级，优先在此定位（可直接携带
+        # dist/ 整体运行）；其后两项为兼容回退（构建树 backend、安装布局 lib/）。
+        BUILD_RPATH "$ORIGIN;$ORIGIN/lib;$ORIGIN/backend"
         INSTALL_RPATH "$ORIGIN/../lib"
     )
 endif()
@@ -557,10 +560,11 @@ if(BUILD_RUNTIME_SHARED)
     endif()
 endif()
 
-# 需与可执行文件同级的运行时文件：Windows 加载 DLL 只搜索 exe 所在目录，
-# 不会搜索 lib/，因此 PycpRuntime.dll 在根目录额外放一份（与 lib/ 那份同源）。
+# 需与可执行文件同级的运行时文件：libPycpRuntime.so（libPycpRuntime.dll）复制到
+# pycp 同级目录，使其启动即可定位（POSIX 免去对 lib/ 的 rpath 依赖；Windows 加载
+# DLL 不搜索 lib/）。lib/ 仍保留一份供 AOT 链接，二者同源。
 set(PYCP_DIST_ROOT_FILES "")
-if(WIN32 AND BUILD_RUNTIME_SHARED)
+if(BUILD_RUNTIME_SHARED)
     string(APPEND PYCP_DIST_ROOT_FILES "$<TARGET_FILE:PycpRuntime_shared>|")
 endif()
 

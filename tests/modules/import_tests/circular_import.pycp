@@ -3,7 +3,7 @@
 // 会段错误（模块缓存互相引用，GC 释放时崩溃）。故本用例被 runner 标记
 // 为 EXPECTED-FAIL（预期非零退出），用于如实记录该边界行为。
 import io
-import Pycp
+import pycp
 import mod_circ_x
 import mod_circ_y
 

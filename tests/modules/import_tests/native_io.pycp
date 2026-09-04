@@ -1,13 +1,13 @@
 // 场景：import io 并使用其成员（stdout.write / print）。
 import io
-import Pycp
+import pycp
 
 func main() {
 	// io.print：单参数打印一行
 	io.print("native_io: via io.print")
 
 	// io.stdout.write：副作用是写出文本（返回值不保证为整数，仅验证不抛异常）
-	io.stdout.write(Pycp.String("native_io: via stdout.write\n"))
+	io.stdout.write(pycp.String("native_io: via stdout.write\n"))
 
 	// io.stderr 存在（不与非 None 比较，避免受限比较）
 	io.print("native_io: stderr present")

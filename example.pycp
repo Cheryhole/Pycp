@@ -5,13 +5,13 @@ Pycp 示例：类定义 + io / Pycp 内置库
 */
 
 import io
-import Pycp
+import pycp
 
 /*
 ---- 类定义 ----
 成员变量声明（仅声明，初始化在 __initialize__ 中完成）。
 __initialize__ 为构造函数，创建实例时自动调用。
-__string__ 为字符串转换方法（Pycp.String / io.stdout.write 转换时自动调用）。
+__string__ 为字符串转换方法（pycp.String / io.stdout.write 转换时自动调用）。
 */
 
 class Point{
@@ -24,7 +24,7 @@ class Point{
 	}
 
 	func __string__(self){
-		return "Point(" + Pycp.String(self.x) + ", " + Pycp.String(self.y) + ")"
+		return "Point(" + pycp.String(self.x) + ", " + pycp.String(self.y) + ")"
 	}
 
 	// 运算符重载：__addition__ 实现 + 操作
@@ -35,13 +35,13 @@ class Point{
 
 // ---- 创建实例 ----
 p = Point(1, 2)
-io.stdout.write(Pycp.String(p))
+io.stdout.write(pycp.String(p))
 io.stdout.write("\n")
 
 // ---- 运算符重载：+ 转发到 __addition__ ----
 q = Point(3, 4)
 r = p + q
-io.stdout.write(Pycp.String(r))
+io.stdout.write(pycp.String(r))
 io.stdout.write("\n")
 
 // ---- stdin 读取 ----

@@ -435,7 +435,7 @@ class_def_statement: KW_CLASS IDENTIFIER opt_inherits OP_LBRACE class_body OP_RB
 ;
 
 // 匿名类表达式：class [inherits parent]{...}，无名字，内部名由 Codegen 填
-// 入 config 常量 ANONYMOUS_CLASS。用于 `X = class inherits Pycp.Object{...}`。
+// 入 config 常量 ANONYMOUS_CLASS。用于 `X = class inherits pycp.Object{...}`。
 class_expr: KW_CLASS opt_inherits OP_LBRACE class_body OP_RBRACE {
 			std::vector<Statement*>* members = static_cast<std::vector<Statement*>*>($4);
 			std::vector<Statement*>* vars = new std::vector<Statement*>();
@@ -456,7 +456,7 @@ class_expr: KW_CLASS opt_inherits OP_LBRACE class_body OP_RBRACE {
 ;
 
 // 可选继承子句：inherits parent，无则 nullptr。
-// parent 可为单个标识符（inherits A）或属性访问路径（inherits Pycp.Object）。
+// parent 可为单个标识符（inherits A）或属性访问路径（inherits pycp.Object）。
 opt_inherits: %empty {
 			$$ = nullptr;
 		}
