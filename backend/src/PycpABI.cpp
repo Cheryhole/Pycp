@@ -333,12 +333,20 @@ void SetModuleSearchDir(const std::string& dir) {
 }
 
 // =============================================================
-//  ①进程内符号 → ②exe 目录/stdlib → ③cwd 与脚本目录。
+//  ①进程内符号 / 静态注册表 → ②cwd → ③脚本目录 → ④exe 目录/stdlib。
+//
+// 顺序要点（「本地优先」）：文件系统层面离用户最近的候选先探测——
+// cwd 与脚本目录排在 exe 目录的 stdlib/ 之前，故本地同名模块（含源码）
+// 可覆盖内置扩展；每个目录内部按「.pycp 源码 → 同名动态库」尝试。
+//
 // 全部未命中返回 nullptr（out_source 亦为空），调用方回退到自身机制
 // （如 VM::load_module 的 registry 路径）并抛出 ImportError。
+// diagnostics 非空时，逐层记录未命中的候选，供 ImportError 展示。
 // =============================================================
-Module* ImportModule(const std::string& name, BC::Module** out_source) {
+Module* ImportModule(const std::string& name, BC::Module** out_source,
+                     std::string* diagnostics) {
 	if (out_source != nullptr) *out_source = nullptr;
+	if (diagnostics != nullptr) diagnostics->clear();
 
 	// 进程级缓存（跨 VM 实例、跨 AOT 调用共享）。
 	static std::map<std::string, Module*> g_import_cache;
@@ -360,7 +368,29 @@ Module* ImportModule(const std::string& name, BC::Module** out_source) {
 		return out_source != nullptr && *out_source != nullptr;
 	};
 
-	// ---- ① 进程内符号 ----
+	// 目录探测结果：kMiss 未命中、kSource 命中源码（*out_source 已填充）、
+	// kNative 命中原生动态库（*out 为已缓存的 Module*）。
+	enum class Probe { kMiss, kSource, kNative };
+
+	// 在单个候选目录内按「.pycp 源码 → 同名动态库」探测；未命中时把该层
+	// 记入 diagnostics，便于 ImportError 直接列出全部尝试过的候选。
+	auto probe_dir = [&](const std::string& dir, const char* label,
+	                     Module** out) -> Probe {
+		Module* r = LoadNativeModuleFrom(dir, name, out_source);
+		if (r != nullptr) {
+			*out = cached(r);
+			return Probe::kNative;
+		}
+		if (source_hit()) return Probe::kSource;
+		if (diagnostics != nullptr) {
+			const std::string shown = dir.empty() ? std::string("./") : dir;
+			*diagnostics += "\n  - " + std::string(label) + ": " + shown +
+			                name + Pycp::EXT_PYCP + " 或同名动态库均未找到";
+		}
+		return Probe::kMiss;
+	};
+
+	// ---- ① 进程内符号 / 静态注册表（不探测文件系统）----
 	// 两级同层兜底，缺一不可：
 	//   dlsym(RTLD_DEFAULT) 覆盖经 -rdynamic 动态链接进主程序的模块；
 	//   静态注册表        覆盖主程序符号不可见（AOT 生成的 exe 默认无
@@ -373,26 +403,32 @@ Module* ImportModule(const std::string& name, BC::Module** out_source) {
 		}
 	}
 	if (m != nullptr) return cached(m);
-
-	// ---- ② 可执行文件所在目录的 stdlib/ ----
-	const std::string& stdlib_dir = GetStdlibDir();
-	if (!stdlib_dir.empty()) {
-		m = LoadNativeModuleFrom(stdlib_dir, name, out_source);
-		if (m != nullptr) return cached(m);
-		if (source_hit()) return nullptr;
+	if (diagnostics != nullptr) {
+		*diagnostics += "\n  - 进程内符号 / 静态注册表: 未找到 " +
+		                std::string(AOT_MODULE_INIT_PREFIX) + name +
+		                "（未静态链接进本程序）";
 	}
 
-	// ---- ③ 当前工作目录，其次脚本所在目录 ----
-	m = LoadNativeModuleFrom(std::string(), name, out_source);
-	if (m != nullptr) return cached(m);
-	if (source_hit()) return nullptr;
+	// ---- ② 当前工作目录 ----
+	Module* hit = nullptr;
+	if (probe_dir(std::string(), "当前工作目录", &hit) != Probe::kMiss) {
+		return hit; // kSource 时为 nullptr（源码交由 VM 执行）
+	}
 
-	// 脚本目录为 "." 时与 cwd 重合，已在上一步覆盖，无需重复探测。
+	// ---- ③ 脚本所在目录（为 "." 时与 cwd 重合，已在上一步覆盖）----
 	const std::string script_dir = module_search_dir();
 	if (!script_dir.empty() && script_dir != ".") {
-		m = LoadNativeModuleFrom(script_dir, name, out_source);
-		if (m != nullptr) return cached(m);
-		if (source_hit()) return nullptr;
+		if (probe_dir(script_dir, "脚本所在目录", &hit) != Probe::kMiss) {
+			return hit;
+		}
+	}
+
+	// ---- ④ 可执行文件所在目录的 stdlib/ ----
+	const std::string& stdlib_dir = GetStdlibDir();
+	if (!stdlib_dir.empty()) {
+		if (probe_dir(stdlib_dir, "exe 目录 stdlib/", &hit) != Probe::kMiss) {
+			return hit;
+		}
 	}
 
 	// 全部未命中：交回调用方处理（如解释器 registry）。

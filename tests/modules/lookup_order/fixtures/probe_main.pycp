@@ -1,16 +1,16 @@
 // 入口：同一目录下同时存在 native_probe.so 与 native_probe.pycp，
-// 验证同层「动态库优先于 .pycp 源码」——期望命中动态库并返回 1。
+// 验证同层「.pycp 源码优先于同名动态库」——期望命中源码并返回 2。
 import io
 import Pycp
 import native_probe
 
 func main() {
-	o = native_probe.origin()
-	if (o != 1) {
+	o = native_probe.native_probe_origin
+	if (o != 2) {
 		io.print("mismatch: got " + Pycp.String(o))
 		return None
 	}
-	io.print("LOOKUP PASS: so over pycp")
+	io.print("LOOKUP PASS: pycp over so")
 }
 
 main()

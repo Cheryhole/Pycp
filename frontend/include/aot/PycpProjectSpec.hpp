@@ -20,10 +20,25 @@
 
 namespace Pycp::AOT {
 
-// AOT 产物的链接模式（CLI --shared / --static）。
+// AOT 产物的链接模式。
 enum class LinkMode {
-	kShared, // 默认：动态链接运行时，原生扩展从 stdlib/ 目录运行时加载
-	kStatic, // 静态链接运行时与全部原生扩展，产物为单个自包含可执行文件
+	kShared, // 动态：链接共享运行时，模块/扩展以动态库形态从运行时加载
+	kStatic, // 静态：链接静态运行时，产物尽量自包含
+};
+
+// 模块编译形态（--compile-modules / --compile-module:<name> 决定）。
+// 入口模块恒编进主程序（exe），不进入 modules 列表。
+enum class ModuleKind {
+	kStatic, // 编译为静态库（.a），链入引用它的链接目标
+	kShared, // 编译为动态库（.so/.dll），运行期按模块名加载
+};
+
+// 单个依赖模块的构建语义（不含入口模块）。
+struct ModuleTarget {
+	std::string name;        // Pycp 模块名（import 用的名字）
+	std::string source_file; // <name>.gen.cpp（与 spec.sources 的 key 对应）
+	ModuleKind kind = ModuleKind::kStatic; // 由 ModulePlan 决策
+	std::vector<std::string> deps; // 同批转译模块内的直接依赖名
 };
 
 struct ProjectSpec {
@@ -39,15 +54,34 @@ struct ProjectSpec {
 
 	// 待写入的源文件内容：(相对 output_dir 的文件名, 内容)。
 	// 约定入口文件排在首位，使生成脚本中源文件顺序稳定可读。
+	// modules / aux_sources 中的源文件也都在此集合内。
 	std::vector<std::pair<std::string, std::string>> sources;
 
 	// 运行时 SDK（dist）定位结果。
 	SdkInfo sdk;
 
-	// 链接模式：决定生成器是渲染动态链接段落还是静态链接段落。
+	// 运行时库（libPycpRuntime）的链接形态（--compile-runtime）。
 	// kStatic 要求 sdk.has_static（静态运行时 + libPycpExt_*.a 齐全），
-	// 由 Validate 拦下。
-	LinkMode link_mode = LinkMode::kShared;
+	// 且不允许同时存在任何 kShared 模块 / 运行期加载的内置扩展
+	// （否则进程内出现两份运行时状态），由 Validate 拦下。
+	LinkMode runtime_link = LinkMode::kShared;
+
+	// 依赖模块（不含入口）的构建语义，由 ModulePlan 决策后填入。
+	std::vector<ModuleTarget> modules;
+
+	// 内置扩展（io / Pycp / classtools）按形态分组：
+	//   builtin_static : 以 SDK 静态库（libPycpExt_*.a）链入主程序
+	//   builtin_shared : 运行期从 exe 同级 stdlib/ 目录加载（默认）
+	// 二者互斥（同一扩展不可同时出现在两组），由组装层保证。
+	std::vector<std::string> builtin_static;
+	std::vector<std::string> builtin_shared;
+	// builtin_static 各扩展对应的 SDK 静态库绝对路径（按模块名匹配
+	// sdk.stdlib_static_libs 得到），供 CMake 生成器直接写进链接命令。
+	std::vector<std::string> builtin_static_lib_paths;
+
+	// 辅助源文件名（注册/拉入桩等，编进主程序但非 Pycp 模块）。
+	// 与 spec.sources 的 key 对应。
+	std::vector<std::string> aux_sources;
 
 	// 生成时的 Pycp 版本，写入生成文件供追溯。
 	std::string pycp_version;

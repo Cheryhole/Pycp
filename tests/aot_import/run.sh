@@ -134,6 +134,59 @@ else
 	fail=$((fail + 1))
 fi
 
+# 形态组合：从同一份 fixture 生成不同形态的 CMake 项目并构建运行
+emit_and_build() {
+	local label="$1" exe_rel="$2" opts="$3"
+	local out rc
+	rm -rf "$WORK/form"
+	# shellcheck disable=SC2086
+	out="$("$PYCP" --emit-cpp "$ENTRY" $opts -o "$WORK/form" 2>&1)"
+	rc=$?
+	if [[ $rc -ne 0 ]]; then
+		echo "[FAIL] $label（--emit-cpp 失败）"
+		echo "$out"
+		fail=$((fail + 1))
+		return 1
+	fi
+	if ( cd "$WORK/form" && cmake -S . -B build >/dev/null 2>&1 &&
+	     cmake --build build >/dev/null 2>&1 ); then
+		:
+	else
+		echo "[FAIL] $label（cmake 构建失败）"
+		fail=$((fail + 1))
+		return 1
+	fi
+	if ( cd "$WORK/form/build" && ./"$exe_rel" ) 2>&1 | grep -q "AOT IMPORT PASS"; then
+		echo "[PASS] $label"
+		pass=$((pass + 1))
+	else
+		echo "[FAIL] $label（运行输出未含 AOT IMPORT PASS）"
+		fail=$((fail + 1))
+	fi
+}
+
+# --- 场景 6：--compile-runtime=static 全静态自包含 ---
+emit_and_build "全静态自包含（--compile-runtime=static）" "a_entry" \
+	"--compile-runtime=static"
+
+# --- 场景 7：--compile-modules=shared 把依赖模块编成动态库 ---
+emit_and_build "依赖模块编为动态库（--compile-modules=shared）" "a_entry" \
+	"--compile-modules=shared"
+
+# --- 场景 8：runtime=static 与动态模块冲突必须报错（禁止两份运行时）---
+rm -rf "$WORK/form_bad"
+out="$("$PYCP" --emit-cpp "$ENTRY" --compile-runtime=static \
+	--compile-modules=shared -o "$WORK/form_bad" 2>&1)"
+rc=$?
+if [[ $rc -ne 0 && "$out" == *"静态"* ]]; then
+	echo "[PASS] runtime=static + 动态模块组合被拒（两份运行时防护）"
+	pass=$((pass + 1))
+else
+	echo "[FAIL] runtime=static + 动态模块组合未被拒绝（rc=$rc）"
+	echo "$out"
+	fail=$((fail + 1))
+fi
+
 echo "==================================="
 echo "PASS=$pass  FAIL=$fail"
 if [[ $fail -gt 0 ]]; then

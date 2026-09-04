@@ -19,6 +19,7 @@
 // =============================================================
 
 #include "PycpBytecode.hpp"
+#include "aot/PycpProjectSpec.hpp" // ModuleKind（桩生成按形态过滤）
 
 #include <map>
 #include <string>
@@ -36,11 +37,15 @@ std::string EmitCpp(const Pycp::BC::Module& module,
 // 多文件输出：为「模块名 -> Module」集合生成各自独立的 C++ 源码。
 //   entry_name : 入口模块名（对应 modules 中的 key），其生成的源码含 main()，
 //                负责按需调用被导入模块。
+//   kinds      : 模块形态表（可选）。kShared 的依赖为运行期加载的动态模块，
+//                对其不生成「链接拉入桩」（符号在独立 DLL 中，extern 引用会
+//                制造无法解析的外部符号）；nullptr 表示全部按静态处理。
 //   被导入模块生成的源码仅含初始化函数（无 main），供入口链接调用。
 //   返回 map<模块名, 源码>；每个值的文件名由调用方决定（如 <name>.gen.cpp）。
 std::map<std::string, std::string> EmitCppAll(
     const std::map<std::string, Pycp::BC::Module>& modules,
-    const std::string& entry_name);
+    const std::string& entry_name,
+    const std::map<std::string, ModuleKind>* kinds = nullptr);
 
 // 将生成结果写入磁盘文件（path 为 .cpp 输出路径）。
 //   返回 true 表示写入成功。

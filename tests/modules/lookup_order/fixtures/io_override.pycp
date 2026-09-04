@@ -1,0 +1,4 @@
+// 放在可执行文件同级的 stdlib/ 下并命名为 io.pycp：验证「允许在 stdlib/
+// 下放置与内置扩展同名的 .pycp 源码来覆盖内置扩展」（此时内置 io.so 仍
+// 存在于同一 stdlib/，但源码优先会命中本文件）。
+marker = "src-override"

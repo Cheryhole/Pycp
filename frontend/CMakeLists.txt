@@ -52,6 +52,7 @@ set(LOADER_SOURCES
 set(AOT_SOURCES
     src/aot/PycpAot.cpp
     src/aot/PycpAotSdkLocator.cpp
+    src/aot/PycpModulePlan.cpp
     src/aot/PycpProjectSpec.cpp
     src/aot/PycpBuildScriptGenerator.cpp
     src/aot/PycpCMakeGenerator.cpp

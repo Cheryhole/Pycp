@@ -1,0 +1,7 @@
+// 入口：读取 stdlib/io.pycp 暴露的 marker。若 stdlib 内「源码优先」生效则
+// 命中源码版（rc=0）；若错误地优先加载了内置 io.so，io.marker 不存在会抛
+// AttributeError（rc!=0）。注意：此刻 io 已是源码版，无内置 stdout 可用，
+// 因此本用例以退出码而非输出标记判定。
+import io
+
+m = io.marker

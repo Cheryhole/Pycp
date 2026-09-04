@@ -4,10 +4,12 @@
 #include "aot/PycpAotSdkLocator.hpp"
 #include "aot/PycpBuildScriptGenerator.hpp"
 #include "aot/PycpCMakeGenerator.hpp" // 触发静态实例注册（kCMakeGenerator）
+#include "aot/PycpModulePlan.hpp"
 #include "aot/PycpProjectSpec.hpp"
 
 #include "PycpConfig.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <filesystem>
 #include <sstream>
@@ -29,6 +31,17 @@ void write_file(const std::string& path, const std::string& content) {
 	if (!f) throw Pycp::Exception("Failed to flush file: " + path);
 }
 
+// 从 SDK 静态库路径提取内置扩展名（libPycpExt_<name>.a / PycpExt_<name>.lib
+// / PycpExt_<name>.a）。返回空串表示不是 PycpExt 库。
+std::string builtin_name_of_lib(const std::string& path) {
+	const std::size_t pos = path.find("PycpExt_");
+	if (pos == std::string::npos) return "";
+	std::string name = path.substr(pos + 8);
+	const std::size_t dot = name.find_last_of('.');
+	if (dot != std::string::npos) name = name.substr(0, dot);
+	return name;
+}
+
 // C++ 字符串字面量（转义反斜杠与双引号）。
 std::string cpp_string_literal(const std::string& s) {
 	std::string out = "\"";
@@ -45,7 +58,7 @@ std::string cpp_string_literal(const std::string& s) {
 	return out + "\"";
 }
 
-// 内置扩展的「注册 + 链接拉入桩」源文件（仅 --static 生成）。
+// 静态内置扩展（以 SDK 静态库链入主程序）的「注册 + 链接拉入桩」源文件。
 //
 // 两个作用：
 //   1) 注册：把各内置扩展的初始化函数登记进 Pycp::RegisterAotModule 的
@@ -55,23 +68,26 @@ std::string cpp_string_literal(const std::string& s) {
 //   2) 拉入：静态库链接时链接器只拉入能解析未定义符号的成员。本文件显式
 //      引用各 PycpModule_<name>，强制链接器把对应成员保留下来，否则其
 //      静态初始化器不会执行（表现为编译链接全通过、运行时 import 失败）。
-//      与 PycpAot.cpp 对 .pycp 依赖模块的处理同范式，比
-//      -Wl,--whole-archive 精确且不依赖 GNU 专有选项。
-std::string emit_builtin_registration_stub(const SdkInfo& sdk) {
+//
+// 仅对「以静态库链入主程序的内置扩展」（builtin_static）生成；运行期从
+// stdlib/ 加载的 builtin_shared 不属于本文件（它们不参与链接）。
+std::string emit_builtin_registration_stub(
+	const std::vector<std::string>& builtins) {
 	std::ostringstream os;
 	os << "// 自动生成，请勿修改。\n"
-	   << "// 静态链接模式（--static）专用：注册并拉入内置原生扩展。\n"
+	   << "// 静态链入的内置原生扩展：注册并拉入（--compile-module:io=static "
+	      "等指定）。\n"
 	   << "// 由 Pycp " << Pycp::PYCP_VERSION << " 生成。\n\n"
 	   << "#include \"PycpABI.hpp\"\n\n";
 
-	for (const std::string& mod : sdk.builtin_modules) {
+	for (const std::string& mod : builtins) {
 		os << "extern \"C\" Pycp::Module* " << Pycp::AOT_MODULE_INIT_PREFIX
 		   << mod << "();\n";
 	}
 	os << "\nnamespace {\n"
 	   << "struct PycpBuiltinReg {\n"
 	   << "  PycpBuiltinReg() {\n";
-	for (const std::string& mod : sdk.builtin_modules) {
+	for (const std::string& mod : builtins) {
 		os << "    Pycp::RegisterAotModule(" << cpp_string_literal(mod) << ", &"
 		   << Pycp::AOT_MODULE_INIT_PREFIX << mod << ");\n";
 	}
@@ -89,7 +105,7 @@ bool EmitProject(
 	const std::string& entry_name,
 	const std::string& source_pycp,
 	const std::string& output_dir,
-	LinkMode link_mode,
+	const AotProjectOptions& options,
 	const std::vector<std::string>& kinds,
 	std::vector<std::string>* written,
 	std::string* err) {
@@ -100,60 +116,130 @@ bool EmitProject(
 	};
 
 	try {
-		// 1) 翻译字节码 -> C++ 源码（全模块）。
-		auto sources = Pycp::AOT::EmitCppAll(modules, entry_name);
-
-		// 2) 组装项目描述（纯数据）。
+		// 组装项目描述（纯数据）。
 		ProjectSpec spec;
-		spec.name        = entry_name;
-		spec.output_dir  = output_dir;
-		spec.source_pycp = source_pycp;
+		spec.name         = entry_name;
+		spec.output_dir   = output_dir;
+		spec.source_pycp  = source_pycp;
 		spec.pycp_version = Pycp::PYCP_VERSION;
+		spec.runtime_link = options.runtime_link;
 
-		// 入口源码排在首位：文件名固定为 AOT_ENTRY_CPP_FILENAME（含 main）。
+		// 3) 定位 SDK（内置扩展名单在 SDK 定位结果中，override 归属依赖它）。
+		spec.sdk = LocateSdk();
+
+		// 4) 同批模块依赖图（仅同批转译模块；stdlib 扩展不在内，运行时加载）。
+		std::vector<std::string> all_names; // 含入口
+		for (const auto& kv : modules) all_names.push_back(kv.first);
+		std::map<std::string, std::vector<std::string>> deps;
+		for (const auto& kv : modules) {
+			for (const std::string& dep : kv.second.imports) {
+				if (modules.find(dep) != modules.end()) {
+					deps[kv.first].push_back(dep);
+				}
+			}
+		}
+
+		// 5) 拆 override：内置扩展名 vs 同批转译模块名；两者皆非则报错。
+		std::map<std::string, ModuleKind> module_overrides;
+		std::map<std::string, ModuleKind> builtin_overrides;
+		for (const auto& kv : options.overrides) {
+			const std::string& n = kv.first;
+			const bool is_builtin =
+				std::find(spec.sdk.builtin_modules.begin(),
+				          spec.sdk.builtin_modules.end(), n) !=
+				spec.sdk.builtin_modules.end();
+			const bool is_module =
+				(modules.find(n) != modules.end()) && (n != entry_name);
+			if (is_builtin) {
+				builtin_overrides[n] = kv.second;
+			} else if (is_module) {
+				module_overrides[n] = kv.second;
+			} else {
+				return fail("--compile-module:<name>= 指定了未知模块 '" + n +
+				            "'：它既不是同批转译的依赖模块，也不是内置扩展"
+				            "（io / Pycp / classtools）。");
+			}
+		}
+
+		// 6) 模块形态决策（不动点：被 ≥2 个链接目标引用的 static 提升 shared）。
+		ModulePlan plan = PlanModuleKinds(
+			all_names, deps, entry_name, options.default_module_kind,
+			module_overrides, err);
+
+		// 6b) 翻译字节码 -> C++ 源码（全模块）。需在形态决策之后进行：
+		//     对 kShared 依赖不生成链接拉入桩（其符号在独立 DLL 中）。
+		auto sources = Pycp::AOT::EmitCppAll(modules, entry_name, &plan.kinds);
+
+		// 7) 内置扩展分组：无覆盖时默认跟随 runtime_link。
+		for (const std::string& b : spec.sdk.builtin_modules) {
+			auto it = builtin_overrides.find(b);
+			const ModuleKind k = (it != builtin_overrides.end())
+				? it->second
+				: (spec.runtime_link == LinkMode::kStatic ? ModuleKind::kStatic
+				                                          : ModuleKind::kShared);
+			if (k == ModuleKind::kStatic) {
+				spec.builtin_static.push_back(b);
+			} else {
+				spec.builtin_shared.push_back(b);
+			}
+		}
+		// 7b) 为 builtin_static 收集对应 SDK 静态库绝对路径（CMake 链接用）。
+		for (const std::string& lib : spec.sdk.stdlib_static_libs) {
+			const std::string b = builtin_name_of_lib(lib);
+			if (!b.empty() &&
+			    std::find(spec.builtin_static.begin(),
+			              spec.builtin_static.end(), b) !=
+			        spec.builtin_static.end()) {
+				spec.builtin_static_lib_paths.push_back(lib);
+			}
+		}
+
+		// 8) 源文件与模块清单：入口源码排首，随后依赖模块。
 		spec.sources.emplace_back(
 			std::string(Pycp::AOT_ENTRY_CPP_FILENAME), sources.at(entry_name));
-
-		// 依赖模块源码：原始模块名 + AOT_CPP_SUFFIX。
 		for (const auto& kv : sources) {
 			if (kv.first == entry_name) continue;
-			spec.sources.emplace_back(kv.first + Pycp::AOT_CPP_SUFFIX, kv.second);
+			const std::string fname = kv.first + Pycp::AOT_CPP_SUFFIX;
+			spec.sources.emplace_back(fname, kv.second);
+
+			ModuleTarget mt;
+			mt.name = kv.first;
+			mt.source_file = fname;
+			mt.kind = plan.kinds.at(kv.first);
+			mt.deps = deps[kv.first];
+			spec.modules.push_back(std::move(mt));
 		}
 
-		// 3) 定位 SDK（运行时硬约束：需含 include/lib/stdlib）。
-		spec.sdk = LocateSdk();
-		spec.link_mode = link_mode;
-
-		// 3b) 静态模式：追加内置扩展的注册/拉入桩。
-		// 必须早于 Validate —— Validate 会据此校验 SDK 的静态产物是否齐全。
-		if (link_mode == LinkMode::kStatic && !spec.sdk.builtin_modules.empty()) {
-			spec.sources.emplace_back(
-				std::string(Pycp::AOT_BUILTIN_REG_CPP_FILENAME),
-				emit_builtin_registration_stub(spec.sdk));
+		// 9) 静态链入主程序的内置扩展：生成注册/拉入桩（编进主程序）。
+		//    必须早于 Validate —— Validate 会据此校验 SDK 静态产物齐全。
+		if (!spec.builtin_static.empty()) {
+			const std::string stub_file(Pycp::AOT_BUILTIN_REG_CPP_FILENAME);
+			spec.sources.emplace_back(stub_file,
+			                          emit_builtin_registration_stub(
+			                              spec.builtin_static));
+			spec.aux_sources.push_back(stub_file);
 		}
 
-		// 4) 校验（名称/输出目录/源文件/SDK 有效性/静态可行性）。
+		// 10) 校验（名称/输出目录/源文件/SDK/形态组合/静态产物齐全）。
 		{
 			std::string verr;
 			if (!Validate(spec, &verr)) return fail(verr);
 		}
 
-		// 5) 建目录并写源文件。
+		// 11) 建目录并写源文件。
 		std::error_code ec;
 		std::filesystem::create_directories(output_dir, ec);
 		if (ec) return fail("Failed to create output directory: " + output_dir);
 
 		if (written != nullptr) written->clear();
 		for (const auto& kv : spec.sources) {
-			// 显式 .string()：Windows 下 path::value_type 为 wchar_t，
-			// path -> std::string 无隐式转换（Linux 下为 char 故可隐式转换）。
 			const std::string path =
 				(std::filesystem::path(output_dir) / kv.first).string();
 			write_file(path, kv.second);
 			if (written != nullptr) written->push_back(path);
 		}
 
-		// 6) 选生成器：kinds 为空 -> 全部已注册；否则按 kind 取。
+		// 12) 选生成器：kinds 为空 -> 全部已注册；否则按 kind 取。
 		std::vector<const IBuildScriptGenerator*> gens;
 		if (kinds.empty()) {
 			for (const std::string& k : AvailableKinds()) {
@@ -179,10 +265,9 @@ bool EmitProject(
 			return fail("未注册任何构建脚本生成器（CMake 生成器应静态自注册）。");
 		}
 
-		// 7) 调生成器渲染并写构建脚本。
+		// 13) 调生成器渲染并写构建脚本。
 		for (const IBuildScriptGenerator* g : gens) {
 			const std::string content = g->Generate(spec);
-			// 同上：显式转换，避免 Windows 下 path -> std::string 编译失败。
 			const std::string path =
 				(std::filesystem::path(output_dir) / g->file_name()).string();
 			write_file(path, content);

@@ -1,4 +1,5 @@
 #include "aot/PycpAot.hpp"
+#include "aot/PycpProjectSpec.hpp" // ModuleKind（桩按形态过滤）
 #include "PycpConfig.hpp"
 
 #include <cstdio>
@@ -710,12 +711,16 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 // 生成单个模块的 .cpp 内容（不含 main）。
 //   is_entry : 是否入口模块（入口模块额外生成 main）。
 //   deps     : 本模块 import 的、同批生成 .gen.cpp 的模块名列表。
-//              为其生成「链接拉入桩」，见下方 emit_link_stubs 说明。
+//              为其中「静态形态」者生成「链接拉入桩」（见 emit_link_stubs）。
+//   kinds    : 模块形态表（非空时生效）：kShared 的依赖运行期 dlopen，
+//              不生成链接桩（否则在独立 DLL 内产生无法解析的外部符号）。
+//              nullptr 表示全部按静态处理（单模块/无形态模式）。
 std::string emit_module_cpp(const Pycp::BC::Module& module,
                             const std::string& modname,
                             bool is_entry,
                             const std::string& entry_name,
-                            const std::vector<std::string>& deps = {}) {
+                            const std::vector<std::string>& deps = {},
+                            const std::map<std::string, ModuleKind>* kinds = nullptr) {
 	if (module.code_objects.empty()) {
 		throw std::runtime_error("AOT: empty module (no code objects).");
 	}
@@ -750,6 +755,9 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	os << "#include \"PycpBytecodeVM.hpp\"\n";
 	os << "#include \"PycpNativeExt.hpp\"\n";
 	os << "#include \"PycpException.hpp\"\n";
+	// PYCP_MODULE_EXPORT：本模块编译为 DLL 时导出 PycpModule_<name>；
+	// 编译进静态目标（PYCP_STATIC）时展开为空。Windows 下必不可少。
+	os << "#include \"PycpExt.h\"\n";
 	os << "#include <vector>\n";
 	os << "#include <string>\n";
 	os << "#include <unordered_map>\n";
@@ -833,6 +841,16 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	// 无法解析的外部符号。
 	for (const std::string& dep : deps) {
 		if (dep == modname) continue; // 自依赖（循环导入）：本 TU 已有该符号
+		// 动态形态依赖（kShared，独立 DLL 运行期加载）不生成链接桩：
+		// 其符号在别处 DLL 中，此处 extern 引用会制造无法解析的外部符号。
+		// （入口模块不在形态表中，视为静态——其符号恒在主程序 exe 内。）
+		if (kinds != nullptr) {
+			auto kit = kinds->find(dep);
+			if (kit != kinds->end() &&
+			    kit->second == ModuleKind::kShared) {
+				continue;
+			}
+		}
 		const std::string tag = std::to_string(reg_id) + "_" + sanitize_identifier(dep);
 		os << "extern \"C\" Pycp::Module* " << module_init_symbol(dep) << "();\n";
 		os << "namespace { struct PycpAotLink_" << tag << " {\n";
@@ -849,7 +867,7 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	// 与 dlsym(RTLD_DEFAULT) 互为兜底：主程序符号默认不进动态符号表，
 	// AOT 生成的 exe 若未加 -rdynamic，dlsym 会失败，此时注册表生效。
 	os << "// 静态初始化阶段注册本模块初始化函数，供 Pycp::ImportModule 经注册表调用。\n";
-	os << "extern \"C\" Pycp::Module* " << module_init_symbol(modname) << "();\n";  // 前向声明
+	os << "PYCP_MODULE_EXPORT Pycp::Module* " << module_init_symbol(modname) << "();\n";  // 前向声明
 	os << "namespace { struct PycpAotReg_" << reg_id << " {\n";
 	os << "  PycpAotReg_" << reg_id << "() {\n";
 	os << "    Pycp::RegisterAotModule(" << cpp_string_literal(modname) << ", &"
@@ -859,7 +877,9 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 
 	// ---- 模块初始化函数（非 static，供跨模块调用）----
 	os << "// 初始化并返回本模块的 Module（懒执行，首次调用运行顶层）。\n";
-	os << "extern \"C\" Pycp::Module* " << module_init_symbol(modname) << "() {\n";
+	// PYCP_MODULE_EXPORT（而非裸 extern "C"）：Windows 下把本模块编成 DLL
+	// 时必须显式导出，否则 LoadLibrary 后 GetProcAddress 找不到入口符号。
+	os << "PYCP_MODULE_EXPORT Pycp::Module* " << module_init_symbol(modname) << "() {\n";
 	os << "    static Pycp::Module* mod = nullptr;\n";
 	os << "    static bool done = false;\n";
 	os << "    if (!done) {\n";
@@ -923,14 +943,16 @@ std::string EmitCpp(const Pycp::BC::Module& module,
 
 std::map<std::string, std::string> EmitCppAll(
     const std::map<std::string, Pycp::BC::Module>& modules,
-    const std::string& entry_name) {
+    const std::string& entry_name,
+    const std::map<std::string, ModuleKind>* kinds) {
 	std::map<std::string, std::string> result;
 	for (const auto& kv : modules) {
 		const std::string& modname = kv.first;
 		bool is_entry = (modname == entry_name);
 		result[modname] = emit_module_cpp(kv.second, modname, is_entry,
 		                                  Pycp::AOT_ENTRY_FN_NAME,
-		                                  resolve_deps(modules, kv.second));
+		                                  resolve_deps(modules, kv.second),
+		                                  kinds);
 	}
 	return result;
 }

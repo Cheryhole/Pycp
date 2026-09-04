@@ -213,10 +213,13 @@ Pycp::Module* VM::load_module(const std::string& name) {
 		return it->second;
 	}
 
-	// ① 进程内符号（PycpModule_<name>）② exe 目录的 stdlib/ ③ cwd 与脚本
-	// 目录，统一经 ABI 入口 ImportModule 处理，命中进程级缓存直接返回。
+	// ① 进程内符号 / 静态注册表 ② cwd ③ 脚本目录 ④ exe 目录的 stdlib/，
+	// 统一经 ABI 入口 ImportModule 处理，命中进程级缓存直接返回。
+	// 各层未命中原因记入 diag，供 ImportError 展示（AOT 生成的独立程序
+	// 未注册源码编译器钩子，对仅有 .pycp 源码的模块会在此全部落空）。
 	Module* src = nullptr;
-	Pycp::Module* imported = Pycp::ImportModule(name, &src);
+	std::string diag;
+	Pycp::Module* imported = Pycp::ImportModule(name, &src, &diag);
 	if (imported != nullptr) {
 		return imported;
 	}
@@ -232,11 +235,11 @@ Pycp::Module* VM::load_module(const std::string& name) {
 
 	// 未命中：回退解释器编译期收集的注册表（registry_）。
 	if (registry_ == nullptr) {
-		throw ImportError("No module named '" + name + "'");
+		throw ImportError("No module named '" + name + "'." + diag);
 	}
 	auto mit = registry_->find(name);
 	if (mit == registry_->end() || mit->second == nullptr) {
-		throw ImportError("No module named '" + name + "'");
+		throw ImportError("No module named '" + name + "'." + diag);
 	}
 	return load_from_bc_module(name, mit->second);
 }

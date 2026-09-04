@@ -134,8 +134,11 @@ pycp [options] <input_file>
 | `-i, --interpret` | 解释执行（默认行为；接受 `.pycp` 或 `.cpycp`） |
 | `-o, --output <f>` | 指定输出路径：配合 `-c/-b` 为 `.cpycp` 文件路径；配合 `--emit-cpp` 为**项目目录**（默认 `./<入口名>/`）；配合 `-p` 为 `.pp.pycp` 文件路径 |
 | `--emit-cpp` | 将 `.pycp` 翻译为可直接编译的 **CMake 项目目录**（AOT 指令翻译，输出 `.gen.cpp` + `CMakeLists.txt`） |
-| `--shared` | 配合 `--emit-cpp`：生成的 AOT 项目采用**动态链接**（默认）。运行时与原生扩展以 DLL 形式部署 |
-| `--static` | 配合 `--emit-cpp`：生成的 AOT 项目采用**静态链接**。静态链接运行时与全部原生扩展，产物为单个自包含可执行文件 |
+| `--compile-runtime=shared\|static` | 配合 `--emit-cpp`：运行时库 `libPycpRuntime` 的链接方式（默认 `shared`）。`static` 需 SDK 静态产物，且禁止存在任何动态模块（会生成两份运行时） |
+| `--compile-modules=shared\|static` | 配合 `--emit-cpp`：转译 `.pycp` 模块的**全局形态**（默认 `static`：编进主程序；`shared`：编译成动态库运行期加载） |
+| `--compile-module:<name>=shared\|static` | 配合 `--emit-cpp`：**按模块覆盖**（内置扩展 io/Pycp/classtools，或任一转译依赖模块） |
+| `--show-imports` | 配合 `--emit-cpp`：打印编译期 import 解析清单（translated / unresolved） |
+| `--shared` / `--static` | `--compile-runtime=shared` / `static` 的**旧别名**（deprecated；不能与 `--compile-*` 参数混用） |
 | `-d, --dump` | 查看字节码内容（常量池 / 符号表 / 代码对象 / 指令与行号），接受 `.pycp` 或 `.cpycp` |
 
 ### 使用示例
@@ -246,33 +249,53 @@ ABI 调用序列（常量内联为 `g_c[]`，控制流翻译为 `goto`，函数�
 `pycp_fn_N`）。它不依赖解释器循环，但编译时仍需链接 `PycpRuntime` 库
 （静态 `libPycpRuntime.a`，或动态 `libPycpRuntime.dll` + 导入库 `libPycpRuntime.dll.a`；Linux/macOS 下为 `libPycpRuntime.so`）。
 
-**两种链接模式：`--shared`（默认）与 `--static`**
+**三档编译形态：`--compile-runtime` / `--compile-modules` / `--compile-module:<name>`**
 
-`--emit-cpp` 支持两种产物形态，由链接模式决定：
+`--emit-cpp` 把「运行时库」「内置扩展（io/Pycp/classtools）」「转译的 `.pycp` 依赖模块」
+三类对象的链接方式拆开控制：
 
 ```bash
-# shared（默认）：动态链接，产物 exe 需要同级 stdlib/ 与 lib/（以及 Windows 运行时 DLL）
-./build/pycp --emit-cpp --shared hello.pycp
+# 默认：依赖模块编进主程序（kStatic），运行时与内置扩展动态（stdlib/ 加载）
+./build/pycp --emit-cpp hello.pycp
 
-# static：静态链接运行时与全部原生扩展，产物是单个自包含可执行文件
-./build/pycp --emit-cpp --static hello.pycp
+# 全静态自包含：运行时 + 内置扩展 + 依赖模块全部静态链入，产物为单个 exe
+./build/pycp --emit-cpp --compile-runtime=static hello.pycp
+
+# 依赖模块编成动态库（运行期 dlopen），运行时保持动态
+./build/pycp --emit-cpp --compile-modules=shared hello.pycp
+
+# 按模块覆盖（内置扩展或某个依赖模块）：仅 b_dep 编成动态库
+./build/pycp --emit-cpp --compile-module:b_dep=shared hello.pycp
 ```
 
-| 维度 | `--shared`（默认） | `--static` |
-|------|--------------------|------------|
-| 运行时 | 动态链接 `PycpRuntime`（DLL/so） | 静态链接 `libPycpRuntime.a` |
-| 原生扩展（io/Pycp/classtools） | 运行时从 `stdlib/` 加载 DLL/so | 静态链接 `libPycpExt_*.a` |
-| `PYCP_STATIC` 宏 | 不定义 | exe 与静态扩展库均定义（Windows 必需） |
-| `-rdynamic` / rpath | 需要 | 不需要 |
-| POST_BUILD 复制 | 复制 `stdlib/` + `lib/`（Windows 另复制运行时 DLL） | 无 |
-| 产物形态 | exe + 同级 `stdlib/`、`lib/` | 单个自包含 exe |
+形态决策规则：
 
-- `--static` 与 `--shared` 同时给出会报错；二者仅在 `--emit-cpp` 场景下有效。
+- **默认**：依赖模块 `static`（编进主程序，与历史行为一致）；内置扩展跟随运行时
+  （`runtime=shared` → 从 `stdlib/` 加载；`runtime=static` → 链接 `libPycpExt_*.a`）。
+- **冲突自动裁决**：任何被 ≥2 个链接目标（主程序 / 多个动态库）引用的模块会**强制
+  提升为 `shared`**（否则同一模块被复制进多个目标，产生两份模块对象与注册表覆盖）。
+  仅当所有模块都静态打包进主程序时才不存在跨目标共享。
+- **`--compile-runtime=static` 与任何动态模块组合都直接报错**——运行时若静态链接而
+  又有动态库存在，进程内会出现两份运行时状态（GC 池 / 小整数池 / 句柄缓存）。
+- 旧 `--shared` / `--static` 保留为 `--compile-runtime=` 的兼容别名（deprecated）；
+  二者不能与 `--compile-*` 参数混用。
+
+| 维度 | `--compile-runtime=shared`（默认） | `--compile-runtime=static` |
+|------|------------------------------------|----------------------------|
+| 运行时 | 动态链接 `PycpRuntime`（DLL/so） | 静态链接 `libPycpRuntime.a` |
+| 内置扩展（默认） | 运行时从 `stdlib/` 加载 DLL/so | 静态链接 `libPycpExt_*.a` |
+| 静态 `PYCP_STATIC` 宏 | 不定义 | 参与编译的 TU 均定义（Windows 必需） |
+| 动态模块 DLL | `PYCP_BUILDING_MODULE`（Windows 导出入口符号） | 不允许存在 |
+| `-rdynamic` / rpath / POST_BUILD | 需要（复制 `stdlib/`、`lib/` 与 DLL 到 exe 同级） | 不需要 |
+| 产物形态 | exe + 同级 `stdlib/`、`lib/`（+ 模块 DLL） | 全静态时单个自包含 exe |
+
 - static 模式通过 `dist/lib/` 下的 `libPycpExt_io.a` / `libPycpExt_Pycp.a` /
-  `libPycpExt_classtools.a` 三个静态扩展库 + 生成器发射的 `__pycp_builtin_modules.gen.cpp`
-  注册桩（`RegisterAotModule`）实现"扩展静态链接并强制被链接器拉入"，因此静态产物
-  无需依赖外部 `stdlib/`，可单独拷到任意机器运行。
-- 两者生成的代码完全一致，仅链接方式不同；行为上应与解释器逐字节一致（见下文一致性回归）。
+  `libPycpExt_classtools.a` 静态扩展库 + 生成器发射的注册/拉入桩
+  （`RegisterAotModule`）实现"扩展静态链接并强制被链接器拉入"。
+- 转译生成的 `.gen.cpp` 若被编译为 DLL，其 `PycpModule_<name>` 入口由
+  `PYCP_MODULE_EXPORT`（`PycpExt.h`）在 Windows 下显式导出，DLL 以 `<name>.so/.dll`
+  命名并复制到 exe 同级的 `stdlib/`，运行期按模块名加载。
+- 行为上应与解释器逐字节一致（见下文一致性回归）。
 
 > 说明：AOT 已实现完整的指令翻译（含类定义 `MAKE_CLASS`、属性
 > `LOAD_ATTR`/`STORE_ATTR`、列表字面量与下标 `BUILD_LIST`/`GET_ITEM`/`SET_ITEM`、
@@ -360,21 +383,32 @@ io.print(a.age())   # 类外访问 public 方法正常
 
 `import xxx` 按下表顺序查找，**命中即终止**，不再继续下探：
 
-| 优先级 | 查找位置 | 候选形式 |
+| 优先级 | 查找位置 | 候选形式（每层内部 `.pycp` 源码优先于同名动态库） |
 |--------|----------|----------|
-| 1 | 当前程序已链接的符号 | `PycpModule_xxx` |
-| 2 | 可执行文件所在目录的 `stdlib/` | `xxx.so` → `xxx.pycp` |
-| 3 | 当前工作目录 → 脚本所在目录 | `xxx.so` → `xxx.pycp` |
-| 4 | 解释器编译期收集的依赖表（`registry`） | `.pycp` |
-| — | 全部未命中 | 抛 `ImportError: No module named 'xxx'` |
+| 1 | 进程级缓存 / 当前程序已链接的符号（`PycpModule_xxx` + AOT 静态注册表） | 编译产物 |
+| 2 | 当前工作目录（cwd） | `xxx.pycp` → `xxx.so` |
+| 3 | 脚本所在目录（为 `.` 时与 cwd 重合而跳过） | `xxx.pycp` → `xxx.so` |
+| 4 | 可执行文件所在目录的 `stdlib/` | `xxx.pycp` → `xxx.so` |
+| — | 全部未命中 | 抛 `ImportError`（附各层候选目录诊断） |
 
 说明：
 
-- **同层动态库优先于 `.pycp` 源码**。原生扩展（`xxx.so`，入口符号 `PycpModule_xxx`）性能更好，也与 `stdlib/` 现状（全部为动态库）一致。
-- **第 1 层主要针对编译产物**。AOT（`--emit-cpp`）生成的每个模块都导出 `PycpModule_<模块名>`，因此「多个 `.gen.cpp` 一起链接」或「把 `b.gen.cpp` 编成静态库再链接」都能正常 `import b`。该层由两级机制互为兜底：全局符号查找（`dlsym`）与静态初始化注册表——主程序符号默认不进动态符号表，未加 `-rdynamic` 时前者会失效，此时后者生效。
-- **第 2 层的 `stdlib/` 随可执行文件定位**：解释器取 `pycp` 自身所在目录，AOT 编译出的独立程序取该程序自身所在目录。
-- **`.pycp` 源码需要宿主支持**。解析器位于 frontend，解释器（`pycp`）已注册编译器钩子，故第 2/3 层可直接加载 `.pycp`；AOT 生成的独立程序未注册该钩子，其 `stdlib/` 仅识别动态库。
-- **第 1 层命中符号但初始化返回空**时直接抛 `ImportError`，不继续下探——符号存在即表明明确的链接意图，静默回退会掩盖「静态库成员被链接器丢弃」这类问题。
+- **本地优先 + 源码优先**：文件系统层（2/3/4）由近及远，且每层内 **`.pycp` 源码优先于
+  同名动态库**——"所见即所得"，改源码即生效；也因此允许在 `stdlib/` 下放置与内置
+  扩展同名的 `.pycp` 源码来覆盖内置扩展（与 Python 的"扩展优先"相反，是 Pycp 的
+  刻意选择）。
+- **第 1 层主要针对编译产物**。AOT（`--emit-cpp`）生成的每个模块都导出
+  `PycpModule_<模块名>`（或经静态注册表登记），因此「编成静态库链接进主程序」、
+  「编成动态库运行期加载」都能正常 `import`。该层由两级机制互为兜底：全局符号查找
+  （`dlsym`）与静态初始化注册表。
+- **第 4 层的 `stdlib/` 随可执行文件定位**：解释器取 `pycp` 自身所在目录，AOT 编译出的
+  独立程序取该程序自身所在目录。
+- **`.pycp` 源码需要宿主支持**。解析器位于 frontend，解释器（`pycp`）已注册编译器钩子，
+  故第 2/3/4 层可直接加载 `.pycp`；AOT 生成的独立程序未注册该钩子，只认动态库——这正是
+  "转译产物不能调用未转译源码"的机制：转译期 `--show-imports` 会列出全部 import 的解析
+  结果，未解析到源码的依赖将按运行期动态库处理。
+- **第 1 层命中符号但初始化返回空**时直接抛 `ImportError`，不继续下探——符号存在即表明
+  明确的链接意图，静默回退会掩盖「静态库成员被链接器丢弃」这类问题。
 
 > **关于静态库**：把 `b.gen.cpp` 编成 `.a` 再链接时，生成代码会自动为依赖模块插入**链接拉入桩**（在入口翻译单元显式引用 `PycpModule_b`），强制链接器拉入对应目标文件。否则未被引用的成员会被整体丢弃，表现为「编译链接全部成功，运行时却报 `ImportError`」。因此**无需** `-Wl,--whole-archive`；若把多个依赖分别编成静态库，仍须遵守静态库的标准链接顺序（依赖方在前、被依赖方在后）。
 

@@ -101,15 +101,25 @@ PYCP_API Object* Call(Object* callable, Object** argv, std::size_t argc);
 //   0) 进程级缓存（跨 VM 实例、跨 AOT 调用共享）
 //   1) 进程内符号：dlsym(RTLD_DEFAULT, "PycpModule_<name>")；
 //      未找到再查 AOT 静态注册表（RegisterAotModule 登记）
-//   2) 可执行文件所在目录的 stdlib/
-//   3) 当前工作目录，其次脚本所在目录（SetModuleSearchDir 设置）
+//   2) 当前工作目录（cwd）
+//   3) 脚本所在目录（SetModuleSearchDir 设置；为 "." 时与 cwd 重合而跳过）
+//   4) 可执行文件所在目录的 stdlib/
 //
-// 第 2/3 层在单个目录内均按「原生动态库 <name>.so 优先，其次 .pycp 源码」
-// 的顺序探测；.pycp 源码需宿主经 SetSourceModuleCompiler 注册编译器钩子，
-// 未注册时该候选形式自动禁用（AOT 生成的独立程序仅识别动态库）。
+// 文件系统层（2/3/4）采用「本地优先」：离用户最近的候选先探测，故本地
+// 同名模块（含源码）优先于 stdlib/ 下的内置扩展。每个目录内部均按
+// 「.pycp 源码 → 同名动态库 <name>.so」探测：源码优先使"改源码即生效"，
+// 也允许在 stdlib/ 下放置与内置扩展同名的 .pycp 来覆盖它（与 Python
+// 的「扩展模块优先」相反，是 Pycp 的刻意选择）。
+//
+// .pycp 源码需宿主经 SetSourceModuleCompiler 注册编译器钩子，未注册时
+// 该候选形式自动禁用（AOT 生成的独立程序仅识别动态库），这正是「转译
+// 产物不能调用未转译源码」的实现基础。
 //
 // 第 1 层命中符号但初始化返回 nullptr 时抛 ImportError：符号存在即表明
 // 明确的链接意图，静默下探会掩盖「静态库成员被链接器丢弃」这类问题。
+//
+// 已知限制：进程级缓存不按 mtime/内容哈希失效，故同一进程内修改 .pycp
+// 源码不会重新加载（重启进程后生效）。
 //
 // 返回值三态：
 //   非 nullptr                        : 已初始化完成的模块对象
@@ -120,12 +130,14 @@ PYCP_API Object* Call(Object* callable, Object** argv, std::size_t argc);
 //
 // out_source 默认 nullptr，保证 AOT 已生成的 ImportModule(dep) 调用点
 // 零改动（存量 .gen.cpp 无需重新生成即可编译）。
+// diagnostics 非空时，逐层记录未命中的候选目录，供调用方拼进 ImportError。
 //
 // 模块对象经 GC_AddRoot + Incref 常驻进程，跨 VM 实例存活，由 Finalize
 // 统一回收。from-import 的属性提取由调用方负责（本函数只管模块对象加载），
 // 职责与 PyImport_ImportModule 对齐。
 PYCP_API Module* ImportModule(const std::string& name,
-                              BC::Module** out_source = nullptr);
+                              BC::Module** out_source = nullptr,
+                              std::string* diagnostics = nullptr);
 
 // 设置脚本所在目录（第 3 层的第二个候选目录），进程级。
 // 解释器在 VM 构造时按入口文件路径设置；AOT 生成的独立程序无需设置。

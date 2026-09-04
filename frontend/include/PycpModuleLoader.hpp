@@ -21,16 +21,37 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 namespace Pycp {
+
+// 编译期 import 解析结果分类（转译期判定「模块来源」，供 AOT 闭包校验
+// 与 --show-imports 诊断）。kExternal 在本层不产生（由上层把 kUnresolved
+// 中「显式声明为外部动态库」的名字提升而来）。
+enum class ImportKind {
+	kTranslated, // 已 resolve 到 .pycp 并纳入转译
+	kExternal,   // 显式声明的外部动态库（--external:<name>）
+	kUnresolved, // 既无源码也未声明：默认警告；--strict-imports 下报错
+};
+
+struct ImportResolution {
+	std::string name;
+	ImportKind kind = ImportKind::kUnresolved;
+	std::string path; // kTranslated 时为源文件路径，其余为空
+};
 
 class ModuleLoader {
 public:
 	// 加载入口文件及其全部 import 依赖。
-	//   entry_path : 入口 .pycp 文件路径（相对或绝对均可）
+	//   entry_path  : 入口 .pycp 文件路径（相对或绝对均可）
+	//   resolutions : 可选输出；按 import 语句出现的模块名逐条记录
+	//                 kTranslated / kUnresolved（按名去重，稳定顺序），
+	//                 供 AOT 闭包校验与 --show-imports 诊断使用。
 	// 返回按「模块名」索引的编译结果表（含入口模块，入口模块名为 ""）。
 	// 任何模块找不到 / 语法错误时抛 Pycp::Exception。
-	static std::map<std::string, BC::Module> load_all(const std::string& entry_path);
+	static std::map<std::string, BC::Module> load_all(
+		const std::string& entry_path,
+		std::vector<ImportResolution>* resolutions = nullptr);
 
 	// 编译单个源文件为 BC::Module（parsef + Codegen::Compile）。
 	// 供 load_all 内部使用，也供 PycpMain 复用。

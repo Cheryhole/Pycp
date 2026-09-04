@@ -1,0 +1,8 @@
+// 全未命中：import 一个在 cwd / 脚本目录 / stdlib/ 都存在的名字（且非
+// 静态链接、非内置扩展）。期望 ImportError 非零退出，错误信息附带各层
+// 候选目录诊断（No module named '<name>'. + 各层）。
+import io
+import Pycp
+import totally_missing
+
+io.print("unreachable")

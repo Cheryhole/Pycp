@@ -127,7 +127,9 @@ std::string ModuleLoader::resolve(const std::string& modname,
 	return "";
 }
 
-std::map<std::string, BC::Module> ModuleLoader::load_all(const std::string& entry_path) {
+std::map<std::string, BC::Module> ModuleLoader::load_all(
+	const std::string& entry_path,
+	std::vector<ImportResolution>* resolutions) {
 	std::map<std::string, BC::Module> modules;
 	// 入口文件所在目录（所有 import 均在此目录查找）
 	const std::string entry_dir = dir_of(entry_path);
@@ -136,6 +138,21 @@ std::map<std::string, BC::Module> ModuleLoader::load_all(const std::string& entr
 	// 用「待处理队列 + 已登记集合」做广度优先收集，避免重复编译。
 	std::vector<std::pair<std::string, std::string>> queue; // (模块名, 文件路径)
 	std::vector<std::string> seen_paths;
+
+	// 解析清单去重：按模块名只记第一条（不同模块重复 import 同一名字
+	// 时，结论一致，无需重复记录）。
+	auto record = [&resolutions](const std::string& dep_name, ImportKind kind,
+	                             const std::string& dep_path) {
+		if (resolutions == nullptr) return;
+		for (const auto& r : *resolutions) {
+			if (r.name == dep_name) return;
+		}
+		ImportResolution r;
+		r.name = dep_name;
+		r.kind = kind;
+		r.path = dep_path;
+		resolutions->push_back(std::move(r));
+	};
 
 	// 入口模块：模块名 = basename（去扩展名），便于被依赖模块反向 import。
 	const std::string entry_name = base_name_no_ext(entry_path);
@@ -153,11 +170,12 @@ std::map<std::string, BC::Module> ModuleLoader::load_all(const std::string& entr
 		for (std::size_t ii = 0; ii < m.imports.size(); ++ii) {
 			const std::string& dep = m.imports[ii];
 
-			// 无法 resolve 为 .pycp 的模块名统一跳过（可能是动态库扩展，
-			// 交由运行时 VM::load_module 的 LoadNativeModule 处理；命中原生
-			// 扩展则加载，否则运行时抛 ImportError）。
+			// 解析为 .pycp 源码路径；失败可能是动态库扩展，也可能是模块名
+			// 拼写错误。为让 AOT 闭包可判定，这里如实记录 kUnresolved，
+			// 由上层（PycpMain）对 AOT 路径做警告或 --external 提升。
 			std::string dep_path = resolve(dep, entry_dir);
 			if (dep_path.empty()) {
+				record(dep, ImportKind::kUnresolved, "");
 				continue;
 			}
 			// 去重（按路径）
@@ -165,9 +183,13 @@ std::map<std::string, BC::Module> ModuleLoader::load_all(const std::string& entr
 			for (const std::string& sp : seen_paths) {
 				if (sp == dep_path) { already = true; break; }
 			}
-			if (already) continue;
+			if (already) {
+				record(dep, ImportKind::kTranslated, dep_path);
+				continue;
+			}
 			seen_paths.push_back(dep_path);
 			queue.push_back({dep, dep_path});
+			record(dep, ImportKind::kTranslated, dep_path);
 		}
 
 		modules[modname] = std::move(m);

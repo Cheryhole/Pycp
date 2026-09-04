@@ -244,30 +244,40 @@ Module* LoadNativeModuleFrom(const std::string& dir, const std::string& name,
 	const std::string fname = name + native_ext_suffix();
 	std::error_code ec;
 
-	// 动态库优先：原生扩展性能更好，且与 stdlib 现状（全为 .so）一致。
+	// 源码优先：同层同时存在 <name>.pycp 与 <name>.so 时，优先按源码模块
+	// 加载（解释态语义）。与 Python 的「扩展模块优先」相反——Pycp 让
+	// 「所见即所得」的源码优先于同名动态库：改源码即生效，不被同名 .so
+	// 悄悄遮蔽；也允许在 stdlib/ 下放置与内置扩展同名的 .pycp 来覆盖它。
+	//
+	// 源码形式需调用方能接收 BC::Module（由其执行顶层），且宿主必须注册
+	// 了源码编译器钩子；否则本候选形式不可用（旧接口 LoadNativeModule
+	// 与 AOT 生成的独立程序即属此情形，自动降级到动态库）。
+	if (out_source != nullptr) {
+		const std::string src_path = dir.empty()
+			? ("./" + name + Pycp::EXT_PYCP)
+			: (dir + "/" + name + Pycp::EXT_PYCP);
+		if (std::filesystem::exists(src_path, ec)) {
+			// 未注册编译器钩子（AOT 生成的独立程序）：跳过源码形式。
+			SourceModuleCompiler compiler = g_source_compiler.load();
+			if (compiler != nullptr) {
+				BC::Module* bc = compiler(src_path.c_str());
+				if (bc != nullptr) {
+					// 已编译为字节码但尚未执行顶层，交由 VM 完成
+					// （与 registry 路径一致）。
+					*out_source = bc;
+					return nullptr;
+				}
+			}
+		}
+	}
+
+	// 其次同名动态库（原生扩展，类似 Python 的 .pyd）。
 	const std::string so_path = dir.empty()
 		? ("./" + fname) : (dir + "/" + fname);
 	if (std::filesystem::exists(so_path, ec)) {
 		return load_native_from_path(so_path, name);
 	}
 
-	// 其次 .pycp 源码。需调用方能接收 BC::Module（由其执行顶层），
-	// 否则本候选形式不可用（旧接口 LoadNativeModule 即属此情形）。
-	if (out_source == nullptr) return nullptr;
-	const std::string src_path = dir.empty()
-		? ("./" + name + Pycp::EXT_PYCP)
-		: (dir + "/" + name + Pycp::EXT_PYCP);
-	if (!std::filesystem::exists(src_path, ec)) return nullptr;
-
-	// 未注册编译器钩子（AOT 生成的独立程序）：跳过源码形式。
-	SourceModuleCompiler compiler = g_source_compiler.load();
-	if (compiler == nullptr) return nullptr;
-
-	BC::Module* bc = compiler(src_path.c_str());
-	if (bc == nullptr) return nullptr;
-
-	// 已编译为字节码但尚未执行顶层，交由 VM 完成（与 registry 路径一致）。
-	*out_source = bc;
 	return nullptr;
 }
 
