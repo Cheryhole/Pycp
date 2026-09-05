@@ -80,6 +80,9 @@ namespace {
 
 struct Options {
 	std::string input_file;
+	// 脚本参数（入口脚本之后的位置参数），传给 pycp.argv，不含 pycp 可执行
+	// 文件本身。仅解释执行路径消费；--emit-cpp/--compile 等无需参数。
+	std::vector<std::string> script_args;
 	std::string output_file;
 	bool compile = false;    // -c / -b
 	bool interpret = true;   // -i（默认解释执行）
@@ -303,7 +306,13 @@ bool parse_args(int argc, char** argv, Options& opt) {
 			std::cerr << "Error: unknown option '" << arg << "'." << std::endl;
 			return false;
 		} else {
-			opt.input_file = arg;
+			// 位置参数：首个作为入口脚本（input_file），其余收集为脚本参数
+			// 传给 pycp.argv（不含 pycp 可执行文件本身）。
+			if (opt.input_file.empty()) {
+				opt.input_file = arg;
+			} else {
+				opt.script_args.push_back(arg);
+			}
 		}
 	}
 	return true;
@@ -850,6 +859,15 @@ int main(int argc, char** argv) {
 		else {
 			// 解释执行：.pycp（递归收集 import 依赖后执行）或
 			//          .cpycp（单文件反序列化执行；import 依赖需随源一起编译）。
+			// 注入命令行参数到运行时，使 pycp.argv == [脚本名, 脚本参数...]：
+			// 脚本名即 input_file（不含 pycp 可执行文件本身），对齐用户预期。
+			// 须在 import pycp 触发模块加载前设置（模块构造时读 GetArgv 快照）。
+			std::vector<std::string> cli_argv;
+			cli_argv.reserve(1 + opt.script_args.size());
+			cli_argv.push_back(opt.input_file);
+			cli_argv.insert(cli_argv.end(), opt.script_args.begin(),
+			                opt.script_args.end());
+			Pycp::SetArgv(cli_argv);
 			if (has_suffix(opt.input_file, Pycp::EXT_CPYCP)) {
 				std::vector<uint8_t> bytes = read_file_bytes(opt.input_file);
 				Pycp::BC::Module module = Pycp::BC::Deserialize(bytes.data(), bytes.size());

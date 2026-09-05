@@ -64,10 +64,10 @@ class o2 inherits o1{
 	}
 }
 
-io.print(pycp.introspect(o1))
-io.print(pycp.introspect(o2))
+io.print(pycp.insp(o1))
+io.print(pycp.insp(o2))
 o = o2()
-io.print(pycp.introspect(o))
+io.print(pycp.insp(o))
 
 
 

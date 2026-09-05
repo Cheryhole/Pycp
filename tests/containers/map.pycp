@@ -34,15 +34,15 @@ io.print(m)                 // {a: 100, 42: answer}
 // ===== 哈希：仅 Integer/String 支持 =====
 i = 42
 io.print(i.__hash__())                 // Integer 哈希
-io.print(pycp.introspect(i))           // Integer 成员含 __hash__
+io.print(pycp.insp(i))           // Integer 成员含 __hash__
 s = "abc"
 io.print(s.__hash__())                 // String 哈希
-io.print(pycp.introspect(s))           // String 成员含 __hash__
+io.print(pycp.insp(s))           // String 成员含 __hash__
 
-// length 方法 + __introspect__
+// length 方法 + __inspect__
 io.print(m.length())
-io.print(m.__introspect__())
-io.print(pycp.introspect(pycp.Map))    // Map 类型类的成员（含方法）
+io.print(m.__inspect__())
+io.print(pycp.insp(pycp.Map))    // Map 类型类的成员（含方法）
 
 // ===== 内置类型的 __map__ 视图应含方法成员（非空）=====
 // String 的 __map__ 视图包含 __string__/__hash__ 等方法名
@@ -50,7 +50,7 @@ sm = "abc"
 io.print(sm.__map__())                 // 非空，含方法名
 // Map 的 __map__ 视图包含 length/__get_item__ 等方法名
 io.print(m.__map__())                   // 非空，含方法名
-io.print(m.__map__().__introspect__()) // 视图自身的成员名
+io.print(m.__map__().__inspect__()) // 视图自身的成员名
 
 // ===== pycp.Boolean 按对象真值判断 =====
 io.print(pycp.Boolean(""))    // False
@@ -86,7 +86,7 @@ io.print(p.__map__())          // x 已移除
 
 // 视图（__map__）应同时包含属性与方法名（__str__ 为类方法）
 pt_view = p.__map__()
-io.print(pt_view.__introspect__())    // 含 x/y 与 __str__ 等方法名
+io.print(pt_view.__inspect__())    // 含 x/y 与 __str__ 等方法名
 io.print(pt_view["__str__"] != None)  // 方法经 __get_attribute__ 可取到的可调用对象
 
 // ===== delete 三种形态 =====
@@ -272,8 +272,8 @@ io.print(sm.length())               // 2
 io.print(sm["k1"])                  // 10
 io.print(sm["k2"])                  // 20
 
-// keys 应出现在 introspect 列表中
-io.print(pycp.introspect(pycp.Map))
-io.print(km.__introspect__())
+// keys 应出现在 inspect 列表中
+io.print(pycp.insp(pycp.Map))
+io.print(km.__inspect__())
 
 io.print("done")

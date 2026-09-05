@@ -13,6 +13,7 @@
 #include "PycpABI.hpp"
 #include "PycpClass.hpp"
 #include "PycpMagic.hpp"     // GetMagicMethodFunction
+#include "PycpNativeExt.hpp" // SetArgv/GetArgv：构建 pycp.argv 的宿主注入来源
 #include "PycpExt.h"         // PYCP_EXPORT_MODULE（Windows 下带 dllexport）
 
 namespace Pycp {
@@ -176,16 +177,17 @@ Object* _builtin_map_ctor(Object*, Object** argv, std::size_t argc) {
 	throw TypeError("cannot convert '" + src->type_name() + "' to Map.");
 }
 
-// introspect(obj)：返回包含 obj 所有成员名称（含方法）的 List。
-Object* _builtin_introspect(Object*, Object** argv, std::size_t argc) {
-	if (argc != 1) throw TypeError("introspect() expects exactly 1 argument.");
-	if (argv[0] == nullptr) throw TypeError("introspect() argument is null.");
-	return argv[0]->__introspect__();
+// insp(obj)：返回包含 obj 所有成员名称（含方法）的 List。
+// 模块公开接口名与 Python 惯例一致用短名 insp（inspect 的缩写）。
+Object* _builtin_insp(Object*, Object** argv, std::size_t argc) {
+	if (argc != 1) throw TypeError("insp() expects exactly 1 argument.");
+	if (argv[0] == nullptr) throw TypeError("insp() argument is null.");
+	return argv[0]->__inspect__();
 }
 
 // 将类对象以指定名字放入模块命名空间（构造 BuiltinTypeClass ->
 // Incref 进 map -> 释放 Owned）。返回 cls 以便调用方 add_method 注册
-// 类型方法，使 Pycp.X.__introspect__() 能枚举到（而非空列表）。
+// 类型方法，使 Pycp.X.__inspect__() 能枚举到（而非空列表）。
 BuiltinTypeClass* set_type_class(Module* mod, const char* name, PycpNativeFunction ctor) {
 	auto* ns = mod->get_namespace();
 	BuiltinTypeClass* cls = New<BuiltinTypeClass>(name, ctor);
@@ -322,7 +324,7 @@ Module* make_pycp_module() {
 	// 内置类型类：Pycp.String(x) / Pycp.Integer(x)。
 	// 调用时走类实例化路径（BuiltinTypeClass::instantiate），把参数
 	// 传给构造回调，返回内置 String / Integer 对象。
-	// 注册类型方法，使 Pycp.X.__introspect__() 枚举到（与实例 __introspect__ 一致）。
+	// 注册类型方法，使 Pycp.X.__inspect__() 枚举到（与实例 __inspect__ 一致）。
 	BuiltinTypeClass* string_cls = set_type_class(mod, "String", _builtin_string_ctor);
 	BuiltinTypeClass* integer_cls = set_type_class(mod, "Integer", _builtin_integer_ctor);
 	BuiltinTypeClass* list_cls    = set_type_class(mod, "List",   _builtin_list_ctor);
@@ -378,8 +380,23 @@ Module* make_pycp_module() {
 	set_func(mod, "private", _builtin_private);
 	set_func(mod, "public",  _builtin_public);
 
-	// introspect(obj)：返回对象所有成员名称（含方法）的 List。
-	set_func(mod, "introspect", _builtin_introspect);
+	// insp(obj)：返回对象所有成员名称（含方法）的 List。
+	set_func(mod, "insp", _builtin_insp);
+
+	// argv：命令行参数列表（对齐 Python 的 sys.argv）。构造时从宿主注入的
+	// 全局 argv（Pycp::GetArgv）构建为 List[String]，读一次快照加入命名空间。
+	// 未注入（如 REPL）时为空列表 []。各元素为 String（FromCString 返回 Owned，
+	// append 内部 Incref），故列表与元素均交命名空间持有引用。
+	{
+		auto* ns = mod->get_namespace();
+		List* argv_list = List::New();
+		for (const auto& a : Pycp::GetArgv()) {
+			argv_list->append(String::FromCString(a.c_str()));
+		}
+		(*ns)["argv"] = argv_list;
+		Incref(argv_list);
+		Decref(argv_list); // 命名空间持有
+	}
 
 	return mod;
 }

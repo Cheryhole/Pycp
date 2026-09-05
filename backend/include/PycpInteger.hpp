@@ -43,7 +43,7 @@ class PYCP_API Integer : public Object{
 		Object* __not_equal__(Object*) override;
 		Object* __greater_than__(Object*) override;
 		Object* __greater_equal__(Object*) override;
-		Object* __introspect__() override;
+		Object* __inspect__() override;
 		Object* __hash__() override;
 
 		static void Initialize();

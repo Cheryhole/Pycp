@@ -35,7 +35,7 @@ class PYCP_API ListIterator : public Object {
 
 		Object* __next__() override;
 		Object* __iterator__() override { Incref(this); return this; }
-		Object* __introspect__() override;
+		Object* __inspect__() override;
 
 		// GC 子引用：遍历持有的 source。
 		void foreach_ref(const std::function<void(Object*)>& visit) override;
@@ -61,7 +61,7 @@ class PYCP_API StringIterator : public Object {
 
 		Object* __next__() override;
 		Object* __iterator__() override { Incref(this); return this; }
-		Object* __introspect__() override;
+		Object* __inspect__() override;
 
 		void foreach_ref(const std::function<void(Object*)>& visit) override;
 };

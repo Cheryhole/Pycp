@@ -1,6 +1,6 @@
 # Pycp
 
-Pycp 是一个 **Python-like 语言** 的编译器与解释器，使用 C++17 实现。它采用与 Python 相近的语法，拥有自有的词法/语法分析器、AST、代码生成器、栈式字节码虚拟机（VM）以及序列化字节码格式。
+Pycp 是一个 **Python-like 语言** 的编译器与解释器，使用 C++17 实现。它采用与 Python 相近的语法，重新实现了词法/语法分析器、AST、代码生成器、栈式字节码虚拟机（VM）以及序列化字节码格式。
 
 Pycp 将源码 `.pycp` 编译为自定义字节码 `.cpycp`（类似 Python 的 `.pyc`），随后由内嵌的 Pycp VM 解释执行。
 
@@ -348,6 +348,23 @@ io.stdout.write("\n")
 # -12
 # 8
 ```
+
+**5.5 命令行参数 `pycp.argv`**
+
+`pycp.argv` 返回启动参数列表（`List[String]`），语义对齐 Python 的 `sys.argv`：
+
+```
+import io
+import pycp
+
+# 运行：pycp args.pycp alice bob
+# 输出：["args.pycp", "alice", "bob"]
+io.print(pycp.argv)
+io.print(pycp.String(pycp.argv.length()))   # 3
+io.print(pycp.argv[0])                       # "args.pycp"（不含 pycp 可执行文件）
+```
+
+解释运行下 `argv[0]` 为脚本名；AOT 编译产物运行下 `argv[0]` 为程序完整路径；REPL 下为空列表 `[]`。
 
 **6. 标准输入输出与可见性装饰器示例**
 
@@ -803,6 +820,12 @@ cmake --build build -j
 - **内置库**（`stdlib/` 目录，C++ 原生实现）：
   - `io`：`io.stdin` / `io.stdout` / `io.stderr` 文件对象（`write` / `readline` 方法），以及 `io.print(value)`（输出内容后自动换行）与 `io.input(prompt)`（打印提示后读取一行）。
   - `pycp`：`pycp.String(x)` / `pycp.Integer(x)` 类型转换类、`pycp.Object` 基类，以及 `pycp.public` / `pycp.private` 可见性装饰器函数。
+    - **`pycp.argv`**：命令行参数列表（`List[String]`），语义对齐 Python 的 `sys.argv`。
+      - 解释运行（如 `pycp test.pycp arg1 arg2`）：`pycp.argv == ["test.pycp", "arg1", "arg2"]`——
+        列表**不含 `pycp` 可执行文件本身**，仅含脚本名与传入参数。
+      - AOT 编译产物（如 `./test arg1 arg2`）：`pycp.argv == ["<程序完整路径>", "arg1", "arg2"]`，
+        `argv[0]` 为程序路径（对齐 `sys.argv[0]`）。
+      - REPL（无参数 `pycp`）：空列表 `[]`。
   - `classtools`：`classtools.super()`（返回父类）、`classtools.public` / `classtools.private`（可见性装饰器函数，与 pycp 库功能一致）。
 - 本版起不注入任何内建函数（不导入库时命名空间仅含用户定义内容）。
 

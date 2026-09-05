@@ -123,14 +123,14 @@ Object* String::__iterator__() {
 	return Pycp::New<StringIterator>(this);
 }
 
-Object* String::__introspect__() {
+Object* String::__inspect__() {
 	// 先收集基类 members_ 中的 key，再添加 string 特有的魔术方法名。
-	List* lst = static_cast<List*>(Object::__introspect__());
+	List* lst = static_cast<List*>(Object::__inspect__());
 	std::vector<std::string> extra = {
 		"__integer__", "__string__", "__boolean__", "__addition__", "__multiplication__",
 		"__equal__",
 		"__get_item__", "__list__", "__iterator__",
-		"__get_attribute__", "__set_attribute__", "__introspect__",
+		"__get_attribute__", "__set_attribute__", "__inspect__",
 		"__hash__",
 	};
 	for (const auto& n : extra) {

@@ -107,7 +107,7 @@ public:
 	Object* __boolean__() override;
 	Object* __string__() override;
 	Object* __get_attribute__(const std::string& name) override;
-	Object* __introspect__() override;
+	Object* __inspect__() override;
 
 	// GC 子引用遍历：枚举所有键与值，以及视图 owner_。
 	void foreach_ref(const std::function<void(Object*)>& visit) override;

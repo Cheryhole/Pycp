@@ -56,7 +56,7 @@ class PYCP_API Object{
 
 	protected:
 		// 成员字典：name -> Object*（类似 Python 的 __dict__）。
-		// 供 __get_attribute__ / __set_attribute__ / __introspect__ 使用。
+		// 供 __get_attribute__ / __set_attribute__ / __inspect__ 使用。
 		std::unordered_map<std::string, Object*> members_;
 
 	public:
@@ -164,9 +164,9 @@ class PYCP_API Object{
 	virtual Object* __iterator__();
 	virtual Object* __next__();
 
-	// 属性名枚举（Pycp.introspect(obj)）：返回本对象所有成员名称的
+	// 属性名枚举（Pycp.insp(obj)）：返回本对象所有成员名称的
 	// List（含属性与方法）。默认返回 members_ 的 key；子类可 override 添加额外成员名。
-	virtual Object* __introspect__();
+	virtual Object* __inspect__();
 
 	// GC 子引用遍历：枚举本对象持有的 Object* 子引用，供标记-清除与
 	// Decref 递归释放统一使用（替代旧 Type 枚举的 switch 分发）。

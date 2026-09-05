@@ -123,11 +123,11 @@ Module* make_io_module() {
 
 	// File 类型类：io.File(path [, mode]) 打开文件并返回 File 对象。
 	// 注册为 BuiltinTypeClass（而非普通 Function），使 io.File 显示为
-	// "<class "File">" 且 io.File.__introspect__() 返回其方法名（write/read/
+	// "<class "File">" 且 io.File.__inspect__() 返回其方法名（write/read/
 	// readline/readlines/close/open），而非空结果。
 	{
 		BuiltinTypeClass* file_cls = New<BuiltinTypeClass>("File", _builtin_file_ctor);
-		// 把实例方法注册进类型类 methods_，使 __introspect__() 能枚举到。
+		// 把实例方法注册进类型类 methods_，使 __inspect__() 能枚举到。
 		// 这些 Function 经由 File 实例的 __get_attribute__ 被懒创建并绑定，
 		// 此处仅用于类级成员枚举与类方法调用（如 io.File.open 静态风格）。
 		file_cls->add_method("write",     New<Function>("write",     File_write_fn()));

@@ -31,7 +31,7 @@ class PYCP_API String : public Object{
 		Object* __get_item__(Object* key) override;
 	Object* __list__() override;
 	Object* __iterator__() override;
-	Object* __introspect__() override;
+	Object* __inspect__() override;
 	Object* __hash__() override;
 
 	static void Initialize();

@@ -896,9 +896,14 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 
 	// ---- 入口 main（仅入口模块生成）----
 	if (is_entry) {
-		os << "int " << entry_name << "() {\n";
+		os << "int " << entry_name << "(int argc, char** argv) {\n";
 		os << "    Pycp::Initialize();\n";
 		os << "    try {\n";
+		os << "        // 注入命令行参数：pycp.argv == [程序完整路径, 程序参数...]，\n";
+		os << "        // 对齐 Python sys.argv（argv[0] 为程序路径）。须在模块初始化\n";
+		os << "        // 之前写入，供 pycp 内置模块构造时读取快照。\n";
+		os << "        std::vector<std::string> pycp_argv(argv, argv + argc);\n";
+		os << "        Pycp::SetArgv(pycp_argv);\n";
 		os << "        " << module_init_symbol(modname) << "();\n";
 		os << "        pycp_fini_consts();\n";
 		os << "        Pycp::Finalize();\n";
@@ -912,8 +917,8 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 		os << "    }\n";
 		os << "}\n\n";
 
-		os << "int main() {\n";
-		os << "    return " << entry_name << "();\n";
+		os << "int main(int argc, char** argv) {\n";
+		os << "    return " << entry_name << "(argc, argv);\n";
 		os << "}\n";
 	}
 

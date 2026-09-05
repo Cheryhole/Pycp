@@ -112,8 +112,8 @@ if none_bool {
     io.stdout.write("boolean_none_false_ok\n")
 }
 
-// __boolean__ 作为魔术方法可被属性访问（introspect 可见，人工观察输出）
-io.stdout.write(pycp.introspect("abc"))
+// __boolean__ 作为魔术方法可被属性访问（inspect 可见，人工观察输出）
+io.stdout.write(pycp.insp("abc"))
 io.stdout.write("\n")
 
 io.stdout.write("IMPORT TEST PASS\n")

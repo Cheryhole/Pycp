@@ -29,7 +29,7 @@ Object* _magic0(Object* receiver, const std::string& m) {
 	if (m == "__iterator__")  return receiver->__iterator__();
 	if (m == "__next__")      return receiver->__next__();
 	if (m == "__negation__")  return receiver->__negation__();
-	if (m == "__introspect__")   return receiver->__introspect__();
+	if (m == "__inspect__")   return receiver->__inspect__();
 	if (m == "__delete__")    return receiver->__delete__();
 	throw AttributeError("unknown magic method '" + m + "'");
 }
@@ -67,7 +67,7 @@ Object* _magic2(Object* receiver, const std::string& m, Object* arg1, Object* ar
 bool is_zero_arg_magic(const std::string& m) {
 	return m == "__integer__" || m == "__string__" || m == "__boolean__" ||
 	       m == "__list__" || m == "__iterator__" || m == "__next__" ||
-	       m == "__negation__" || m == "__introspect__" ||
+	       m == "__negation__" || m == "__inspect__" ||
 	       m == "__map__" || m == "__hash__" || m == "__delete__";
 }
 

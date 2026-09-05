@@ -57,6 +57,21 @@ PYCP_API const std::string& GetStdlibDir();
 using SourceModuleCompiler = BC::Module* (*)(const char* path);
 void SetSourceModuleCompiler(SourceModuleCompiler fn);
 
+// =============================================================
+// 命令行参数（argv）注入
+//
+// 宿主（PycpMain 解释器入口 / AOT 生成的 main）在启动时一次性写入，
+// 由 pycp 内置模块在构造时经 GetArgv() 读取并暴露为 pycp.argv
+// （语义对齐 Python 的 sys.argv）。默认空 vector => pycp.argv == []。
+//   - 解释运行：宿主传入 [脚本名, 脚本参数...]，不含 pycp 可执行文件本身。
+//   - AOT 产物：宿主透传完整 argc/argv，argv[0] 为程序路径（对齐 sys.argv[0]）。
+// 该状态进程级、写一次读多次，普通全局变量即可（无需原子/锁）。
+// =============================================================
+void SetArgv(const std::vector<std::string>& args);
+
+// 返回注入的参数列表（只读引用；未注入时为空 vector）。
+const std::vector<std::string>& GetArgv();
+
 // 第 1 层（前）：在当前进程已加载的全局符号表中查找 PycpModule_<name>。
 //   Linux/macOS : dlsym(RTLD_DEFAULT, ...)
 //   Windows     : GetModuleHandle(NULL) + GetProcAddress（仅主程序模块）

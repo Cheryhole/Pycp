@@ -88,7 +88,7 @@ public:
 	Object* __string__() override;
 
 	// 属性名枚举：返回类的方法名 + 通用成员。
-	Object* __introspect__() override;
+	Object* __inspect__() override;
 
 	// 数据成员键值对（含类方法名），供 __map__ 视图遍历/字符串化使用。
 	std::vector<std::pair<std::string, Object*>> member_pairs() const override;
@@ -164,7 +164,7 @@ public:
 	Object* get_bound_method(const std::string& name);
 
 	// 属性名枚举：返回字段名 + 类方法名 + 通用成员。
-	Object* __introspect__() override;
+	Object* __inspect__() override;
 
 	// 字符串转换：类定义 __string__ 时转发，否则返回默认 "<ClassName instance>"。
 	Object* __string__() override;

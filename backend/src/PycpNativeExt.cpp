@@ -9,6 +9,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #if defined(_WIN32)
 	#include <windows.h>
@@ -50,6 +51,10 @@ std::atomic<SourceModuleCompiler> g_source_compiler{&default_source_compiler};
 std::string g_exe_dir;
 bool g_exe_dir_computed = false;
 std::mutex g_exe_dir_mutex;
+
+// 命令行参数（argv）全局状态：宿主启动时 SetArgv 一次性写入，只读访问。
+// 默认空 vector => pycp.argv == []（如 REPL 等未注入场景）。
+std::vector<std::string> g_argv;
 
 // 关闭动态库句柄（跨平台）。
 void close_handle(void* h) {
@@ -127,6 +132,16 @@ const std::string& GetStdlibDir() {
 void SetSourceModuleCompiler(SourceModuleCompiler fn) {
 	// 传 nullptr 表示注销，回退到默认实现（源码层禁用）。
 	g_source_compiler.store(fn != nullptr ? fn : &default_source_compiler);
+}
+
+// 写入命令行参数（宿主启动时调用一次）；复制入全局状态，调用方 vector 可释放。
+void SetArgv(const std::vector<std::string>& args) {
+	g_argv = args;
+}
+
+// 返回注入的参数列表（只读引用；未注入时为空 vector）。
+const std::vector<std::string>& GetArgv() {
+	return g_argv;
 }
 
 // 调用模块入口函数，跨 ABI 边界保护异常。

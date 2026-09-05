@@ -181,8 +181,8 @@ Object* Class::__get_attribute__(const std::string& name) {
 		}
 		return fn;
 	}
-	// 3) 回退到魔术方法分派（如 __introspect__/__string__ 等），让
-	//    Class.__introspect__()、Class.__string__() 等可经魔术方法调用，
+	// 3) 回退到魔术方法分派（如 __inspect__/__string__ 等），让
+	//    Class.__inspect__()、Class.__string__() 等可经魔术方法调用，
 	//    而不仅依赖注册到 methods_ 的普通方法。
 	if (Pycp::IsMagicMethodName(name)) {
 		Function* magic = static_cast<Function*>(Pycp::GetMagicMethodFunction(name));
@@ -203,9 +203,9 @@ Object* Class::__string__() {
 	return String::FromCString(("<class \"" + display + "\">").c_str());
 }
 
-Object* Class::__introspect__() {
+Object* Class::__inspect__() {
 	// 返回类的字段声明名 + 方法名 + 通用成员。
-	List* lst = static_cast<List*>(Object::__introspect__());
+	List* lst = static_cast<List*>(Object::__inspect__());
 	// 类字段声明（如 mem1/mem2/mem3），过滤 private。
 	for (const auto& n : get_member_names()) {
 		if (member_is_private(n)) continue;
@@ -398,14 +398,14 @@ Object* Instance::get_bound_method(const std::string& name) {
 	return Pycp::New<BoundMethod>(this, fn);
 }
 
-Object* Instance::__introspect__() {
+Object* Instance::__inspect__() {
 	// 字段名 + 类方法名 + 通用成员。
-	List* lst = static_cast<List*>(Object::__introspect__());
+	List* lst = static_cast<List*>(Object::__inspect__());
 	std::vector<std::string> extra;
 	for (const auto& kv : fields_) extra.push_back(kv.first);
 	if (cls_ != nullptr) {
 		for (const auto& m : cls_->method_names()) {
-			// 过滤 private 方法（与 Class::__introspect__ 一致），
+			// 过滤 private 方法（与 Class::__inspect__ 一致），
 			// 避免经实例对象暴露 @private 方法。
 			if (cls_->method_is_private(m)) continue;
 			// 过滤 internal 的 __init_defaults__，不暴露到 pycp 代码。
@@ -626,7 +626,7 @@ std::vector<std::pair<std::string, Object*>> Instance::member_pairs() const {
 	}
 	if (cls_ != nullptr) {
 		for (const auto& m : cls_->method_names()) {
-			// 过滤 private 方法（与 __introspect__ 一致），
+			// 过滤 private 方法（与 __inspect__ 一致），
 			// 避免经实例对象暴露 @private 方法。
 			if (cls_->method_is_private(m)) continue;
 			// 过滤 internal 的 __init_defaults__，不暴露到 pycp 代码。

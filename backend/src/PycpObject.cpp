@@ -154,7 +154,7 @@ Object* Object::__map__(){
 }
 
 std::vector<std::pair<std::string, Object*>> Object::member_pairs() const {
-	// 合并数据成员（members_）与方法名（来自 __introspect__()，含魔术方法
+	// 合并数据成员（members_）与方法名（来自 __inspect__()，含魔术方法
 	// 与类型特有方法），使 __map__ 视图同时包含属性与方法（对齐 Instance/Class）。
 	// 方法名对应 value 填 nullptr，视图读取时经 __get_attribute__ 动态取可调用对象。
 	std::vector<std::pair<std::string, Object*>> out;
@@ -166,8 +166,8 @@ std::vector<std::pair<std::string, Object*>> Object::member_pairs() const {
 			out.emplace_back(kv.first, kv.second);
 		}
 	}
-	// 收集方法名：__introspect__() 为虚调用，子类已正确枚举各自方法名。
-	Object* mlist = const_cast<Object*>(this)->__introspect__();
+	// 收集方法名：__inspect__() 为虚调用，子类已正确枚举各自方法名。
+	Object* mlist = const_cast<Object*>(this)->__inspect__();
 	if (mlist != nullptr) {
 		List* lst = static_cast<List*>(mlist);
 		for (std::size_t i = 0; i < lst->size(); ++i) {
@@ -213,7 +213,7 @@ Object* Object::__next__(){
   throw TypeError("object is not an iterator");
 }
 
-Object* Object::__introspect__(){
+Object* Object::__inspect__(){
   // 默认返回成员字典中所有 key 的名称列表（含已设置的成员，可能含方法）。
   List* lst = Pycp::New<List>();
   for (const auto& kv : members_) {

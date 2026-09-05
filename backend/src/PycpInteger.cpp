@@ -180,15 +180,15 @@ Object* Integer::__greater_equal__(Object* other){
 		? instances[1] : instances[0];
 }
 
-Object* Integer::__introspect__() {
+Object* Integer::__inspect__() {
 	// 先收集基类 members_ 中的 key，再添加 integer 特有的魔术方法名。
-	List* lst = static_cast<List*>(Object::__introspect__());
+	List* lst = static_cast<List*>(Object::__inspect__());
 	std::vector<std::string> extra = {
 		"__integer__", "__string__", "__boolean__", "__negation__", "__addition__",
 		"__subtraction__", "__multiplication__", "__division__", "__power__",
 		"__less_than__", "__less_equal__", "__equal__", "__not_equal__",
 		"__greater_than__", "__greater_equal__",
-		"__get_attribute__", "__set_attribute__", "__introspect__",
+		"__get_attribute__", "__set_attribute__", "__inspect__",
 		"__hash__",
 	};
 	for (const auto& n : extra) {

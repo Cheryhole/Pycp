@@ -1,0 +1,17 @@
+// 验证 pycp.argv（对齐 Python 的 sys.argv）。
+// 解释运行：pycp argv_demo.pycp a b c  -> argv == [argv_demo.pycp, a, b, c]
+// AOT 产物：./aot_argv a b c           -> argv == [程序路径, a, b, c]
+import io
+import pycp
+
+func main() {
+	// argv[0]：解释器下为脚本名（不含 pycp 可执行文件），AOT 下为程序路径。
+	io.print("ARGV LEN=" + pycp.String(pycp.argv.length()))
+	io.print("ARGV0=" + pycp.argv[0])
+	io.print("ARGV1=" + pycp.argv[1])
+	io.print("ARGV2=" + pycp.argv[2])
+	io.print("ARGV3=" + pycp.argv[3])
+	io.print("ARGV TEST PASS")
+}
+
+main()

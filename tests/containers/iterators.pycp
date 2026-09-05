@@ -6,7 +6,7 @@ l.append(5)
 l[1] = 3
 
 io.print(l)
-io.print(pycp.introspect(l.__iterator__()))
+io.print(pycp.insp(l.__iterator__()))
 
 li = l.__iterator__()
 
