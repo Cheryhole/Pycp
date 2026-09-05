@@ -14,6 +14,7 @@
 // =============================================================
 
 #include "PycpBytecode.hpp"
+#include "aot/PycpModulePlan.hpp" // ModulePlan（决策回执）
 #include "aot/PycpProjectSpec.hpp" // LinkMode / ModuleKind
 
 #include <map>
@@ -25,8 +26,8 @@ namespace Pycp::AOT {
 // --emit-cpp 的模块形态与运行时形态选项（由 CLI 组装）。
 struct AotProjectOptions {
 	// 依赖模块（.pycp 转译产物）的全局默认形态（--compile-modules=）。
-	// 默认 kStatic：依赖模块编进主程序（与历史行为一致）。
-	ModuleKind default_module_kind = ModuleKind::kStatic;
+	// 默认 kShared：每个依赖模块编成独立模块 DLL，运行期按名加载。
+	ModuleKind default_module_kind = ModuleKind::kShared;
 	// 运行时库（libPycpRuntime）的形态（--compile-runtime=；
 	// 旧 --shared / --static 为兼容别名）。默认 kShared。
 	LinkMode runtime_link = LinkMode::kShared;
@@ -34,6 +35,19 @@ struct AotProjectOptions {
 	// 或内置扩展（io / Pycp / classtools）。内置扩展无覆盖时默认跟随
 	// runtime_link（static -> SDK 静态库链入；shared -> stdlib/ 加载）。
 	std::map<std::string, ModuleKind> overrides;
+};
+
+// --emit-cpp 的决策回执：把编排层内部的形态决策结果带回 CLI 供可观测输出
+// （--show-imports 的逐模块形态表）。纯数据，无 IO 语义。
+struct AotPlanReport {
+	// 依赖模块（不含入口）的最终形态与决策原因。
+	ModulePlan modules;
+	// 运行时库（libPycpRuntime）的形态。
+	LinkMode runtime_link = LinkMode::kShared;
+	// 以 SDK 静态库（libPycpExt_*.a）链入主程序的内置扩展。
+	std::vector<std::string> builtin_static;
+	// 运行期从 exe 同级 stdlib/ 加载的内置扩展。
+	std::vector<std::string> builtin_shared;
 };
 
 // 编排入口：从「已编译的模块集合 + 入口信息」生成完整项目文件夹。
@@ -45,6 +59,7 @@ struct AotProjectOptions {
 //   kinds        : 生成器标识列表，空表示全部已注册生成器（当前仅 "cmake"）
 //   written      : 输出参数，返回所有已写入文件的绝对/相对路径
 //   err          : 输出参数，失败原因（可操作）
+//   report_out   : 输出参数（可选），成功时回填形态决策回执供 CLI 打印
 // 返回 true 表示全部成功；任一环节失败即中止，不做部分产出的静默降级。
 bool EmitProject(
 	const std::map<std::string, Pycp::BC::Module>& modules,
@@ -54,7 +69,8 @@ bool EmitProject(
 	const AotProjectOptions& options,
 	const std::vector<std::string>& kinds,
 	std::vector<std::string>* written,
-	std::string* err);
+	std::string* err,
+	AotPlanReport* report_out = nullptr);
 
 } // namespace Pycp::AOT
 

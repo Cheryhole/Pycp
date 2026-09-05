@@ -17,14 +17,14 @@
 //
 // 仅与 --emit-cpp 搭配的链接控制：
 //   --compile-runtime=shared|static    运行时库 libPycpRuntime 的链接方式
-//   --compile-modules=shared|static    转译 .pycp 模块的全局形态（默认 static：
-//                                      编进主程序；shared 表示编成动态库加载）
+//   --compile-modules=shared|static    转译 .pycp 模块的全局形态（默认 shared：
+//                                      编成动态库加载；static 表示编进主程序）
 //   --compile-module:<name>=shared|static
 //                                      按模块覆盖（内置扩展 io/Pycp/classtools
 //                                      或任一转译依赖模块）
 //   --shared / --static                旧别名，等价 --compile-runtime=shared/static
 //   --show-imports                     打印编译期 import 解析清单（translated /
-//                                      unresolved）
+//                                      unresolved）与逐模块链接形态决策表
 //
 // 行为：
 //   * 默认（无 -c/-b）执行"解释运行"：若输入为 .pycp 则 解析->编译->执行；
@@ -88,9 +88,10 @@ struct Options {
 	bool preprocess = false; // -p / --preprocess
 	bool show_help = false;
 
-	// ---- --emit-cpp 的模块形态与运行时形态（默认值对应历史 --shared）----
-	// 依赖模块（.pycp 转译产物）的全局默认形态：默认 kStatic（编进主程序）。
-	Pycp::AOT::ModuleKind compile_modules = Pycp::AOT::ModuleKind::kStatic;
+	// ---- --emit-cpp 的模块形态与运行时形态 ----
+	// 依赖模块（.pycp 转译产物）的全局默认形态：默认 kShared（编成模块
+	// DLL，运行期加载）。要编进主程序请用 --compile-modules=static。
+	Pycp::AOT::ModuleKind compile_modules = Pycp::AOT::ModuleKind::kShared;
 	// 运行时库（libPycpRuntime）形态：默认 kShared。
 	Pycp::AOT::LinkMode compile_runtime = Pycp::AOT::LinkMode::kShared;
 	// 是否显式指定过 --compile-modules / --compile-runtime（用于冲突检测）。
@@ -121,16 +122,18 @@ void print_help(const char* prog) {
 		<< "                    artifacts and forbids any dynamic module.\n"
 		<< "      --compile-modules=shared|static\n"
 		<< "                    Global kind for translated .pycp modules (default\n"
-		<< "                    static: baked into the main executable; shared:\n"
-		<< "                    compiled to a module DLL loaded at runtime).\n"
+		<< "                    shared: compiled to a module DLL loaded at\n"
+		<< "                    runtime; static: baked into the main executable).\n"
 		<< "      --compile-module:<name>=shared|static\n"
 		<< "                    Per-module override (builtin io/Pycp/classtools or\n"
-		<< "                    any translated dependency module).\n"
+		<< "                    any translated dependency module). Each module\n"
+		<< "                    becomes its own CMake target.\n"
 		<< "      --shared      Deprecated alias for --compile-runtime=shared.\n"
 		<< "      --static      Deprecated alias for --compile-runtime=static\n"
 		<< "                    (self-contained when no module is shared).\n"
 		<< "      --show-imports\n"
-		<< "                    Print the compile-time import resolution manifest.\n"
+		<< "                    Print the compile-time import resolution manifest\n"
+		<< "                    and the per-module link-kind decision table.\n"
 		<< "  -o, --output <f>  Output path/dir (with -c/-b: .cpycp file; with\n"
 		<< "                    --emit-cpp: project directory; with -p: .pp.pycp file)\n"
 		<< "  -d, --dump        Dump bytecode (constant pool, symbols, code objects,\n"
@@ -161,7 +164,9 @@ void print_help(const char* prog) {
 		<< "      cd <dir> && cmake -S . -B build && cmake --build build && ./build/<entry>\n"
 		<< "    The CMake project links the PycpRuntime SDK (auto-located from the\n"
 		<< "    pycp install; override with -DPYCP_DIST=<path>), dynamically by\n"
-		<< "    default (--shared) or statically with --static.\n\n"
+		<< "    default (--shared) or statically with --static. By default each\n"
+		<< "    imported module is compiled to its own module DLL; use\n"
+		<< "    --compile-modules=static to bake them into the executable.\n\n"
 		<< "Examples:\n"
 		<< "  " << prog << " hello.pycp              # compile & run\n"
 		<< "  " << prog << " hello.cpycp             # run compiled bytecode directly\n"
@@ -734,9 +739,77 @@ int main(int argc, char** argv) {
 
 			std::vector<std::string> written;
 			std::string emsg;
+			Pycp::AOT::AotPlanReport report;
 			if (!Pycp::AOT::EmitProject(modules, entry_name, opt.input_file,
-			                            out_dir, aopt, {}, &written, &emsg)) {
+			                            out_dir, aopt, {}, &written, &emsg,
+			                            &report)) {
 				throw Pycp::Exception(emsg);
+			}
+
+			// 实际形态统计（可能已被「≥2 宿主强制提升」改写，故取自回执
+			// 而非命令行参数）。
+			std::size_t n_static = 0;
+			std::size_t n_shared = 0;
+			for (const auto& kv : report.modules.kinds) {
+				if (kv.second == Pycp::AOT::ModuleKind::kShared) ++n_shared;
+				else ++n_static;
+			}
+
+			if (opt.show_imports) {
+				// 逐模块形态决策表：打印最终形态与决策来源（全局默认 /
+				// 按模块覆盖 / 强制提升及其覆盖的用户指定），使按模块覆盖
+				// 不再「看起来没生效」。
+				std::cout << "Module kinds (" << report.modules.kinds.size()
+				          << "):\n";
+				if (report.modules.kinds.empty()) {
+					std::cout << "  (no translated dependency module)\n";
+				}
+				for (const auto& kv : report.modules.kinds) {
+					auto rit = report.modules.reasons.find(kv.first);
+					std::cout << "  "
+					          << (kv.second == Pycp::AOT::ModuleKind::kShared
+					                  ? "shared"
+					                  : "static")
+					          << "  " << kv.first;
+					if (rit != report.modules.reasons.end() &&
+					    !rit->second.empty()) {
+						std::cout << "  <- " << rit->second;
+					}
+					std::cout << "\n";
+				}
+				std::cout << "Runtime (1):\n"
+				          << "  "
+				          << (report.runtime_link ==
+				                      Pycp::AOT::LinkMode::kStatic
+				                  ? "static"
+				                  : "shared")
+				          << "  libPycpRuntime  <- --compile-runtime\n";
+				std::cout << "Builtin extensions (" << report.builtin_static.size()
+				          << " static, " << report.builtin_shared.size()
+				          << " shared):\n";
+				for (const std::string& b : report.builtin_static) {
+					std::cout << "  static  " << b
+					          << "  <- linked from SDK (libPycpExt_" << b
+					          << ".a)\n";
+				}
+				for (const std::string& b : report.builtin_shared) {
+					std::cout << "  shared  " << b
+					          << "  <- loaded from stdlib/ at runtime\n";
+				}
+			}
+
+			// 覆盖与全局默认形态相同时是空操作（正是「指定 b=static 后
+			// 所有模块仍是静态」的成因）：给出「只让个别模块静态」的写法。
+			for (const auto& kv : opt.module_overrides) {
+				if (kv.second != opt.compile_modules) continue;
+				const bool is_static =
+					(kv.second == Pycp::AOT::ModuleKind::kStatic);
+				std::cerr << "note: --compile-module:" << kv.first << "="
+				          << (is_static ? "static" : "shared")
+				          << " 与全局默认形态相同，该覆盖为空操作；若要「只有 "
+				          << kv.first << (is_static ? " 静态" : " 动态")
+				          << "、其余相反」，请追加 --compile-modules="
+				          << (is_static ? "shared" : "static") << "\n";
 			}
 
 			std::cout << "Generated AOT project in: " << out_dir
@@ -748,14 +821,16 @@ int main(int argc, char** argv) {
 			          << (opt.compile_modules == Pycp::AOT::ModuleKind::kStatic
 			                  ? "static"
 			                  : "shared")
-			          << "]\n";
+			          << ", modules: " << n_static << " static + " << n_shared
+			          << " shared]\n";
 			for (const std::string& w : written) {
 				std::cout << "  " << w << std::endl;
 			}
 			std::cout << "Build it with:\n"
 			          << "  cd " << out_dir << " && cmake -S . -B build && cmake --build build\n";
-			if (opt.compile_runtime == Pycp::AOT::LinkMode::kStatic &&
-			    !opt.compile_modules_set) {
+			// 自包含判定改用实际形态：runtime 静态且无任何动态模块/内置扩展。
+			if (report.runtime_link == Pycp::AOT::LinkMode::kStatic &&
+			    n_shared == 0 && report.builtin_shared.empty()) {
 				std::cout << "Self-contained executable: " << out_dir
 				          << "/build/" << entry_name
 				          << " (no stdlib/ or runtime DLL needed)\n";

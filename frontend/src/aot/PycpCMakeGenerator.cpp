@@ -3,6 +3,8 @@
 #include "PycpConfig.hpp" // AOT_ENTRY_CPP_FILENAME
 
 #include <algorithm>
+#include <map>
+#include <set>
 #include <sstream>
 #include <vector>
 
@@ -56,6 +58,52 @@ std::string cmake_path(const std::string& s) {
 	return out;
 }
 
+// 依赖模块的 CMake target 名。入口模块恒编进主程序（target 名即 project 名），
+// 且不出现在 spec.modules 中，故二者不可能重名。
+std::string module_target(const std::string& name) {
+	return "pycp_mod_" + name;
+}
+
+// 计算某链接目标（入口或模块）的「静态依赖闭包」：需要链入该目标的静态
+// 模块名集合（不含 start 自身）。
+//
+// 从直接依赖出发做深度优先遍历：
+//   - 遇 kShared 依赖即停止下钻：其符号在独立 DLL 中，运行期按名 dlopen
+//     加载，不参与链接（对其 extern 引用会制造无法解析的外部符号）。
+//   - 沿 kStatic 依赖继续下钻，收集全部传递静态依赖——静态库只按符号
+//     拉取成员，故依赖闭包内的每个静态库都必须出现在链接行上。
+//   - visited 去重，循环 import（a <-> b）不会无限递归。
+std::set<std::string> StaticClosure(
+	const std::string& start,
+	const std::vector<ModuleTarget>& modules,
+	const std::map<std::string, std::vector<std::string>>& deps) {
+	std::map<std::string, ModuleKind> kinds;
+	for (const ModuleTarget& mt : modules) kinds[mt.name] = mt.kind;
+
+	std::set<std::string> out;
+	std::set<std::string> visited;
+	std::vector<std::string> stack;
+
+	auto push_deps = [&](const std::string& n) {
+		auto dit = deps.find(n);
+		if (dit == deps.end()) return;
+		for (const std::string& d : dit->second) stack.push_back(d);
+	};
+
+	push_deps(start);
+	while (!stack.empty()) {
+		const std::string n = stack.back();
+		stack.pop_back();
+		if (!visited.insert(n).second) continue;
+		auto kit = kinds.find(n);
+		if (kit == kinds.end()) continue;                 // 非本批模块（stdlib 扩展）
+		if (kit->second != ModuleKind::kStatic) continue; // 动态模块：运行期加载
+		out.insert(n);
+		push_deps(n);
+	}
+	return out;
+}
+
 } // anonymous namespace
 
 std::string CMakeGenerator::Generate(const ProjectSpec& spec) const {
@@ -70,9 +118,18 @@ std::string CMakeGenerator::Generate(const ProjectSpec& spec) const {
 		if (mt.kind == ModuleKind::kShared) mod_shared.push_back(&mt);
 		else mod_static.push_back(&mt);
 	}
-	// 全部静态模块统一编进一个归档 target：同归档内互相引用可解析
-	//（链接器会对单个归档重扫），天然消解静态环，无需 --start-group。
-	const std::string static_lib = exe + "_modules";
+
+	// 模块名 -> 直接依赖（含入口），供静态依赖闭包遍历使用。
+	std::map<std::string, std::vector<std::string>> deps;
+	for (const ModuleTarget& mt : spec.modules) deps[mt.name] = mt.deps;
+	deps[exe] = spec.entry_deps;
+
+	// 各链接目标的静态依赖闭包：主程序与每个模块各一份。
+	std::map<std::string, std::set<std::string>> closure;
+	closure[exe] = StaticClosure(exe, spec.modules, deps);
+	for (const ModuleTarget& mt : spec.modules) {
+		closure[mt.name] = StaticClosure(mt.name, spec.modules, deps);
+	}
 
 	std::ostringstream os;
 
@@ -83,9 +140,15 @@ std::string CMakeGenerator::Generate(const ProjectSpec& spec) const {
 	os << "# Runtime link : "
 	   << (rt_shared ? "shared (libPycpRuntime)" : "static (libPycpRuntime.a)")
 	   << "\n";
-	os << "# Module kinds : " << (mod_static.empty() ? "none" : "static")
-	   << (mod_static.empty() || mod_shared.empty() ? "" : " + ") << mod_shared.size()
-	   << " shared module(s)\n";
+	os << "# Module kinds : " << mod_static.size() << " static, "
+	   << mod_shared.size() << " shared (one CMake target each)\n";
+	// 逐模块列出形态与决策原因（--compile-modules= / --compile-module:X= /
+	// forced shared），形态不符合预期时可据此回溯。
+	for (const ModuleTarget& mt : spec.modules) {
+		os << "#   " << ((mt.kind == ModuleKind::kShared) ? "shared" : "static")
+		   << "  " << mt.name << "  ("
+		   << (mt.reason.empty() ? std::string("<default>") : mt.reason) << ")\n";
+	}
 	os << "# Builtin ext   : " << spec.builtin_static.size()
 	   << " static (linked in), " << spec.builtin_shared.size()
 	   << " shared (loaded from stdlib/)\n";
@@ -130,32 +193,35 @@ std::string CMakeGenerator::Generate(const ProjectSpec& spec) const {
 	os << "\n";
 
 	// ---- 目标：主程序 ----
-	os << "# ---- 主程序（入口模块 + 静态依赖的注册）----\n";
+	os << "# ---- 主程序（入口模块 + 辅助源）----\n";
 	os << "add_executable(" << exe << " ${PYCP_ENTRY_SRC} ${PYCP_AUX_SRCS})\n\n";
 
-	// ---- 目标：全部静态依赖模块（合并为一个静态库归档）----
-	if (!mod_static.empty()) {
-		os << "# ---- 静态模块库（kStatic 依赖模块，编进主程序）----\n";
-		os << "# 合并为单个归档：同归档内互相引用可解析，无需 --start-group。\n";
-		os << "add_library(" << static_lib << " STATIC\n";
-		for (const ModuleTarget* mt : mod_static) {
-			os << "    " << mt->source_file << "   # " << mt->name << "\n";
-		}
-		os << ")\n\n";
-	}
-
-	// ---- 目标：动态模块（各自一个 DLL/SO，运行期 dlopen）----
-	if (!mod_shared.empty()) {
-		os << "# ---- 动态模块库（kShared 依赖模块，运行期按名加载）----\n";
-		for (const ModuleTarget* mt : mod_shared) {
-			const std::string t = "pycp_mod_" + mt->name;
-			os << "# " << mt->name << ": " << mt->source_file << "\n";
-			os << "add_library(" << t << " SHARED " << mt->source_file << ")\n";
-			// 导出名直接取模块名（去掉 CMake 默认 lib 前缀与 target 前缀）：
-			// 运行时按 "<name>.so/.dll" 查找（LoadNativeModuleFrom）。
+	// ---- 目标：依赖模块（逐模块一个 target，形态由 ModulePlan 决定）----
+	// 静态模块各自一个归档（lib<name>.a），动态模块各自一个 DLL/SO。
+	// 逐模块独立后，静态库之间用 target_link_libraries(... PUBLIC ...) 传播
+	// 依赖闭包；CMake 允许 STATIC 库之间存在依赖环，会在链接行重复整个
+	// 连通分量，故模块间循环 import 依然成立。
+	if (!spec.modules.empty()) {
+		os << "# ---- 依赖模块：逐模块一个 target（static -> 归档，"
+		      "shared -> DLL）----\n";
+		for (const ModuleTarget& mt : spec.modules) {
+			const std::string t = module_target(mt.name);
+			const bool is_shared = (mt.kind == ModuleKind::kShared);
+			os << "# " << mt.name << " (" << (is_shared ? "shared" : "static")
+			   << (mt.reason.empty() ? std::string() : ", " + mt.reason) << ")\n";
+			os << "add_library(" << t << " " << (is_shared ? "SHARED" : "STATIC")
+			   << " " << mt.source_file << ")\n";
 			os << "set_target_properties(" << t << " PROPERTIES\n";
-			os << "    OUTPUT_NAME \"" << mt->name << "\"\n";
-			os << "    PREFIX \"\"\n";
+			// 输出名直接取模块名：静态库得 lib<name>.a（MSVC 为 <name>.lib），
+			// 动态库去掉默认前缀后得 <name>.so/.dll（运行期按名查找）。
+			os << "    OUTPUT_NAME \"" << mt.name << "\"\n";
+			if (is_shared) {
+				os << "    PREFIX \"\"\n";
+			} else {
+				// 静态模块可能被链进动态模块 DLL，必须编译为位置无关代码，
+				// 否则 MinGW/Linux 下链接 DLL 时报重定位错误。
+				os << "    POSITION_INDEPENDENT_CODE ON\n";
+			}
 			os << ")\n";
 		}
 		os << "\n";
@@ -169,56 +235,81 @@ std::string CMakeGenerator::Generate(const ProjectSpec& spec) const {
 		   << " PRIVATE \"${PYCP_DIST}/lib\")\n";
 	};
 	emit_common_dirs(exe);
-	if (!mod_static.empty()) emit_common_dirs(static_lib);
-	for (const ModuleTarget* mt : mod_shared) {
-		emit_common_dirs("pycp_mod_" + mt->name);
+	for (const ModuleTarget& mt : spec.modules) {
+		emit_common_dirs(module_target(mt.name));
 	}
 	os << "\n";
 
 	// ---- 编译定义 ----
-	// 静态运行时（全镜像无 DLL）：所有 TU 取消 __declspec(dllimport)。
+	// 静态运行时（全镜像无 DLL）：所有参与链接的 TU 取消 __declspec(dllimport)。
 	// 动态模块 DLL：定义 PYCP_BUILDING_MODULE 以 dllexport 自身入口。
 	if (!rt_shared) {
 		os << "target_compile_definitions(" << exe << " PRIVATE PYCP_STATIC)\n";
-		if (!mod_static.empty()) {
-			os << "target_compile_definitions(" << static_lib
+		for (const ModuleTarget* mt : mod_static) {
+			os << "target_compile_definitions(" << module_target(mt->name)
 			   << " PRIVATE PYCP_STATIC)\n";
 		}
 		os << "\n";
 	}
 	for (const ModuleTarget* mt : mod_shared) {
-		os << "target_compile_definitions(pycp_mod_" << mt->name
+		os << "target_compile_definitions(" << module_target(mt->name)
 		   << " PRIVATE PYCP_BUILDING_MODULE)\n";
 	}
 	if (!mod_shared.empty()) os << "\n";
 
 	// ---- 链接关系 ----
-	// 主程序：
 	os << "# ---- 链接 ----\n";
-	if (!mod_static.empty()) {
-		os << "# 主程序直接链接静态模块归档（链接器按符号拉取所需成员）。\n";
+	if (!closure[exe].empty()) {
+		os << "# 主程序链接其静态依赖闭包（链接器按符号拉取所需成员）。\n";
 	}
 	os << "target_link_libraries(" << exe << " PRIVATE\n";
-	if (!mod_static.empty()) os << "    " << static_lib << "\n";
+	for (const std::string& n : closure[exe]) {
+		os << "    " << module_target(n) << "\n";
+	}
+	// 静态链入的内置扩展（--compile-module:io=static 等）：注册桩引用了
+	// PycpModule_<name>，必须显式链接对应静态库才能解析。这与运行时形态
+	// 无关——runtime 为 shared 时同样需要，否则报 undefined reference。
+	if (!spec.builtin_static_lib_paths.empty()) {
+		os << "    # 静态链入的内置扩展（绝对路径，避免 MinGW 选中同目录的\n";
+		os << "    # DLL 导入库）；须排在运行时之前，GNU ld 按左到右解析。\n";
+		for (const std::string& lib : spec.builtin_static_lib_paths) {
+			os << "    \"" << cmake_path(lib) << "\"\n";
+		}
+	}
 	if (rt_shared) {
 		// 共享运行时：主程序与 stdlib 扩展统一链接同一份 libPycpRuntime，
 		// 保证全进程只有一份运行时状态（GC 池 / 小整数池 / 句柄缓存）。
 		os << "    PycpRuntime\n";
 	} else {
-		os << "    # 静态运行时 + 静态链入的内置扩展（绝对路径，避免 MinGW 选中\n";
-		os << "    # 同目录的 DLL 导入库 libPycpRuntime.dll.a）\n";
+		os << "    # 静态运行时（绝对路径，避免 MinGW 选中同目录的 DLL 导入库\n";
+		os << "    # libPycpRuntime.dll.a）\n";
 		os << "    \"" << cmake_path(sdk.static_runtime) << "\"\n";
-		for (const std::string& lib : spec.builtin_static_lib_paths) {
-			os << "    \"" << cmake_path(lib) << "\"\n";
-		}
 	}
 	os << ")\n\n";
 
-	// 动态模块：链接共享运行时与（必要时）静态模块归档（static 依赖）。
+	// 静态模块：PUBLIC 传播自身的静态依赖闭包，使最终链接目标（主程序 /
+	// 动态模块 DLL）能解析出全部所需符号。静态库本身不参与链接，此处仅
+	// 记录依赖；CMake 允许 STATIC 库之间成环，故循环 import 亦可收敛。
+	for (const ModuleTarget* mt : mod_static) {
+		const std::set<std::string>& cl = closure.at(mt->name);
+		if (cl.empty()) continue;
+		os << "target_link_libraries(" << module_target(mt->name) << " PUBLIC\n";
+		for (const std::string& n : cl) {
+			os << "    " << module_target(n) << "\n";
+		}
+		os << ")\n";
+	}
+	if (!mod_static.empty()) os << "\n";
+
+	// 动态模块：链接共享运行时（runtime 为 static 时不允许存在动态模块）
+	// 与自身的静态依赖闭包——静态依赖被链进本 DLL，不会复制到其它目标。
 	for (const ModuleTarget* mt : mod_shared) {
-		const std::string t = "pycp_mod_" + mt->name;
-		os << "target_link_libraries(" << t << " PRIVATE PycpRuntime";
-		if (!mod_static.empty()) os << " " << static_lib;
+		const std::string t = module_target(mt->name);
+		os << "target_link_libraries(" << t << " PRIVATE\n";
+		for (const std::string& n : closure.at(mt->name)) {
+			os << "    " << module_target(n) << "\n";
+		}
+		os << "    PycpRuntime\n";
 		os << ")\n";
 		// DLL 自己的 rpath：运行期需要定位 libPycpRuntime（若部署时放在
 		// 别处）以及自身可能的静态依赖（不适用，static 依赖已链入自身）。
@@ -318,7 +409,7 @@ std::string CMakeGenerator::Generate(const ProjectSpec& spec) const {
 	if (!mod_shared.empty()) {
 		os << "# 动态模块 DLL 复制到 exe 同级 stdlib/（运行期按名 dlopen）\n";
 		for (const ModuleTarget* mt : mod_shared) {
-			const std::string t = "pycp_mod_" + mt->name;
+			const std::string t = module_target(mt->name);
 			os << "add_dependencies(" << exe << " " << t << ")\n";
 			os << "add_custom_command(TARGET " << exe << " POST_BUILD\n";
 			os << "    COMMAND ${CMAKE_COMMAND} -E copy_if_different\n";

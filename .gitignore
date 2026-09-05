@@ -6,6 +6,7 @@ bin/
 Makefile
 
 simplebuild.sh
+simplebuild.bat
 
 test.*
 *.gen.cpp

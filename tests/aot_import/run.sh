@@ -36,7 +36,10 @@ mkdir -p "$WORK"
 cd "$WORK" || exit 2
 
 # 生成 C++ 源码（默认输出目录 <entry>/ = a_entry/，含 CMakeLists.txt）
-"$PYCP" --emit-cpp "$ENTRY" >/dev/null || {
+# 显式 --compile-modules=static：模块默认形态已改为 shared，而下面的场景 1/2
+# 要把 b_dep.gen.o 编成静态库（或直接一起）链接进主程序，依赖入口 .gen.cpp 里
+# 的「链接拉入桩」——该桩只对 kStatic 依赖生成（动态依赖的符号在独立 DLL 中）。
+"$PYCP" --emit-cpp --compile-modules=static "$ENTRY" >/dev/null || {
 	echo "ERROR: --emit-cpp 失败" >&2
 	exit 2
 }
@@ -125,7 +128,7 @@ fi
 # --- 新增场景 5：-o 自定义目录应把全部文件（含 CMakeLists.txt）落到该目录 ---
 CUSTOM="$WORK/custom_out"
 rm -rf "$CUSTOM"
-"$PYCP" --emit-cpp "$ENTRY" -o "$CUSTOM" >/dev/null 2>&1
+"$PYCP" --emit-cpp --compile-modules=static "$ENTRY" -o "$CUSTOM" >/dev/null 2>&1
 if [[ -f "$CUSTOM/CMakeLists.txt" && -f "$CUSTOM/__pycp_main.gen.cpp" && -f "$CUSTOM/b_dep.gen.cpp" ]]; then
 	echo "[PASS] -o 自定义目录包含 CMakeLists.txt 与全部 .gen.cpp"
 	pass=$((pass + 1))
@@ -166,8 +169,10 @@ emit_and_build() {
 }
 
 # --- 场景 6：--compile-runtime=static 全静态自包含 ---
-emit_and_build "全静态自包含（--compile-runtime=static）" "a_entry" \
-	"--compile-runtime=static"
+# runtime 为 static 时不允许任何动态形态，而模块默认已是 shared，故必须
+# 同时给出 --compile-modules=static，否则被「两份运行时」校验拒绝。
+emit_and_build "全静态自包含（--compile-runtime=static --compile-modules=static）" "a_entry" \
+	"--compile-runtime=static --compile-modules=static"
 
 # --- 场景 7：--compile-modules=shared 把依赖模块编成动态库 ---
 emit_and_build "依赖模块编为动态库（--compile-modules=shared）" "a_entry" \
@@ -183,6 +188,44 @@ if [[ $rc -ne 0 && "$out" == *"静态"* ]]; then
 	pass=$((pass + 1))
 else
 	echo "[FAIL] runtime=static + 动态模块组合未被拒绝（rc=$rc）"
+	echo "$out"
+	fail=$((fail + 1))
+fi
+
+# --- 场景 9：逐模块混用形态（只有 b_dep 静态，其余动态）---
+# 模块默认形态为 shared，故「只让某一个模块静态」不需要额外的
+# --compile-modules；反过来若要「只让某一个模块动态」则用
+# --compile-modules=static --compile-module:<name>=shared。
+emit_and_build "逐模块混用（--compile-module:b_dep=static）" "a_entry" \
+	"--compile-module:b_dep=static"
+
+# --- 场景 9b：内置扩展静态链入 + 共享运行时 ---
+# 注册桩引用 PycpModule_io，故必须链上 libPycpExt_io.a——这与运行时形态无关，
+# runtime 为 shared 时同样需要（否则 undefined reference）。
+emit_and_build "内置扩展静态链入（--compile-module:io=static）" "a_entry" \
+	"--compile-module:io=static"
+
+# --- 场景 10：每个模块各自一个 CMake target（静态模块为独立归档）---
+rm -rf "$WORK/targets_out"
+if "$PYCP" --emit-cpp --compile-module:b_dep=static "$ENTRY" \
+		-o "$WORK/targets_out" >/dev/null 2>&1 &&
+   grep -q "add_library(pycp_mod_b_dep STATIC" "$WORK/targets_out/CMakeLists.txt"; then
+	echo "[PASS] 逐模块独立 CMake target（add_library(pycp_mod_b_dep STATIC)）"
+	pass=$((pass + 1))
+else
+	echo "[FAIL] 逐模块独立 CMake target 未生成"
+	fail=$((fail + 1))
+fi
+
+# --- 场景 11：--show-imports 打印逐模块形态决策表 ---
+rm -rf "$WORK/plan_out"
+out="$("$PYCP" --emit-cpp --show-imports --compile-module:b_dep=static \
+	"$ENTRY" -o "$WORK/plan_out" 2>&1)"
+if [[ "$out" == *"Module kinds (1):"* && "$out" == *"static  b_dep"* ]]; then
+	echo "[PASS] --show-imports 输出逐模块形态决策表"
+	pass=$((pass + 1))
+else
+	echo "[FAIL] --show-imports 未输出逐模块形态决策表"
 	echo "$out"
 	fail=$((fail + 1))
 fi

@@ -108,12 +108,15 @@ bool EmitProject(
 	const AotProjectOptions& options,
 	const std::vector<std::string>& kinds,
 	std::vector<std::string>* written,
-	std::string* err) {
+	std::string* err,
+	AotPlanReport* report_out) {
 
 	auto fail = [err](const std::string& msg) -> bool {
 		if (err != nullptr) *err = msg;
 		return false;
 	};
+	// 决策回执：成功路径统一回填，失败时保持未定义（调用方不使用）。
+	if (report_out != nullptr) *report_out = AotPlanReport();
 
 	try {
 		// 组装项目描述（纯数据）。
@@ -207,7 +210,16 @@ bool EmitProject(
 			mt.source_file = fname;
 			mt.kind = plan.kinds.at(kv.first);
 			mt.deps = deps[kv.first];
+			// 决策原因随纯数据下传，生成器可渲染逐模块注释（CLI 亦据此打印）。
+			auto rit = plan.reasons.find(kv.first);
+			mt.reason = (rit != plan.reasons.end()) ? rit->second : std::string();
 			spec.modules.push_back(std::move(mt));
+		}
+		// 8b) 入口的直接依赖：生成器据此推导主程序的静态依赖闭包
+		//     （spec.modules 不含入口，否则无从得知 exe 需要链哪些静态库）。
+		{
+			auto eit = deps.find(entry_name);
+			if (eit != deps.end()) spec.entry_deps = eit->second;
 		}
 
 		// 9) 静态链入主程序的内置扩展：生成注册/拉入桩（编进主程序）。
@@ -272,6 +284,15 @@ bool EmitProject(
 				(std::filesystem::path(output_dir) / g->file_name()).string();
 			write_file(path, content);
 			if (written != nullptr) written->push_back(path);
+		}
+
+		// 14) 回填决策回执（CLI 可观测输出用）。必须在成功路径末尾，
+		//     确保只有真正落盘的项目才返回形态决策。
+		if (report_out != nullptr) {
+			report_out->modules = plan;
+			report_out->runtime_link = spec.runtime_link;
+			report_out->builtin_static = spec.builtin_static;
+			report_out->builtin_shared = spec.builtin_shared;
 		}
 
 		return true;

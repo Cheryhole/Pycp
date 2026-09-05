@@ -135,9 +135,9 @@ pycp [options] <input_file>
 | `-o, --output <f>` | 指定输出路径：配合 `-c/-b` 为 `.cpycp` 文件路径；配合 `--emit-cpp` 为**项目目录**（默认 `./<入口名>/`）；配合 `-p` 为 `.pp.pycp` 文件路径 |
 | `--emit-cpp` | 将 `.pycp` 翻译为可直接编译的 **CMake 项目目录**（AOT 指令翻译，输出 `.gen.cpp` + `CMakeLists.txt`） |
 | `--compile-runtime=shared\|static` | 配合 `--emit-cpp`：运行时库 `libPycpRuntime` 的链接方式（默认 `shared`）。`static` 需 SDK 静态产物，且禁止存在任何动态模块（会生成两份运行时） |
-| `--compile-modules=shared\|static` | 配合 `--emit-cpp`：转译 `.pycp` 模块的**全局形态**（默认 `static`：编进主程序；`shared`：编译成动态库运行期加载） |
-| `--compile-module:<name>=shared\|static` | 配合 `--emit-cpp`：**按模块覆盖**（内置扩展 io/pycp/classtools，或任一转译依赖模块） |
-| `--show-imports` | 配合 `--emit-cpp`：打印编译期 import 解析清单（translated / unresolved） |
+| `--compile-modules=shared\|static` | 配合 `--emit-cpp`：转译 `.pycp` 模块的**全局形态**（默认 `shared`：每个模块编成一个动态库运行期加载；`static`：编进主程序） |
+| `--compile-module:<name>=shared\|static` | 配合 `--emit-cpp`：**按模块覆盖**（内置扩展 io/pycp/classtools，或任一转译依赖模块）；覆盖与全局默认相同时为空操作（会给出提示） |
+| `--show-imports` | 配合 `--emit-cpp`：打印编译期 import 解析清单（translated / unresolved）**与逐模块形态决策表**（最终形态 + 决策来源） |
 | `--shared` / `--static` | `--compile-runtime=shared` / `static` 的**旧别名**（deprecated；不能与 `--compile-*` 参数混用） |
 | `-d, --dump` | 查看字节码内容（常量池 / 符号表 / 代码对象 / 指令与行号），接受 `.pycp` 或 `.cpycp` |
 
@@ -231,6 +231,10 @@ cd hello && cmake -S . -B build && cmake --build build
 ./build/hello   # 输出与解释执行一致
 ```
 
+默认生成的 CMake 项目里，每个被 import 的模块各有一个 `add_library(pycp_mod_<name> SHARED ...)`
+目标（DLL/SO），运行期按模块名加载；加 `--compile-modules=static` 则改为各一个
+`STATIC` 目标（`lib<name>.a`）并链进主程序。
+
 生成的 CMake 项目会自动：
 - **动态链接** `PycpRuntime`（stdio 三个扩展 `.so` 同样动态链接运行时，避免进程内两份运行时状态）；
 - 在 Linux 上加 `-rdynamic`，使 import 的「进程内符号」查找（`dlsym(RTLD_DEFAULT, "PycpModule_xxx")`）能命中链接进本程序的模块；
@@ -255,26 +259,44 @@ ABI 调用序列（常量内联为 `g_c[]`，控制流翻译为 `goto`，函数�
 三类对象的链接方式拆开控制：
 
 ```bash
-# 默认：依赖模块编进主程序（kStatic），运行时与内置扩展动态（stdlib/ 加载）
+# 默认：依赖模块各编成一个模块 DLL（kShared，运行期加载），运行时与内置扩展动态
 ./build/pycp --emit-cpp hello.pycp
 
 # 全静态自包含：运行时 + 内置扩展 + 依赖模块全部静态链入，产物为单个 exe
-./build/pycp --emit-cpp --compile-runtime=static hello.pycp
+# （runtime 为 static 时不允许任何动态形态，故必须同时给出 --compile-modules=static）
+./build/pycp --emit-cpp --compile-runtime=static --compile-modules=static hello.pycp
 
-# 依赖模块编成动态库（运行期 dlopen），运行时保持动态
-./build/pycp --emit-cpp --compile-modules=shared hello.pycp
+# 依赖模块编进主程序（与历史行为一致）
+./build/pycp --emit-cpp --compile-modules=static hello.pycp
 
-# 按模块覆盖（内置扩展或某个依赖模块）：仅 b_dep 编成动态库
-./build/pycp --emit-cpp --compile-module:b_dep=shared hello.pycp
+# 按模块覆盖（内置扩展或某个依赖模块）：只有 b_dep 编进主程序，其余为 DLL
+./build/pycp --emit-cpp --compile-module:b_dep=static hello.pycp
+
+# 反过来的「只让某一个模块动态」：把全局默认设为 static 再覆盖该模块
+./build/pycp --emit-cpp --compile-modules=static --compile-module:b_dep=shared hello.pycp
+
+# 查看逐模块的最终形态与决策来源（含被强制提升的模块）
+./build/pycp --emit-cpp --show-imports --compile-module:b_dep=static hello.pycp
 ```
 
 形态决策规则：
 
-- **默认**：依赖模块 `static`（编进主程序，与历史行为一致）；内置扩展跟随运行时
-  （`runtime=shared` → 从 `stdlib/` 加载；`runtime=static` → 链接 `libPycpExt_*.a`）。
+- **默认**：依赖模块 `shared`（每个模块一个 DLL，运行期从 exe 同级 `stdlib/` 按名加载）；
+  内置扩展跟随运行时（`runtime=shared` → 从 `stdlib/` 加载；`runtime=static` → 链接
+  `libPycpExt_*.a`）。
+- **优先级**：按模块覆盖（`--compile-module:<name>=`）> 全局默认（`--compile-modules=`）。
+  注意覆盖与全局默认形态相同时是**空操作**（例如默认 `shared` 时再写
+  `--compile-module:x=shared`），此时 `pycp` 会在 stderr 给出提示。
+- **逐模块独立 target**：生成的 `CMakeLists.txt` 里每个依赖模块各有一个
+  `add_library(pycp_mod_<name> ...)`——`static` 为独立归档（`lib<name>.a`），
+  `shared` 为独立 DLL/SO（`<name>.dll/.so`）。静态模块之间用
+  `target_link_libraries(... PUBLIC ...)` 传播静态依赖闭包，故主程序与每个
+  DLL 只会链入自己真正需要的静态模块（CMake 允许静态库之间成环，模块间循环
+  import 依然成立）。
 - **冲突自动裁决**：任何被 ≥2 个链接目标（主程序 / 多个动态库）引用的模块会**强制
   提升为 `shared`**（否则同一模块被复制进多个目标，产生两份模块对象与注册表覆盖）。
-  仅当所有模块都静态打包进主程序时才不存在跨目标共享。
+  提升若否定了用户显式指定的 `=static`，决策原因会带上
+  `[overrides --compile-module:<name>=static]` 标记，可用 `--show-imports` 查看。
 - **`--compile-runtime=static` 与任何动态模块组合都直接报错**——运行时若静态链接而
   又有动态库存在，进程内会出现两份运行时状态（GC 池 / 小整数池 / 句柄缓存）。
 - 旧 `--shared` / `--static` 保留为 `--compile-runtime=` 的兼容别名（deprecated）；

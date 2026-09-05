@@ -37,8 +37,11 @@ enum class ModuleKind {
 struct ModuleTarget {
 	std::string name;        // Pycp 模块名（import 用的名字）
 	std::string source_file; // <name>.gen.cpp（与 spec.sources 的 key 对应）
-	ModuleKind kind = ModuleKind::kStatic; // 由 ModulePlan 决策
+	ModuleKind kind = ModuleKind::kShared; // 由 ModulePlan 决策
 	std::vector<std::string> deps; // 同批转译模块内的直接依赖名
+	// 形态决策原因（来自 ModulePlan::reasons）：用户覆盖 / 全局默认 /
+	// 强制提升及其宿主明细。供生成器渲染逐模块注释，空串时渲染 <default>。
+	std::string reason;
 };
 
 struct ProjectSpec {
@@ -68,6 +71,10 @@ struct ProjectSpec {
 
 	// 依赖模块（不含入口）的构建语义，由 ModulePlan 决策后填入。
 	std::vector<ModuleTarget> modules;
+
+	// 入口模块的直接依赖（仅同批转译模块，stdlib 扩展不在内）。
+	// spec.modules 不含入口，生成器据此推导主程序的静态依赖闭包。
+	std::vector<std::string> entry_deps;
 
 	// 内置扩展（io / Pycp / classtools）按形态分组：
 	//   builtin_static : 以 SDK 静态库（libPycpExt_*.a）链入主程序

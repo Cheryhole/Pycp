@@ -121,6 +121,14 @@ ModulePlan PlanModuleKinds(
 				first = false;
 			}
 			oss << ")";
+			// 若用户显式指定过该模块为 static，提升等于否定了用户意图。
+			// 行为上仍以提升为准（否则同一模块被复制进多个目标，出现两份
+			// 模块对象），但原因串必须记录这次覆盖，避免决策不可追溯。
+			auto oit = overrides.find(n);
+			if (oit != overrides.end() &&
+			    oit->second == ModuleKind::kStatic) {
+				oss << " [overrides --compile-module:" << n << "=static]";
+			}
 			plan.reasons[n] = oss.str();
 			promoted_any = true;
 		}
