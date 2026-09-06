@@ -130,22 +130,14 @@ private:
 // 函数编译的局部变量上下文
 // =============================================================
 
-// 校验形参默认值顺序并统计尾部带默认值的形参个数。
-// 规则（对齐 Python）：一旦某个形参带默认值，其后不得再出现必填普通形参
-//（func f(a, b=1, c) 非法）。顶层函数 / 匿名函数 / 类方法共用此校验。
-// 返回 default_count（尾部带默认值形参个数），供 CodeObject 写入。
+// 统计带默认值的形参个数（供 CodeObject 写入 default_count）。
+// 顺序校验（「带默认值形参后不得再接必填普通形参」）已在解析期执行，
+// 此处仅负责计数；保留参数以兼容既有调用点。
 static uint16_t validate_default_params(const FunctionExpression* fe,
-                                        int line, Emitter& em) {
-	bool seen_default = false;
+                                        int /*line*/, Emitter& /*em*/) {
 	uint16_t count = 0;
 	for (const Param& prm : fe->params) {
-		if (prm.default_value != nullptr) {
-			seen_default = true;
-			++count;
-		} else if (seen_default) {
-			throw em.make_error(line,
-				"non-default argument follows default argument");
-		}
+		if (prm.default_value != nullptr) ++count;
 	}
 	return count;
 }

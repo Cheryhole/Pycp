@@ -46,6 +46,32 @@ static Pycp::Ast::FunctionExpression* make_func_expr(
 	}
 	return new Pycp::Ast::FunctionExpression(std::move(pv), body, name, line, deco);
 }
+
+// 语法错误计数（定义于本文件末尾）；解析期语义动作据此标记“已报错”，
+// 使后续 ModuleLoader 抛出空消息异常中止编译（错误内容已在此直接输出）。
+extern int Pycp_parse_error_count;
+
+// 形参顺序错误：带默认值的形参之后又出现无默认值的普通形参
+//（如 func f(a, b = 1, c)）。与 Python 一致在【解析期】报为 SyntaxError，
+// 输出两行格式：File "<file>", line N[, column M]  +  SyntaxError: ...
+// 不回显源码行（lexer/parser 未保留原始行文本），故无 caret 指示。
+static void report_param_order_error(int line, int column) {
+	++Pycp_parse_error_count;
+	std::cerr << "File \"" << g_current_source_path << "\", line " << line;
+	if (column >= 0) std::cerr << ", column " << column;
+	std::cerr << "\n"
+	          << "SyntaxError: parameter without a default follows parameter with a default"
+	          << std::endl;
+}
+
+// parameter_defs 容器中是否已存在“带默认值”的形参。
+static bool has_default_param(const std::vector<Pycp::Ast::Param*>* ps) {
+	if (ps == nullptr) return false;
+	for (Pycp::Ast::Param* p : *ps) {
+		if (p != nullptr && p->default_value != nullptr) return true;
+	}
+	return false;
+}
 %}
 
 %union {
@@ -313,7 +339,8 @@ parameter_def: IDENTIFIER {
 ;
 
 // 参数列表：逗号分隔的形参项。形如 (a, b = 1, c) 或空 ()。
-// 「默认值形参后不得再接必填普通形参」的顺序校验在 Codegen 统一执行。
+// 「默认值形参后不得再接必填普通形参」的顺序校验在【解析期】执行
+//（与 Python 一致，表现为 SyntaxError），见下方 OP_COMMA 规则。
 parameter_list: %empty {
 				$$ = new std::vector<Pycp::Ast::Param*>();
 		}
@@ -322,6 +349,13 @@ parameter_list: %empty {
 				$$->push_back($1);
 		}
 		| parameter_list OP_COMMA parameter_def {
+				// 顺序校验：若前面已出现过带默认值的形参，新加入的无默认值
+				// 普通形参即非法（func f(a, b = 1, c)）。在解析期直接以
+				// SyntaxError 报出，并标记错误计数使编译中止。
+				if ($3 != nullptr && $3->default_value == nullptr &&
+				    has_default_param($1)) {
+					report_param_order_error(@3.first_line, -1);
+				}
 				$1->push_back($3);
 				$$ = $1;
 		}

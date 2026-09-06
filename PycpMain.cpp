@@ -538,9 +538,17 @@ void run_repl() {
 			mod = new Pycp::BC::Module(
 				Pycp::ModuleLoader::compile_statement(
 					buffer, Pycp::REPL_SOURCE_NAME, first_line));
-		} catch (Pycp::Exception&) {
-			// 语法错误：解析器已向 stderr 输出了 File/line/msg，故不重复打印。
-			// 丢弃已累积的输入，回到主提示符。
+		} catch (Pycp::Exception& e) {
+			// 编译期异常分两类：
+			//   1) 词法/语法错误：lexer/parser 已直接打印 File/line/msg，
+			//      抛出的是空消息异常，format() 为空，故此处不重复打印；
+			//   2) 解析期语义校验（如形参默认值顺序错误）已自带位置输出，
+			//      同样以空消息异常形式由 ModuleLoader 抛出，也不重复打印；
+			//   3) Codegen 抛出的带 file/line/msg 的异常必须在此显示，否则
+			//      会被静默吞掉（表现为函数未定义且无任何提示）。
+			// 统一按 format() 非空才打印，与上述两类天然兼容。
+			std::string msg = e.format();
+			if (!msg.empty()) std::cerr << msg << std::endl;
 			buffer.clear();
 			continuation = false;
 			continue;

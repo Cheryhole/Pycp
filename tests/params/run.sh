@@ -47,14 +47,15 @@ else
 	fail=$((fail + 1))
 fi
 
-# --- 3) 非法：默认值后接必填普通形参 → 编译期报错 ---
+# --- 3) 非法：默认值后接必填普通形参 → 解析期报 SyntaxError ---
 out="$(cd "$SCRIPT_DIR" && "$PYCP" illegal_default.pycp 2>&1)"
 rc=$?
-if [[ $rc -ne 0 && "$out" == *"non-default argument follows default argument"* ]]; then
-	echo "[PASS] 默认值后接必填形参被拒（编译期报错）"
+if [[ $rc -ne 0 && "$out" == *"SyntaxError: parameter without a default follows parameter with a default"* && \
+      "$out" == *"File "*", line "* ]]; then
+	echo "[PASS] 默认值后接必填形参被拒（解析期 SyntaxError，带 File/line）"
 	pass=$((pass + 1))
 else
-	echo "[FAIL] 非法顺序未被拒绝（exit=$rc）"
+	echo "[FAIL] 非法顺序未被正确拒绝（exit=$rc）"
 	echo "----- output -----"; echo "$out"; echo "------------------"
 	fail=$((fail + 1))
 fi
