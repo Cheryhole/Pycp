@@ -142,7 +142,8 @@ struct Constant {
 
 struct CodeObject {
 	std::string name;                 // 函数名 / "<module>"
-	uint16_t nparams = 0;             // 参数个数
+	uint16_t nparams = 0;             // 参数个数（含尾部带默认值的形参）
+	uint16_t default_count = 0;       // 尾部带默认值的形参个数；必填数 = nparams - default_count
 	uint16_t nlocals = 0;             // 局部变量数（slots 大小）
 	std::vector<Instruction> code;    // 指令流
 	std::vector<int> linenos;         // 行号表，与 code 逐条对齐（-1 表示无行号信息）

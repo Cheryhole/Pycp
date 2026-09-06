@@ -203,6 +203,7 @@ std::vector<uint8_t> Serialize(const Module& module) {
 			}
 			WriteULEB128(seg, name_idx);
 			WriteULEB128(seg, co.nparams);
+			WriteULEB128(seg, co.default_count); // format minor >= 1
 			WriteULEB128(seg, co.nlocals);
 
 			// 局部变量名表（符号索引序列）
@@ -319,12 +320,13 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 	}
 	uint16_t major = get_u16(data, size, off);
 	uint16_t minor = get_u16(data, size, off);
-	(void)minor;
 	if (major != FORMAT_VERSION_MAJOR) {
 		throw BytecodeError("unsupported version " +
 		                std::to_string(major) + "." + std::to_string(minor) +
 		                " (expected " + std::to_string(FORMAT_VERSION_MAJOR) + ").");
 	}
+	// format minor >= 1 的代码对象记录含 default_count 字段。
+	const bool has_default_count = (minor >= 1);
 	(void)get_u32(data, size, off); // flags 预留
 
 	Module module;
@@ -412,6 +414,10 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 				throw BytecodeError("invalid symbol index.");
 			co.name = module.symtab[name_idx];
 			co.nparams = static_cast<uint16_t>(ReadULEB128(data, size, off));
+			if (has_default_count) {
+				co.default_count =
+					static_cast<uint16_t>(ReadULEB128(data, size, off));
+			}
 			co.nlocals = static_cast<uint16_t>(ReadULEB128(data, size, off));
 
 			// 局部变量名表（符号索引序列）

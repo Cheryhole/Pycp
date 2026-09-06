@@ -692,6 +692,13 @@ int main(int argc, char** argv) {
 			Pycp::BC::DumpModule(module);
 		}
 		else if (opt.emit_cpp) {
+			// AOT 仅支持 .pycp 源码；.cpycp 是已编译字节码，无法再转译。
+			if (has_suffix(opt.input_file, Pycp::EXT_CPYCP)) {
+				std::cerr << "Error: --emit-cpp only works on .pycp source files "
+				          << "(got " << opt.input_file << ")." << std::endl;
+				ret = 2;
+			}
+			else {
 			// AOT：收集入口与全部 import 依赖（含解析清单），生成可直接编译的
 			// CMake 项目文件夹。编排层（PycpAotProject）负责建目录、写 .gen.cpp、
 			// 形态决策（ModulePlan）与渲染构建脚本。
@@ -843,6 +850,7 @@ int main(int argc, char** argv) {
 				std::cout << "Self-contained executable: " << out_dir
 				          << "/build/" << entry_name
 				          << " (no stdlib/ or runtime DLL needed)\n";
+			}
 			}
 		}
 		else if (opt.compile) {

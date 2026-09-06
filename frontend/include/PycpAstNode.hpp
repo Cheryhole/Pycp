@@ -185,15 +185,33 @@ struct BinaryExpression : Expression {
 // ============================================================
 // FunctionExpression 节点
 // ============================================================
+
+// 形参项：参数名（owning string*）+ 可选默认值表达式（owning Expression*；
+// nullptr 表示该形参无默认值）。
+// 仅支持移动、禁止拷贝（避免成员被重复释放）。
+struct Param {
+	std::string* name;
+	Expression* default_value;
+
+	Param(std::string* n, Expression* dv = nullptr)
+		: name(n), default_value(dv) {}
+	Param(const Param&) = delete;
+	Param& operator=(const Param&) = delete;
+	Param(Param&& o) noexcept : name(o.name), default_value(o.default_value) {
+		o.name = nullptr;
+		o.default_value = nullptr;
+	}
+};
+
 struct FunctionExpression : Expression {
 	std::string name;
-	std::vector<std::string*> params;
+	std::vector<Param> params;
 	Program* body;
 	// 顶层函数装饰器表达式（@decorator），nullptr 表示无装饰器。
 	// 仅用于顶层函数定义（func name(){}）；匿名函数/类内方法无此字段。
 	Expression* decorator;
 
-	FunctionExpression(std::vector<std::string*> p, Program* b,
+	FunctionExpression(std::vector<Param> p, Program* b,
 	                   std::string n = "@anonymous", int line = -1,
 	                   Expression* deco = nullptr);
 	~FunctionExpression() override;

@@ -146,7 +146,7 @@ std::string BinaryExpression::to_string() const {
 // ============================================================
 // FunctionExpression 实现
 // ============================================================
-FunctionExpression::FunctionExpression(std::vector<std::string*> p,
+FunctionExpression::FunctionExpression(std::vector<Param> p,
                                        Program* b,
                                        std::string n, int line,
                                        Expression* deco)
@@ -157,8 +157,9 @@ FunctionExpression::FunctionExpression(std::vector<std::string*> p,
 FunctionExpression::~FunctionExpression() {
 	delete body;
 	delete decorator;
-	for (std::string* param : params) {
-		delete param;
+	for (Param& param : params) {
+		delete param.name;
+		delete param.default_value;
 	}
 }
 
@@ -166,7 +167,10 @@ std::string FunctionExpression::to_string() const {
 	std::string params_str;
 	for (size_t i = 0; i < params.size(); ++i) {
 		if (i > 0) params_str += ", ";
-		params_str += *(params[i]);
+		params_str += *(params[i].name);
+		if (params[i].default_value != nullptr) {
+			params_str += " = " + params[i].default_value->to_string();
+		}
 	}
 
 	std::string body_str = body->to_string();

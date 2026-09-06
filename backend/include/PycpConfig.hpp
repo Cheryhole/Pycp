@@ -40,7 +40,8 @@ constexpr const char* AOT_BUILTIN_REG_CPP_FILENAME = "__pycp_builtin_reg.gen.cpp
 // =============================================================
 constexpr char BYTECODE_MAGIC[] = "CYCP";        // 4 字节魔数
 constexpr uint16_t BYTECODE_VERSION_MAJOR = 3;
-constexpr uint16_t BYTECODE_VERSION_MINOR = 0;
+// minor 1：CodeObject 新增 default_count 字段（尾部默认值形参个数）。
+constexpr uint16_t BYTECODE_VERSION_MINOR = 1;
 
 // =============================================================
 // AOT 生成符号前缀（跨模块链接约定）

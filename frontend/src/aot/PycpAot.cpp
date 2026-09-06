@@ -473,10 +473,27 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 
 			case Pycp::BC::Op::MAKE_FUNCTION: {
 				std::size_t fidx = static_cast<std::size_t>(ins.operand);
+				const auto& mco = module.code_objects[fidx];
 				os << "    { Pycp::BytecodeFunction* fn = new Pycp::BytecodeFunction("
-				   << cpp_string_literal(module.code_objects[fidx].name)
+				   << cpp_string_literal(mco.name)
 				   << ", " << Pycp::AOT_FN_PREFIX << fidx << ", env);\n";
 				os << "      Pycp::GC_Track(fn);\n";
+				os << "      fn->set_param_info(" << mco.nparams << ", "
+				   << mco.default_count << ");\n";
+				if (mco.default_count > 0) {
+					// 弹出定义点压栈的默认值（栈顶连续段），以 Owned 转入 fn；
+					// 与原栈引用抵消引用计数。
+					os << "      { std::vector<Pycp::Object*> defs;\n";
+					os << "        const std::size_t nd = " << mco.default_count << ";\n";
+					os << "        const std::size_t db = st.size() - nd;\n";
+					os << "        for (std::size_t k = 0; k < nd; ++k) "
+					   << "defs.push_back(st[db + k]);\n";
+					os << "        fn->set_defaults(defs);\n";
+					os << "        for (std::size_t k = 0; k < nd; ++k) "
+					   << "{ Pycp::Object* d = st.back(); st.pop_back(); "
+					   << "if (d) Pycp::Decref(d); }\n";
+					os << "      }\n";
+				}
 				os << "      st.push_back(fn); }\n";
 				break;
 			}
@@ -509,6 +526,19 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 				const auto& cdef = module.classes[cidx];
 				const std::string& file = module.source_path;
 				int lineno = (pc < co.linenos.size()) ? co.linenos[pc] : -1;
+
+				// 方法默认值段（编译期把各带默认值方法的默认值按「方法顺序×
+				// 形参顺序」压栈，位于装饰器段之下）：预统计总数与每方法偏移，
+				// 供生成代码从栈中按常量偏移取默认值。
+				std::size_t md_total = 0;
+				std::vector<std::size_t> md_offsets(cdef.methods.size(), 0);
+				for (std::size_t i = 0; i < cdef.methods.size(); ++i) {
+					const std::size_t cidx2 =
+						static_cast<std::size_t>(cdef.methods[i].second);
+					md_offsets[i] = md_total;
+					if (cidx2 < module.code_objects.size())
+						md_total += module.code_objects[cidx2].default_count;
+				}
 
 				// 1) 构造类对象。
 				os << "    { Pycp::Class* cls = Pycp::Class::New("
@@ -559,6 +589,11 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 				// 3) 装饰器栈区基址：装饰器对象位于 MAKE_CLASS 前栈顶。
 				os << "      std::size_t deco_base = st.size() - "
 				   << cdef.decorator_count << ";\n";
+				// 方法默认值段基址（位于装饰器段之下）。
+				if (md_total > 0) {
+					os << "      const std::size_t md_base = deco_base - "
+					   << md_total << ";\n";
+				}
 
 				// 4) 成员变量（声明顺序）：带装饰器的成员经占位对象确定可见性。
 				for (std::size_t i = 0; i < cdef.member_names.size(); ++i) {
@@ -588,6 +623,20 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 						   << cpp_string_literal(module.code_objects[co_idx].name)
 						   << ", " << Pycp::AOT_FN_PREFIX << co_idx << ", env);\n";
 						os << "      Pycp::GC_Track(mfn" << i << ");\n";
+						{
+							const auto& mco = module.code_objects[co_idx];
+							os << "      mfn" << i << "->set_param_info(" << mco.nparams
+							   << ", " << mco.default_count << ");\n";
+							if (mco.default_count > 0) {
+								os << "      { std::vector<Pycp::Object*> defs;\n";
+								os << "        for (std::size_t k = 0; k < "
+								   << mco.default_count << "; ++k) "
+								   << "defs.push_back(st[md_base + " << md_offsets[i]
+								   << " + k]);\n";
+								os << "        mfn" << i << "->set_defaults(defs);\n";
+								os << "      }\n";
+							}
+						}
 						os << "      Pycp::Object* dm" << i << " = Pycp::ApplyDecorator(st[deco_base + "
 						   << cdef.method_decorators[i] << "], mfn" << i << ", " << cpp_string_literal(file)
 						   << ", " << lineno << ");\n";
@@ -611,6 +660,20 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 						   << cpp_string_literal(module.code_objects[co_idx].name)
 						   << ", " << Pycp::AOT_FN_PREFIX << co_idx << ", env);\n";
 						os << "      Pycp::GC_Track(mfn" << i << ");\n";
+						{
+							const auto& mco = module.code_objects[co_idx];
+							os << "      mfn" << i << "->set_param_info(" << mco.nparams
+							   << ", " << mco.default_count << ");\n";
+							if (mco.default_count > 0) {
+								os << "      { std::vector<Pycp::Object*> defs;\n";
+								os << "        for (std::size_t k = 0; k < "
+								   << mco.default_count << "; ++k) "
+								   << "defs.push_back(st[md_base + " << md_offsets[i]
+								   << " + k]);\n";
+								os << "        mfn" << i << "->set_defaults(defs);\n";
+								os << "      }\n";
+							}
+						}
 						os << "      cls->add_method(" << cpp_string_literal(mname)
 						   << ", mfn" << i << ", mfn" << i << "->is_private());\n";
 						// 同上：记录方法所属类，供 super() 正确解析父类。
@@ -622,6 +685,13 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 				// 6) 弹出装饰器对象（每份栈引用 Decref）。
 				os << "      for (std::size_t d = 0; d < " << cdef.decorator_count
 				   << "; ++d) { Pycp::Object* deco = st.back(); st.pop_back(); if (deco) Pycp::Decref(deco); }\n";
+				// 6b) 弹出方法默认值段（位于装饰器段之下）。默认值已由各方法
+				// set_defaults 接管一份 Owned，此处释放栈上的原始引用。
+				if (md_total > 0) {
+					os << "      for (std::size_t d = 0; d < " << md_total
+					   << "; ++d) { Pycp::Object* dv = st.back(); st.pop_back(); "
+					   << "if (dv) Pycp::Decref(dv); }\n";
+				}
 
 				// 7) 压入类对象（新建 Class 为 Owned，由栈接管这 1 份引用）。
 				os << "      st.push_back(cls); }\n";

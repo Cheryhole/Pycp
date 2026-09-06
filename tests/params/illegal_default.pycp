@@ -1,0 +1,7 @@
+// 非法：默认值形参后出现必填普通形参（编译期应报错）
+import io
+
+func h(a, b = 1, c) {
+	return 1
+}
+io.print("should not reach here")

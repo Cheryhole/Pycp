@@ -130,6 +130,26 @@ private:
 // 函数编译的局部变量上下文
 // =============================================================
 
+// 校验形参默认值顺序并统计尾部带默认值的形参个数。
+// 规则（对齐 Python）：一旦某个形参带默认值，其后不得再出现必填普通形参
+//（func f(a, b=1, c) 非法）。顶层函数 / 匿名函数 / 类方法共用此校验。
+// 返回 default_count（尾部带默认值形参个数），供 CodeObject 写入。
+static uint16_t validate_default_params(const FunctionExpression* fe,
+                                        int line, Emitter& em) {
+	bool seen_default = false;
+	uint16_t count = 0;
+	for (const Param& prm : fe->params) {
+		if (prm.default_value != nullptr) {
+			seen_default = true;
+			++count;
+		} else if (seen_default) {
+			throw em.make_error(line,
+				"non-default argument follows default argument");
+		}
+	}
+	return count;
+}
+
 // 编译一个函数体时，需要一个"局部变量名 -> 槽索引"的映射。
 // 顶层模块没有局部变量（全部走 globals）。
 struct Scope {
@@ -311,18 +331,22 @@ static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 		}
 		case NodeType::FUNCTION_EXPRESSION: {
 			FunctionExpression* fe = static_cast<FunctionExpression*>(e);
+			// 顺序校验：默认值形参后不得再接必填普通形参。
+			uint16_t default_count = validate_default_params(fe, e->lineno, em);
+
 			// 新代码对象（压栈，成为 current）
 			std::size_t co_idx = em.push_code_object(fe->name);
 
 			// 构造函数局部作用域：参数 + 函数体内赋值目标
 			Scope fn_scope;
 			fn_scope.has_locals = true;
-			for (std::string* p : fe->params) fn_scope.add(*p);
+			for (const Param& prm : fe->params) fn_scope.add(*prm.name);
 			std::unordered_set<std::string> targets;
 			collect_assignment_targets(fe->body, targets);
 			for (const auto& t : targets) fn_scope.add(t);
 
 			em.current()->nparams = static_cast<uint16_t>(fe->params.size());
+			em.current()->default_count = default_count;
 			em.current()->nlocals = static_cast<uint16_t>(fn_scope.names.size());
 			em.current()->names = fn_scope.names;
 
@@ -337,11 +361,24 @@ static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 			// 弹回父代码对象。
 			em.pop_code_object();
 
-			// 装饰器（顶层函数定义 @decorator func）：装饰器作为 callee
-			// 需在栈底，被装饰函数作为参数在栈顶。故先求值装饰器表达式，
-			// 再发射 MAKE_FUNCTION，最后 CALL 1 用装饰器返回对象替换函数。
+			// 默认值与装饰器在【定义处作用域】求值，紧邻 MAKE_FUNCTION 之前
+			// 压栈（Python 语义：函数定义执行时求值一次）。栈布局约定：
+			//   装饰器在底（作 callee），随后 default_count 个默认值在顶；
+			// VM/AOT 的 MAKE_FUNCTION 处理器弹出 default_count 个栈顶值后
+			// 把新建函数压栈，因此 [deco, d0..dk-1] 变为 [deco, fn]，
+			// 装饰器变体随即 CALL 1 用装饰器返回值替换函数。
 			if (fe->decorator != nullptr) {
 				compile_expr(em, fe->decorator, scope);
+			}
+			for (const Param& prm : fe->params) {
+				if (prm.default_value != nullptr) {
+					em.set_lineno(prm.default_value->lineno >= 0
+					                  ? prm.default_value->lineno : e->lineno);
+					compile_expr(em, prm.default_value, scope);
+				}
+			}
+
+			if (fe->decorator != nullptr) {
 				em.emit(Op::MAKE_FUNCTION, static_cast<int32_t>(co_idx));
 				em.emit(Op::CALL, 1);
 			} else {
@@ -808,6 +845,24 @@ static void compile_class_body(Emitter& em, const std::string& name,
 	// 在 MAKE_CLASS 之前按「先成员变量、后方法」顺序求值压栈。
 	uint32_t deco_idx = 0;
 
+	// 方法参数默认值（pass 0）：在类定义处为每个带默认值的方法把默认值
+	// 对象求值压栈（连续段，位于装饰器对象【之下】，即先压栈）。栈布局
+	// 自栈底向上：[[全部方法的默认值段：方法顺序×形参顺序]][成员变量/
+	// 方法装饰器段]。MAKE_CLASS 处理器遍历 cdef.methods 时按对应 code
+	// object 的 default_count 从默认值段依次取用（顺序与 cdef.methods 中
+	// 方法声明顺序一致；合成方法 __init_defaults__ default_count 为 0）。
+	for (Statement* ms : *methods) {
+		MethodDefinition* md = static_cast<MethodDefinition*>(ms);
+		FunctionExpression* fe = md->function;
+		for (const Param& prm : fe->params) {
+			if (prm.default_value != nullptr) {
+				em.set_lineno(prm.default_value->lineno >= 0
+				                  ? prm.default_value->lineno : fe->lineno);
+				compile_expr(em, prm.default_value, scope);
+			}
+		}
+	}
+
 	// 成员变量名 + 装饰器（声明顺序）。带装饰器的成员先求值装饰器表达式
 	// 压栈，并记录栈槽序号；无装饰器记为 UINT32_MAX。
 	for (Statement* mv : *member_variables) {
@@ -826,17 +881,22 @@ static void compile_class_body(Emitter& em, const std::string& name,
 		MethodDefinition* md = static_cast<MethodDefinition*>(ms);
 		FunctionExpression* fe = md->function;
 
+		// 顺序校验（默认值形参后不得接必填普通形参）并取默认值个数。
+		const uint16_t method_default_count =
+			validate_default_params(fe, fe->lineno, em);
+
 		std::size_t co_idx = em.push_code_object(fe->name);
 
 		// 构造方法局部作用域：参数（含 self）+ 方法体内赋值目标。
 		Scope fn_scope;
 		fn_scope.has_locals = true;
-		for (std::string* p : fe->params) fn_scope.add(*p);
+		for (const Param& prm : fe->params) fn_scope.add(*prm.name);
 		std::unordered_set<std::string> targets;
 		collect_assignment_targets(fe->body, targets);
 		for (const auto& t : targets) fn_scope.add(t);
 
 		em.current()->nparams = static_cast<uint16_t>(fe->params.size());
+		em.current()->default_count = method_default_count;
 		em.current()->nlocals = static_cast<uint16_t>(fn_scope.names.size());
 		em.current()->names = fn_scope.names;
 

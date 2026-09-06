@@ -629,6 +629,29 @@ Object* VM::execute(CodeObject* co,
 					throw VMError(cur_file(), cur_line(), "function index out of range.");
 				BytecodeFunction* fn = new BytecodeFunction(this, module_, fidx, env);
 				GC_Track(fn);
+				// 挂载默认值：定义点（MAKE_FUNCTION 之前）已按形参顺序把
+				// default_count 个默认值对象压栈，此处弹出并以 Owned 转入 fn。
+				// （若函数带装饰器，装饰器对象位于默认值之下，栈顶即默认值段。）
+				const std::size_t n_def = fn->fn_default_count();
+				if (n_def > 0) {
+					if (stack.size() < n_def)
+						throw VMError(cur_file(), cur_line(),
+						              "function default value stack underflow.");
+					// 栈顶 n_def 个元素即默认值（形参顺序，底->顶）。
+					std::vector<Object*> defs;
+					defs.reserve(n_def);
+					const std::size_t base = stack.size() - n_def;
+					for (std::size_t i = base; i < stack.size(); ++i)
+						defs.push_back(stack[i]);
+					fn->set_defaults(defs);   // 内部对每个元素 Incref（接管一份 Owned）
+					// 释放栈上原有的那 1 份引用（与 set_defaults 的 Incref 抵消，
+					// 使默认值仅由函数 defaults_ 持有）。
+					for (std::size_t i = 0; i < n_def; ++i) {
+						Object* d = stack.back();
+						stack.pop_back();
+						if (d != nullptr) Decref(d);
+					}
+				}
 				push(fn);
 				// 函数对象所有权归栈顶，函数指针由 push 持有
 				Decref(fn); // push 已 Incref，释放"新建 Owned"这 1 份
@@ -694,6 +717,26 @@ Object* VM::execute(CodeObject* co,
 				const std::size_t deco_base =
 					stack.size() - static_cast<std::size_t>(cdef.decorator_count);
 
+				// 方法参数默认值段：位于装饰器对象【之下】（compile 端先压栈）。
+				// 总数为各方法 code object default_count 之和；按 cdef.methods
+				// 顺序连续存放，遍历方法时用游标顺序取用。
+				std::size_t method_default_total = 0;
+				for (const auto& m : cdef.methods) {
+					const std::size_t mi = static_cast<std::size_t>(m.second);
+					if (mi < module_->code_objects.size())
+						method_default_total +=
+							module_->code_objects[mi].default_count;
+				}
+				// 默认值段位于装饰器段之下（[deco_base - total, deco_base)），
+				// 需保证栈上确有 total 个默认值，即 deco_base >= total。
+				if (deco_base < method_default_total) {
+					Decref(cls);
+					throw VMError(cur_file(), cur_line(),
+					              "method default value stack underflow.");
+				}
+				std::size_t method_default_cursor =
+					deco_base - method_default_total;
+
 				// 成员变量名（声明顺序）。带装饰器的成员调用装饰器函数
 				// （传一个临时占位对象，装饰器设置其可见性后返回），从
 				// 返回对象读 is_private() 得到可见性。成员变量本身无独立
@@ -723,6 +766,22 @@ Object* VM::execute(CodeObject* co,
 					}
 					BytecodeFunction* fn = new BytecodeFunction(this, module_, co_idx, env);
 					GC_Track(fn);
+					// 挂载该方法的默认值（编译期已按方法/形参顺序压入默认值段）。
+					const std::size_t m_n_def = fn->fn_default_count();
+					if (m_n_def > 0) {
+						if (method_default_cursor + m_n_def > stack.size()) {
+							Decref(cls);
+							Decref(fn);
+							throw VMError(cur_file(), cur_line(),
+							              "method default value index out of range.");
+						}
+						std::vector<Object*> defs;
+						defs.reserve(m_n_def);
+						for (std::size_t k = 0; k < m_n_def; ++k)
+							defs.push_back(stack[method_default_cursor + k]);
+						method_default_cursor += m_n_def;
+						fn->set_defaults(defs); // 内部对每个元素 Incref（接管一份 Owned）
+					}
 					if (i < cdef.method_decorators.size() &&
 					    cdef.method_decorators[i] != UINT32_MAX) {
 						std::size_t didx = deco_base + cdef.method_decorators[i];
@@ -753,6 +812,12 @@ Object* VM::execute(CodeObject* co,
 				for (std::size_t d = 0; d < cdef.decorator_count; ++d) {
 					Object* deco = pop();
 					if (deco != nullptr) Decref(deco);
+				}
+				// 弹出方法默认值段（位于装饰器段之下）。默认值已由各方法
+				// set_defaults 接管一份 Owned，此处释放栈上的原始引用与之抵消。
+				for (std::size_t d = 0; d < method_default_total; ++d) {
+					Object* dv = pop();
+					if (dv != nullptr) Decref(dv);
 				}
 				push(cls);
 				Decref(cls); // push 已 Incref
@@ -989,7 +1054,10 @@ BytecodeFunction::BytecodeFunction(BC::VM* vm_, BC::Module* module_,
 	// 标记为 Bytecode 种类，并取函数名
 	kind = FunctionKind::Bytecode;
 	if (module && code_idx < module->code_objects.size()) {
-		name = module->code_objects[code_idx].name.c_str();
+		const BC::CodeObject& co = module->code_objects[code_idx];
+		name = co.name.c_str();
+		fn_nparams_ = co.nparams;
+		fn_default_count_ = co.default_count;
 	}
 }
 
@@ -1002,6 +1070,32 @@ BytecodeFunction::BytecodeFunction(const std::string& name_,
 	  captured(std::move(captured_)), native_fn_(native_fn) {
 	kind = FunctionKind::Bytecode;
 	name = name_.c_str();
+	// 参数元信息（nparams/default_count）由 AOT 生成代码在创建后经
+	// set_param_info 注入（native 构造无从读取 CodeObject）。
+}
+
+BytecodeFunction::~BytecodeFunction() {
+	for (Object* d : defaults_) {
+		if (d != nullptr) Decref(d);
+	}
+}
+
+void BytecodeFunction::set_param_info(uint16_t nparams, uint16_t default_count) {
+	fn_nparams_ = nparams;
+	fn_default_count_ = default_count;
+}
+
+void BytecodeFunction::set_defaults(const std::vector<Object*>& vals) {
+	for (Object* v : vals) {
+		if (v != nullptr) Incref(v);
+		defaults_.push_back(v);
+	}
+}
+
+void BytecodeFunction::foreach_ref(const std::function<void(Object*)>& visit) {
+	for (Object* d : defaults_) {
+		if (d != nullptr) visit(d);
+	}
 }
 
 namespace {
@@ -1048,6 +1142,39 @@ private:
 } // anonymous namespace
 
 Object* BytecodeFunction::invoke(Object** argv, std::size_t argc) {
+	// 默认值补齐后的完整实参缓冲区。必须声明在【函数作用域】：
+	// 若声明在下面的 if 块内，出块即析构，而 argv = full.data() 之后仍要
+	// 在块外供 MethodCallContext / vm->call / 原生 stub 使用 —— 那会让
+	// argv 变成悬空指针，读到已释放的堆内存（表现为 self 偶发失效）。
+	std::vector<Object*> full;
+	// 默认值（少传尾部位置实参触发）补齐：本层是解释器（vm->call/execute）
+	// 与 AOT（native_fn_）的公共调用门，补齐后两侧始终收到完整参数，原有
+	// 参数线性绑定代码无需改动。
+	//   无默认值函数（fn_default_count_==0）不经此路径：缺参由 execute()
+	//   既有校验按原文案报错，行为零变化。
+	//   有默认值函数：实参 < 必填数（nparams - default_count）报缺参；
+	//   实参介于 [必填数, nparams) 时把缺失的尾部默认值追加展开。
+	if (fn_default_count_ != 0 &&
+	    argc < static_cast<std::size_t>(fn_nparams_)) {
+		const std::size_t required =
+			static_cast<std::size_t>(fn_nparams_) - fn_default_count_;
+		if (argc < required) {
+			throw VMError(std::string("function '") + name +
+			              "' missing required positional argument(s): expected " +
+			              std::to_string(required) + ", got " +
+			              std::to_string(argc));
+		}
+		// 已提供的实参可能已覆盖 default 段的前缀，缺的是 defaults_ 剩余项。
+		full.assign(argv, argv + argc);
+		const std::size_t have_defaults = argc - required;
+		full.reserve(fn_nparams_);
+		for (std::size_t i = have_defaults; i < defaults_.size(); ++i) {
+			full.push_back(defaults_[i]);
+		}
+		argv = full.data();
+		argc = full.size();
+	}
+
 	MethodCallContext ctx(owner_class_, argv, argc);
 	if (native_fn_ != nullptr) {
 		// native 模式（AOT）：self 传 this，使生成的 pycp_fn_N 能经

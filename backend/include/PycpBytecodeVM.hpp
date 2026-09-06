@@ -139,6 +139,15 @@ private:
 	std::shared_ptr<BC::Environment> captured;  // 定义时环境（闭包）
 	PycpNativeFunction native_fn_ = nullptr;    // native 模式目标函数指针（AOT 生成的 pycp_fn_N）
 
+	// 尾部默认参数值（Owned；顺序与形参声明一致：defaults_[0] 对应第一个
+	// 带默认值的形参，即 code 的 required 槽之后）。无默认值时为空。
+	// 定义点（MAKE_FUNCTION / MAKE_CLASS）求值一次，所有调用共享，
+	// 语义对齐 Python 的默认参数对象。
+	std::vector<Object*> defaults_;
+	// 参数元信息（创建时从 CodeObject 复制，供 invoke 缺省补齐判定）。
+	uint16_t fn_nparams_ = 0;         // 形参总数（含尾部默认值形参）
+	uint16_t fn_default_count_ = 0;   // 尾部默认值形参个数
+
 public:
 	BytecodeFunction(BC::VM* vm, BC::Module* module, std::size_t code_idx,
 	                 std::shared_ptr<BC::Environment> captured);
@@ -148,10 +157,27 @@ public:
 	BytecodeFunction(const std::string& name, PycpNativeFunction native_fn,
 	                 std::shared_ptr<BC::Environment> captured);
 
+	~BytecodeFunction() override;
+
 	Object* invoke(Object** argv, std::size_t argc) override;
 
 	// 捕获环境访问器（native 模式下 AOT 生成的 pycp_fn_N 经 self 读取）。
 	const std::shared_ptr<BC::Environment>& get_captured() const { return captured; }
+
+	// 参数元信息注入（AOT 生成代码在 native 构造后调用；解释器构造时已从
+	// CodeObject 填充）。
+	void set_param_info(uint16_t nparams, uint16_t default_count);
+
+	// 装载默认值：将 vals 中元素以 Owned 引用转入 defaults_（对每个元素
+	// Incref）；调用方栈/容器上的原引用后续仍由其自身清理 Decref。
+	void set_defaults(const std::vector<Object*>& vals);
+
+	uint16_t fn_nparams() const { return fn_nparams_; }
+	uint16_t fn_default_count() const { return fn_default_count_; }
+	const std::vector<Object*>& defaults() const { return defaults_; }
+
+	// GC：默认值是函数对象的子引用，须纳入可达性遍历。
+	void foreach_ref(const std::function<void(Object*)>& visit) override;
 };
 
 } // namespace Pycp

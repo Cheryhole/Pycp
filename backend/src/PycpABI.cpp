@@ -16,10 +16,16 @@ Object* GetAttr(Object* obj, const std::string& name){
 	if (dynamic_cast<Instance*>(obj) != nullptr) {
 		Instance* inst = static_cast<Instance*>(obj);
 		// 字段优先；其次方法（绑定）。
+		// 注：Instance::__get_attribute__ 对类方法已返回 BoundMethod（自带
+		// self 绑定，见 PycpClass.cpp get_bound_method），因此这里不得再次
+		// 包装——否则每次实例方法调用 self 会被注入两次，带参方法将错位。
 		Object* field = inst->__get_attribute__(name);
 		if (field != nullptr) {
-			// 若字段是 Function（如魔术方法），包装为绑定方法使 self 自动绑定；
-			// 普通字段（非 Function）直接返回。
+			// 已绑定方法直接返回（Owned）；其余 Function 包装为绑定方法；
+			// 普通字段（非 Function）转 Owned 返回。
+			if (dynamic_cast<BoundMethod*>(field) != nullptr) {
+				return field;
+			}
 			if (field->is_type("Function")) {
 				return New<BoundMethod>(obj, static_cast<Function*>(field));
 			}

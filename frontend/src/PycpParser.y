@@ -25,6 +25,27 @@ extern int Pycplex();
 extern int Pycplineno;
 extern YY_BUFFER_STATE Pycp_scan_string(const char*);
 extern void Pycp_delete_buffer(YY_BUFFER_STATE);
+
+// 构建函数表达式节点：把解析期收集的 Param* 列表折叠为按值持有的
+// std::vector<Param>（转移成员所有权后释放外壳），再构造 FunctionExpression。
+// 顶层函数 / 匿名函数 / 类内方法三处共用，统一所有权管理。
+static Pycp::Ast::FunctionExpression* make_func_expr(
+	std::vector<Pycp::Ast::Param*>* params,
+	Pycp::Ast::Program* body,
+	const std::string& name,
+	int line,
+	Pycp::Ast::Expression* deco = nullptr) {
+	std::vector<Pycp::Ast::Param> pv;
+	if (params != nullptr) {
+		pv.reserve(params->size());
+		for (Pycp::Ast::Param* item : *params) {
+			pv.push_back(std::move(*item));
+			delete item;
+		}
+		delete params;
+	}
+	return new Pycp::Ast::FunctionExpression(std::move(pv), body, name, line, deco);
+}
 %}
 
 %union {
@@ -35,7 +56,9 @@ extern void Pycp_delete_buffer(YY_BUFFER_STATE);
 	std::vector<Pycp::Ast::IfBranch*>* if_branches; // elif branch list
 	std::vector<Pycp::Ast::Statement*>* statements;
 	std::vector<std::string>* identifiers;
-	std::vector<std::string*>* string_ptrs;   // parameter names (owning pointers)
+	std::vector<std::string*>* string_ptrs;   // identifier lists (from_import_names)
+	Pycp::Ast::Param* param_def_item;         // single parameter (name + optional default)
+	std::vector<Pycp::Ast::Param*>* param_defs; // parameter items (owning Param*)
 	std::vector<Pycp::Ast::Expression*>* expressions; // call arguments
 	std::vector<std::pair<Pycp::Ast::Expression*, Pycp::Ast::Expression*>>* pair_list; // map 键值对列表
 	std::pair<Pycp::Ast::Expression*, Pycp::Ast::Expression*>* key_value_pair;
@@ -98,7 +121,8 @@ extern void Pycp_delete_buffer(YY_BUFFER_STATE);
 
 %type <node> function_def_statement
 %type <node> function_expr
-%type <string_ptrs> parameter_list
+%type <param_def_item> parameter_def
+%type <param_defs> parameter_list
 %type <statements> code_block
 %type <expressions> arguments
 %type <pair_list> map_literal
@@ -278,16 +302,26 @@ code_block: OP_LBRACE OP_RBRACE {
 		}
 ;
 
-// 参数列表：逗号分隔的标识符（参数名）。
-// 形如 (a, b, c) 或空 ()。
-parameter_list: %empty {
-				$$ = new std::vector<std::string*>();
+// 参数定义项：形参名，或带默认值的形参（name = default_expr）。
+// 默认值可为任意表达式（Python 语义：函数定义时求值一次）。
+parameter_def: IDENTIFIER {
+				$$ = new Pycp::Ast::Param($1);
 		}
-		| IDENTIFIER {
-				$$ = new std::vector<std::string*>();
+		| IDENTIFIER OP_EQUALS expression {
+				$$ = new Pycp::Ast::Param($1, static_cast<Expression*>($3));
+		}
+;
+
+// 参数列表：逗号分隔的形参项。形如 (a, b = 1, c) 或空 ()。
+// 「默认值形参后不得再接必填普通形参」的顺序校验在 Codegen 统一执行。
+parameter_list: %empty {
+				$$ = new std::vector<Pycp::Ast::Param*>();
+		}
+		| parameter_def {
+				$$ = new std::vector<Pycp::Ast::Param*>();
 				$$->push_back($1);
 		}
-		| parameter_list OP_COMMA IDENTIFIER {
+		| parameter_list OP_COMMA parameter_def {
 				$1->push_back($3);
 				$$ = $1;
 		}
@@ -353,13 +387,12 @@ map_pair: expression OP_COLON expression {
 // 可选装饰器前缀：@decorator func name(...){...}，装饰器表达式存入
 // FunctionExpression::decorator，运行时由 codegen 发射装饰器调用替换。
 function_def_statement: KW_FUNC IDENTIFIER OP_LPARENTHESES parameter_list OP_RPARENTHESES code_block {
-			FunctionExpression* func = new FunctionExpression(
-				*$4,                                  // params
+			FunctionExpression* func = make_func_expr(
+				$4,                                  // params
 				new Program($6),                     // body
 				*($2),                               // name
 				@$.first_line
 			);
-			delete $4; // 参数已移动进 FunctionExpression
 			delete $2;
 
 			$$ = new AssignmentStatement(
@@ -369,14 +402,13 @@ function_def_statement: KW_FUNC IDENTIFIER OP_LPARENTHESES parameter_list OP_RPA
 			);
 		}
 	| OP_AT decorator_expr opt_newlines KW_FUNC IDENTIFIER OP_LPARENTHESES parameter_list OP_RPARENTHESES code_block {
-			FunctionExpression* func = new FunctionExpression(
-				*$7,                                  // params
+			FunctionExpression* func = make_func_expr(
+				$7,                                  // params
 				new Program($9),                     // body
 				*($5),                               // name
 				@$.first_line,
 				static_cast<Expression*>($2)          // decorator
 			);
-			delete $7; // 参数已移动进 FunctionExpression
 			delete $5;
 
 			$$ = new AssignmentStatement(
@@ -389,13 +421,12 @@ function_def_statement: KW_FUNC IDENTIFIER OP_LPARENTHESES parameter_list OP_RPA
 
 // 匿名函数表达式：func(params) { body }
 function_expr: KW_FUNC OP_LPARENTHESES parameter_list OP_RPARENTHESES code_block {
-			$$ = new FunctionExpression(
-				*$3,                       // params
+			$$ = make_func_expr(
+				$3,                        // params
 				new Program($5),           // body
 				Pycp::ANONYMOUS_FUNCTION,  // name（config 常量）
 				@$.first_line
 			);
-			delete $3; // 参数已移动进 FunctionExpression
 		}
 ;
 
@@ -562,13 +593,12 @@ member_variable: IDENTIFIER {
 
 // 方法定义：func name(params){ body }
 method_definition: KW_FUNC IDENTIFIER OP_LPARENTHESES parameter_list OP_RPARENTHESES code_block {
-			FunctionExpression* func = new FunctionExpression(
-				*$4,                                  // params
+			FunctionExpression* func = make_func_expr(
+				$4,                                  // params
 				new Program($6),                     // body
 				*($2),                               // name
 				@$.first_line
 			);
-			delete $4;
 			delete $2;
 			$$ = new MethodDefinition(func, @$.first_line);
 		}

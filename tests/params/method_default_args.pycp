@@ -1,0 +1,42 @@
+// 类方法默认值（self 之后的形参同样支持默认值）
+import io
+import pycp
+
+class C {
+	func __initialize__(self, x, m = 5) {
+		self.x = x
+		self.m = m
+	}
+	func add(self, k = 1) {
+		return self.x + self.m + k
+	}
+}
+func main() {
+	// 临时实例调用（默认值）
+	a = C(1).add()
+	// 显式覆盖所有参数
+	b = C(2, 3).add(10)
+	// 变量持有实例 + 部分省略
+	c1 = C(4)
+	c = c1.add()
+	// 省略末位默认值
+	d = C(5).add(2)
+	if (a != 7) {
+		io.print("C(1).add() fail")
+		return None
+	}
+	if (b != 15) {
+		io.print("C(2,3).add(10) fail")
+		return None
+	}
+	if (c != 10) {
+		io.print("c1.add() fail")
+		return None
+	}
+	if (d != 12) {
+		io.print("C(5).add(2) fail")
+		return None
+	}
+	io.print("METHOD DEFAULT PASS")
+}
+main()
