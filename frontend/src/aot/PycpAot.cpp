@@ -957,8 +957,20 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	os << "        mod = Pycp::Module::New(" << cpp_string_literal(modname) << ");\n";
 	os << "        Pycp::GC_AddRoot(mod);\n";
 	os << "        g_mod_ns = mod->get_namespace();\n";
+	// __name__ 注入（规则 2/1）：入口模块 set_module_name(\"__main__\") 且不注入
+	// 命名空间（裸名经 pycp.__name__ 回退）；其余模块命名空间注入 __name__ = 模块名。
+	if (is_entry) {
+		os << "        mod->set_module_name(\"__main__\");\n";
+	} else {
+		os << "        (*g_mod_ns)[\"__name__\"] = Pycp::String::FromCString("
+		   << cpp_string_literal(modname) << ");\n";
+	}
+	// 顶层执行期间：当前模块 = mod，供 pycp.__name__ 回退。
+	os << "        Pycp::Module* saved_current = Pycp::current_module_;\n";
+	os << "        Pycp::current_module_ = mod;\n";
 	os << "        Pycp::Object* r = " << Pycp::AOT_FN_PREFIX << "0(nullptr, nullptr, 0);\n";
 	os << "        if (r) Pycp::Decref(r);\n";
+	os << "        Pycp::current_module_ = saved_current;\n";
 	os << "        done = true;\n";
 	os << "    }\n";
 	os << "    return mod;\n";

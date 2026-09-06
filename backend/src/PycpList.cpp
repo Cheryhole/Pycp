@@ -136,7 +136,8 @@ Object* List::__inspect__() {
 		"length", "append",
 		"__iterator__", "__list__", "__boolean__", "__addition__", "__string__",
 		"__get_item__", "__set_item__", "__delete_item__",
-		"__get_attribute__", "__set_attribute__", "__inspect__",
+		"__get_attribute__", "__set_attribute__", "__delete_attribute__", "__inspect__",
+		"__map__",
 	};
 	for (const auto& n : extra) {
 		// 避免重复（若已在 members_ 中则跳过）。

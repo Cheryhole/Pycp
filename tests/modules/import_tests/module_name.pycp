@@ -1,0 +1,43 @@
+// __name__ 字段行为断言：
+//   规则 1：入口文件命名空间无 __name__ -> 裸名/pycp.__name__ 回退 "__main__"；
+//   规则 2：import 的模块命名空间注入 __name__ = 模块名；
+//   规则 3：文件显式定义 __name__ 优先。
+import io
+import pycp
+import mod_name
+import mod_name_over
+
+func main() {
+	if (__name__ == "__main__") {
+	} else {
+		io.print("module_name: entry __name__ != __main__")
+		return None
+	}
+	if (pycp.__name__ == "__main__") {
+	} else {
+		io.print("module_name: pycp.__name__ != __main__")
+		return None
+	}
+	if (mod_name.__name__ == "mod_name") {
+	} else {
+		io.print("module_name: mod_name.__name__ != 模块名")
+		return None
+	}
+	if (mod_name.inside == "mod_name") {
+	} else {
+		io.print("module_name: mod_name 内部裸 __name__ 未注入")
+		return None
+	}
+	if (mod_name_over.__name__ == "override_me") {
+	} else {
+		io.print("module_name: 显式 __name__ 覆盖未生效")
+		return None
+	}
+	if (mod_name_over.inside == "override_me") {
+	} else {
+		io.print("module_name: 显式 __name__ 内部引用未生效")
+		return None
+	}
+	io.print("IMPORT TEST PASS: module_name")
+}
+main()

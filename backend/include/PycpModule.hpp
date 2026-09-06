@@ -22,6 +22,10 @@ namespace Pycp {
 class PYCP_API Module : public Object {
 private:
 	std::string name_;   // 模块名（不含 .pycp 后缀）
+	// __name__ 规范值：入口模块为 "__main__"，其余模块为模块名。
+	// 与 name_ 解耦，使入口模块的 __string__/__name__ 显示 "__main__"
+	// 而不影响 name_（模块缓存键 / type_name）。
+	std::string module_name_;
 	// 模块命名空间：该模块顶层定义的名称（含函数、变量等）。
 	// 由执行该模块顶层的 VM / AOT 填充。
 	std::unordered_map<std::string, Object*> namespace_;
@@ -40,9 +44,17 @@ public:
 	// 覆盖基类虚函数：返回模块名。
 	const char* get_name() const override { return name_.c_str(); }
 
+	// 设置 __name__ 规范值（入口模块设为 "__main__"，其余保持模块名）。
+	void set_module_name(const std::string& n) { module_name_ = n; }
+
 	// 读取/写入命名空间（供 VM / AOT 填充与查询）。
 	// 注意：直接操作裸指针，引用计数由调用方管理。
 	std::unordered_map<std::string, Object*>* get_namespace() { return &namespace_; }
+
+	// 解析 __name__ 值对象（无递归）：
+	//   members_ 覆盖 -> namespace_["__name__"] -> 回退 String(module_name_)。
+	// 供 __get_attribute__("__name__") / __string__ / GetCurrentModuleName 共用。
+	Object* resolve_name_value();
 
 	// 属性访问：namespace_ 中查 name，未找到抛 AttributeError。
 	Object* __get_attribute__(const std::string& name) override;
@@ -57,6 +69,14 @@ public:
 	// 模块执行环境收尾时统一管理）。
 	void foreach_ref(const std::function<void(Object*)>& visit) override;
 };
+
+// 全局「当前正在执行的模块」：VM / AOT 在执行某模块顶层前设置、后恢复。
+// 用于实现 pycp.__name__（即当前文件名称）。
+PYCP_API extern Module* current_module_;
+
+// 获取当前模块名（pycp.__name__ 的来源）：取 current_module_->resolve_name_value()，
+// current_module_ 为空时回退 "__main__"。返回 Owned。
+PYCP_API Object* GetCurrentModuleName();
 
 } // namespace Pycp
 

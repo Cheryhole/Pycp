@@ -533,7 +533,8 @@ Object* File::__inspect__() {
 	std::vector<std::string> names = {
 		"closed", "name", "mode",
 		"write", "read", "readline", "readlines", "close", "open",
-		"__string__", "__get_attribute__", "__inspect__"
+		"__string__", "__inspect__", "__get_attribute__", "__set_attribute__",
+		"__delete_attribute__", "__map__", "__boolean__"
 	};
 	return BuildNameList(names);
 }

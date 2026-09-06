@@ -99,6 +99,10 @@ private:
 	std::shared_ptr<Environment> global_env_; // 持有 globals map
 	Pycp::Module* entry_mod_ = nullptr;       // 入口模块对象（其 namespace 即顶层 globals）
 
+	// 当前模块名回退缓存（GC root，VM 持有所有权）：供裸名 `__name__` 在
+	// 命名空间缺失时回退到 pycp.__name__（即当前文件名称）。随 current_module_ 更新。
+	Pycp::Object* name_fallback_ = nullptr;
+
 	// 模块注册表（模块名 -> Module*）与已加载模块对象缓存。
 	// 生命周期由调用方保证（registry 中的 Module 存活于 VM 使用期间）。
 	std::map<std::string, Module*>* registry_;
@@ -123,6 +127,10 @@ private:
 	// 失败时从缓存移除并回滚。
 	//   bc : 字节码模块，须在本 VM 生命周期内保持有效
 	Pycp::Module* load_from_bc_module(const std::string& name, Module* bc);
+
+	// 切换「当前正在执行的模块」：更新全局 current_module_ 并刷新
+	// name_fallback_ 缓存（供 pycp.__name__ / 裸名 __name__ 回退）。
+	void set_current_module(Pycp::Module* m);
 };
 
 } // namespace BC

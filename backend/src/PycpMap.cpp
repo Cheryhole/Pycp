@@ -309,7 +309,7 @@ Object* Map::__inspect__() {
 		"length", "keys",
 		"__map__", "__boolean__", "__string__",
 		"__get_item__", "__set_item__", "__delete_item__",
-		"__get_attribute__", "__set_attribute__", "__inspect__",
+		"__get_attribute__", "__set_attribute__", "__delete_attribute__", "__inspect__",
 	};
 	for (const auto& n : extra) {
 		bool found = false;

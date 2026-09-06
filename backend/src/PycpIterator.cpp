@@ -31,7 +31,7 @@ Object* ListIterator::__inspect__() {
 	List* lst = static_cast<List*>(Object::__inspect__());
 	std::vector<std::string> extra = {
 		"__next__", "__iterator__",
-		"__get_attribute__", "__set_attribute__", "__inspect__",
+		"__get_attribute__", "__set_attribute__", "__delete_attribute__", "__inspect__",
 	};
 	for (const auto& n : extra) {
 		bool found = false;

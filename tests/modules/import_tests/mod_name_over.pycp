@@ -1,0 +1,3 @@
+// 规则 3：文件显式定义 __name__（字符串），优先于注入默认值。
+__name__ = "override_me"
+inside = __name__

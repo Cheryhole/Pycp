@@ -19,10 +19,15 @@ VM::VM(Module* module, std::map<std::string, Module*>* registry,
 	if (module_ != nullptr) {
 		entry_mod_ = Pycp::Module::New(entry_name.empty() ? Pycp::MODULE_ENTRY_NAME : entry_name);
 		GC_AddRoot(entry_mod_);
+		// 入口模块 __name__ 规范值为 "__main__"（命名空间不注入 __name__，
+		// 裸名经 LOAD_VAR 回退到 pycp.__name__ 即当前模块名）。
+		entry_mod_->set_module_name("__main__");
 		module_cache_[entry_name] = entry_mod_;
 		global_env_->globals = entry_mod_->get_namespace();
 	} else {
 		global_env_->globals = new std::unordered_map<std::string, Object*>();
+		// REPL：无入口模块，向全局 map 注入 __name__ = "__main__"。
+		(*global_env_->globals)["__name__"] = Pycp::String::FromCString("__main__");
 	}
 
 	// 设置脚本所在目录，作为 import 查找第 3 层（cwd 之后）的候选目录。
@@ -59,9 +64,19 @@ VM::VM(Module* module, std::map<std::string, Module*>* registry,
 				GC_AddRoot(module_->runtime_consts.back());
 				}
 				}
+
+	// 初始化当前模块名回退缓存（GC root，VM 持有所有权）。
+	name_fallback_ = Pycp::GetCurrentModuleName();
+	Pycp::GC_AddRoot(name_fallback_);
 }
 
 VM::~VM() {
+	// 释放当前模块名回退缓存（先移除 GC root，再 Decref 归零）。
+	if (name_fallback_ != nullptr) {
+		Pycp::GC_RemoveRoot(name_fallback_);
+		Pycp::Decref(name_fallback_);
+		name_fallback_ = nullptr;
+	}
 	// 第一步：显式断开各模块命名空间的引用（清空 map 并 Decref 值），打破
 	// 模块间可能形成的循环引用（A import B 且 B import A），避免后续
 	// Decref Module 时因环导致连锁析构 / 双重释放。
@@ -142,6 +157,15 @@ VM::~VM() {
 	owned_modules_.clear();
 }
 
+void VM::set_current_module(Pycp::Module* m) {
+	Pycp::current_module_ = m;
+	Pycp::Object* nw = Pycp::GetCurrentModuleName();   // Owned（refcount 1）
+	Pycp::GC_RemoveRoot(name_fallback_);
+	Pycp::Decref(name_fallback_);
+	Pycp::GC_AddRoot(nw);
+	name_fallback_ = nw;                                // VM 持有所有权
+}
+
 Object* VM::run() {
 	if (module_ == nullptr || module_->code_objects.empty())
 		throw VMError("empty module.");
@@ -149,8 +173,17 @@ Object* VM::run() {
 	CodeObject* top = &module_->code_objects[0];
 	std::shared_ptr<Environment> env = std::make_shared<Environment>();
 	env->globals = global_env_->globals;
-	// 顶层视为一个无参函数，locals 用于存储全局代码中的临时（实际全部走 globals）
-	return execute(top, env, nullptr, 0);
+	// 入口顶层执行期间：当前模块 = entry_mod_，供 pycp.__name__ 回退。
+	Pycp::Module* saved_current = Pycp::current_module_;
+	set_current_module(entry_mod_);
+	try {
+		Object* ret = execute(top, env, nullptr, 0);
+		set_current_module(saved_current);
+		return ret;
+	} catch (...) {
+		set_current_module(saved_current);
+		throw;
+	}
 }
 
 Object* VM::exec_module(Module* m) {
@@ -182,6 +215,9 @@ Object* VM::exec_module(Module* m) {
 	// runtime_consts（与 load_module / call 的跨模块执行机制一致）。
 	Module* saved_module = module_;
 	module_ = m;
+	// REPL 无「当前文件」概念，pycp.__name__ 回退为 "__main__"。
+	Pycp::Module* saved_current = Pycp::current_module_;
+	set_current_module(nullptr);
 	Object* result = nullptr;
 	try {
 		CodeObject* top = &m->code_objects[0];
@@ -190,12 +226,14 @@ Object* VM::exec_module(Module* m) {
 		result = execute(top, env, nullptr, 0);
 	} catch (...) {
 		module_ = saved_module;
+		set_current_module(saved_current);
 		// 异常路径同样接管 m（保留 runtime_consts 供可能已存入 globals 的
 		// 闭包后续使用），由 VM 析构统一清理。
 		owned_modules_.push_back(m);
 		throw;
 	}
 	module_ = saved_module;
+	set_current_module(saved_current);
 	// 注意：此处【不】清理 m 的 runtime_consts。REPL 模式下 m 内的代码对象
 	// （如通过 MAKE_FUNCTION 定义的闭包函数体）后续仍会被调用，常量必须持续
 	// 存活。runtime_consts 的清理与 m 本身的释放一并推迟到 VM 析构
@@ -254,6 +292,10 @@ Pycp::Module* VM::load_from_bc_module(const std::string& name, Module* bc) {
 	Incref(modobj);
 	module_cache_[name] = modobj;
 
+	// 规则 2：import 后自动在该模块命名空间注入 __name__ = 模块名，
+	// 使模块内裸名 __name__ 直接可用（refcount 1，命名空间为唯一持有者）。
+	(*modobj->get_namespace())["__name__"] = Pycp::String::FromCString(name.c_str());
+
 	// 为子模块构造执行环境：其顶层 globals 指向 Module 的命名空间。
 	// 本版起不注入任何内建函数。
 	std::shared_ptr<Environment> sub_global = std::make_shared<Environment>();
@@ -265,6 +307,9 @@ Pycp::Module* VM::load_from_bc_module(const std::string& name, Module* bc) {
 	// 因此需要临时切换 module_ 指针。
 	Module* saved_module = module_;
 	module_ = bc;
+	// 执行期间：当前模块 = 被导入模块，供 pycp.__name__ 回退。
+	Pycp::Module* saved_current = Pycp::current_module_;
+	set_current_module(modobj);
 	try {
 		if (bc->code_objects.empty()) {
 			throw VMError("empty imported module: " + name);
@@ -300,12 +345,14 @@ Pycp::Module* VM::load_from_bc_module(const std::string& name, Module* bc) {
 	} catch (...) {
 		// 失败回滚：从缓存移除并释放，避免留下坏模块。
 		module_ = saved_module;
+		set_current_module(saved_current);
 		module_cache_.erase(name);
 		GC_RemoveRoot(modobj);
 		Decref(modobj);
 		throw;
 	}
 	module_ = saved_module;
+	set_current_module(saved_current);
 
 	return modobj;
 }
@@ -433,9 +480,16 @@ Object* VM::execute(CodeObject* co,
 
 				// 统一经 ABI 环境接口查找（局部 -> captured 链 -> 全局）
 				Object* v = Environment_Lookup(env.get(), name);
-				if (v == nullptr)
-					throw NameError(cur_file(), cur_line(), "name '" + name + "' is not defined");
-				push(v);
+				if (v == nullptr) {
+					// 规则 1：命名空间未定义 __name__ 时，回退到 pycp.__name__
+					// （当前文件名称，缓存于 name_fallback_，GC root 持有）。
+					if (name == "__name__") {
+						v = name_fallback_;
+					} else {
+						throw NameError(cur_file(), cur_line(), "name '" + name + "' is not defined");
+					}
+				}
+				push(v);   // push 会 Incref，栈持有真实引用
 				break;
 			}
 

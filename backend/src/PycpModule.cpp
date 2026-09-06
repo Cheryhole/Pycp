@@ -11,8 +11,17 @@ Module* Module::New(const std::string& name) {
 	return Pycp::New<Module>(name);
 }
 
+// 全局「当前正在执行的模块」：VM / AOT 在执行某模块顶层前设置、后恢复。
+Module* current_module_ = nullptr;
+
+// pycp.__name__ 的来源：当前文件的名称。返回 Owned。
+Object* GetCurrentModuleName() {
+	if (current_module_ == nullptr) return String::FromCString("__main__");
+	return current_module_->resolve_name_value(); // 无递归（resolve 不走 pycp 回退）
+}
+
 Module::Module(const std::string& name)
-	: Object(name), name_(name) {}
+	: Object(name), name_(name), module_name_(name) {}
 
 Module::~Module() {
 	// 命名空间内对象的引用计数由模块执行环境负责管理；
@@ -25,10 +34,36 @@ Object* Module::GetAttr(Module* mod, const std::string& name) {
 	return mod->__get_attribute__(name);
 }
 
+Object* Module::resolve_name_value() {
+	// members_ 覆盖 -> namespace_["__name__"] -> 回退 module_name_（无递归）。
+	auto itm = members_.find("__name__");
+	if (itm != members_.end() && itm->second != nullptr) {
+		Incref(itm->second);
+		return itm->second;
+	}
+	auto it = namespace_.find("__name__");
+	if (it != namespace_.end() && it->second != nullptr) {
+		Incref(it->second);
+		return it->second;
+	}
+	return String::FromCString(module_name_.c_str()); // Owned
+}
+
 Object* Module::__get_attribute__(const std::string& name) {
-	// 0) 内建只读属性 __name__：返回类型名（type_name()）对应的 String。
+	// 0) __name__：members_ / namespace_ 命中即用；都不命中回退全局当前模块名
+	//    （即 pycp.__name__，对应规则 1：入口文件经回退得 "__main__"）。
 	if (name == "__name__") {
-		return GetNameAttribute(this);
+		auto itm = members_.find(name);
+		if (itm != members_.end() && itm->second != nullptr) {
+			Incref(itm->second);
+			return itm->second;
+		}
+		auto it = namespace_.find(name);
+		if (it != namespace_.end() && it->second != nullptr) {
+			Incref(it->second);
+			return it->second;
+		}
+		return GetCurrentModuleName();
 	}
 	// 1) 先从成员字典中查找（支持动态 set attribute）。
 	auto itm = members_.find(name);
@@ -89,13 +124,36 @@ Object* Module::__inspect__() {
 		}
 		if (!found) lst->append(String::FromCString(n.c_str()));
 	}
+	// Module 豁免 __get_attribute__/__set_attribute__/__delete_attribute__，
+	// 仅暴露其真实支持的魔术方法（命名空间若已含同名则不重复添加）。
+	auto append_unique = [&lst](const char* n) {
+		for (std::size_t i = 0; i < lst->size(); ++i) {
+			Object* elem = lst->at(i);
+			if (elem != nullptr && elem->is_type("String") &&
+			    static_cast<String*>(elem)->get_value() == n) {
+				return;
+			}
+		}
+		lst->append(String::FromCString(n));
+	};
+	append_unique("__string__");
+	append_unique("__inspect__");
+	append_unique("__name__");
 	return lst;
 }
 
 Object* Module::__string__(){
-  // 模块的字符串表示："<module \"name\">"，name 为模块名（恒非空，
-  // 由 VM 的 MODULE_ENTRY_NAME 兜底）。
-  return String::FromCString(("<module \"" + std::string(get_name()) + "\">").c_str());
+	// 用 __name__ 渲染：值为 String 直接嵌入；否则调用其 __string__()。
+	Object* no = resolve_name_value();
+	std::string repr;
+	if (no->is_type("String")) {
+		repr = static_cast<String*>(no)->get_value();
+	} else {
+		Object* s = no->__string__();   // 返回 Owned
+		repr = static_cast<String*>(s)->get_value();
+		Decref(s);
+	}
+	return String::FromCString(("<module \"" + repr + "\">").c_str());
 }
 
 void Module::foreach_ref(const std::function<void(Object*)>& visit) {

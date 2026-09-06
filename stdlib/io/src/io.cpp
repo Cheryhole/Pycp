@@ -2,6 +2,7 @@
 #include "PycpFile.hpp"
 #include "PycpModule.hpp"   // runtime 的 Module 完整定义
 #include "PycpClass.hpp"    // BuiltinTypeClass / Class::add_method
+#include "PycpMagic.hpp"    // GetMagicMethodFunction
 #include "PycpFunction.hpp"
 #include "PycpString.hpp"
 #include "PycpInteger.hpp"
@@ -92,6 +93,11 @@ Module* make_io_module() {
 	Module* mod = Module::New(MODULE_NAME);
 	auto* ns = mod->get_namespace();
 
+	// 规则 2：io 模块命名空间注入 __name__ = 模块名。
+	(*ns)["__name__"] = String::FromCString(MODULE_NAME);
+	Incref((*ns)["__name__"]);
+	Decref((*ns)["__name__"]); // namespace 持有
+
 	// 标准流对象（懒创建，常驻）。
 	if (g_io_stdin == nullptr) {
 		g_io_stdin = File::FromStream("<stdin>",
@@ -136,6 +142,15 @@ Module* make_io_module() {
 		file_cls->add_method("readlines", New<Function>("readlines", File_readlines_fn()));
 		file_cls->add_method("close",     New<Function>("close",     File_close_fn()));
 		file_cls->add_method("open",      New<Function>("open",      File_open_fn()));
+		// 注册 io.File 类级支持的魔术方法，使其 __inspect__ 能枚举
+		// （与 pycp 内置类型 add_magic_methods 一致）。
+		file_cls->add_method("__string__",         static_cast<Function*>(GetMagicMethodFunction("__string__")));
+		file_cls->add_method("__inspect__",        static_cast<Function*>(GetMagicMethodFunction("__inspect__")));
+		file_cls->add_method("__get_attribute__",  static_cast<Function*>(GetMagicMethodFunction("__get_attribute__")));
+		file_cls->add_method("__set_attribute__",  static_cast<Function*>(GetMagicMethodFunction("__set_attribute__")));
+		file_cls->add_method("__delete_attribute__", static_cast<Function*>(GetMagicMethodFunction("__delete_attribute__")));
+		file_cls->add_method("__map__",            static_cast<Function*>(GetMagicMethodFunction("__map__")));
+		file_cls->add_method("__boolean__",        static_cast<Function*>(GetMagicMethodFunction("__boolean__")));
 		(*ns)["File"] = file_cls;
 		Incref(file_cls);
 		Decref(file_cls); // namespace 持有

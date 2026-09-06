@@ -1,4 +1,5 @@
 #include "PycpFunction.hpp"
+#include "PycpMagic.hpp"   // BuildNameList / __call__ 等魔术方法名
 
 namespace Pycp {
 
@@ -41,6 +42,16 @@ Object* Function::__string__(){
 	// 普通函数："<function \"name\" at 0xADDR>"。
 	return String::FromCString(("<function \"" + display +
 	                          "\" at " + ptr_address(this) + ">").c_str());
+}
+
+Object* Function::__inspect__() {
+	// Function / BoundMethod 支持的魔术方法（属性钩子继承自 Object）。
+	std::vector<std::string> names = {
+		"__string__", "__call__",
+		"__get_attribute__", "__set_attribute__", "__delete_attribute__",
+		"__inspect__",
+	};
+	return BuildNameList(names);
 }
 
 Object* Function::invoke(Object** argv, std::size_t argc){

@@ -83,6 +83,12 @@ void set_func(Module* mod, const char* name, PycpNativeFunction fn) {
 
 Module* make_classtools_module() {
 	Module* mod = Module::New(MODULE_NAME);
+	auto* ns = mod->get_namespace();
+
+	// 规则 2：classtools 模块命名空间注入 __name__ = 模块名。
+	(*ns)["__name__"] = String::FromCString(MODULE_NAME);
+	Incref((*ns)["__name__"]);
+	Decref((*ns)["__name__"]); // namespace 持有
 
 	// 可见性装饰器函数：@private / @public 作为普通函数被装饰器语法糖
 	// 调用，设置被装饰对象的可见性。

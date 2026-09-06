@@ -1,6 +1,8 @@
 #include "PycpNone.hpp"
 #include "PycpInteger.hpp"
 #include "PycpString.hpp"
+#include "PycpList.hpp"
+#include "PycpMagic.hpp"
 #include "PycpGC.hpp"
 
 namespace Pycp {
@@ -43,6 +45,16 @@ Object* None::__integer__(){
 
 Object* None::__string__(){
 	return none_str_;
+}
+
+Object* None::__inspect__() {
+	// None 支持的魔术方法（含继承自 Object 的属性钩子/通用钩子）。
+	std::vector<std::string> names = {
+		"__string__", "__integer__", "__boolean__",
+		"__get_attribute__", "__set_attribute__", "__delete_attribute__",
+		"__inspect__",
+	};
+	return BuildNameList(names);
 }
 
 void None::foreach_ref(const std::function<void(Object*)>& visit){

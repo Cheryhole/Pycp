@@ -1,0 +1,2 @@
+// 被导入模块：import 后命名空间自动注入 __name__ = 模块名。
+inside = __name__

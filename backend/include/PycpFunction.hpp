@@ -59,6 +59,7 @@ class PYCP_API Function : public Object{
 		// 匿名函数（name 为空或 @anonymous）沿用同一格式，名字位置显示
 		// @anonymous，即 <function "@anonymous" at 0xADDR>（不再是裸 @anonymous）。
 		Object* __string__() override;
+		Object* __inspect__() override;
 
 		// 内部调用：经统一 argv/argc 形态
 		Object* __call__(Object* args) override;
