@@ -1,8 +1,10 @@
 #include "PycpABI.hpp"
+#include "PycpBytecode.hpp"   // Environment_KeepNamesOfCodeObject 需读 CodeObject::free_names
 #include "PycpClass.hpp"
 #include "PycpFunction.hpp"
 #include "PycpNativeExt.hpp"
 #include <map>
+#include <unordered_map>
 #include <mutex>
 
 namespace Pycp {
@@ -128,6 +130,106 @@ bool ApplyDecoratorVisibility(Object* deco,
 	bool priv = result->is_private();
 	Decref(result);
 	return priv;
+}
+
+MemberFlags ApplyDecoratorMemberFlags(Object* deco,
+                                      const std::string& file, int line) {
+	Object* placeholder = New<Object>("@anonymous");
+	Object* result = ApplyDecorator(deco, placeholder, file, line);
+	Decref(placeholder);
+	if (result == nullptr) {
+		throw TypeError(file, line, "decorator returned null");
+	}
+	MemberFlags f;
+	f.priv = result->is_private();
+	f.readonly = result->is_readonly();
+	Decref(result);
+	return f;
+}
+
+Object* ApplyDecoratorChain(Object** decos, std::size_t count,
+                            Object* target,
+                            const std::string& file, int line) {
+	if (count == 0 || decos == nullptr || target == nullptr) {
+		throw TypeError(file, line, "decorator chain requires at least 1 decorator");
+	}
+	// cur 持有当前中间对象的 Owned 引用；target 的所有权仍归调用方。
+	// 由内向外：decos[count-1]（最靠近目标）最先应用。
+	Object* cur = target;
+	Incref(cur);
+	for (std::size_t k = count; k-- > 0; ) {
+		Object* next = ApplyDecorator(decos[k], cur, file, line);
+		if (next == nullptr || !next->is_type("Function")) {
+			Decref(cur);
+			if (next != nullptr) Decref(next);
+			throw TypeError(file, line, "decorator must return a function.");
+		}
+		Decref(cur);
+		cur = next;
+	}
+	return cur; // Owned，调用方接管
+}
+
+MemberFlags ApplyDecoratorMemberFlagsChain(Object** decos, std::size_t count,
+                                           const std::string& file, int line) {
+	if (count == 0 || decos == nullptr) {
+		throw TypeError(file, line, "decorator chain requires at least 1 decorator");
+	}
+	// 用同一占位对象由内向外串联应用：private/readonly 等原地设置的标志
+	// 在串联过程中自然累加，无需额外的标志合并逻辑。
+	Object* placeholder = New<Object>("@anonymous");
+	Object* cur = placeholder;
+	Incref(cur);
+	for (std::size_t k = count; k-- > 0; ) {
+		Object* next = ApplyDecorator(decos[k], cur, file, line);
+		if (next == nullptr) {
+			Decref(cur);
+			Decref(placeholder);
+			throw TypeError(file, line, "decorator returned null");
+		}
+		Decref(cur);
+		cur = next;
+	}
+	MemberFlags f;
+	f.priv = cur->is_private();
+	f.readonly = cur->is_readonly();
+	Decref(cur);
+	Decref(placeholder);
+	return f;
+}
+
+// globals map 指针 -> 所属 Module 注册表（供模块只读绑定覆盖检查）。
+namespace {
+std::mutex g_globals_module_mutex;
+std::unordered_map<void*, Module*> g_globals_module;
+}
+
+void BindGlobalsModule(void* globals, Module* mod) {
+	std::lock_guard<std::mutex> lock(g_globals_module_mutex);
+	if (mod != nullptr) {
+		g_globals_module[globals] = mod;
+	} else {
+		g_globals_module.erase(globals);
+	}
+}
+
+Module* LookupGlobalsModule(void* globals) {
+	std::lock_guard<std::mutex> lock(g_globals_module_mutex);
+	auto it = g_globals_module.find(globals);
+	return (it != g_globals_module.end()) ? it->second : nullptr;
+}
+
+void MarkBinding(void* globals, const std::string& name) {
+	Module* owner = LookupGlobalsModule(globals);
+	if (owner == nullptr || globals == nullptr) return;
+	auto* ns = static_cast<std::unordered_map<std::string, Object*>*>(globals);
+	auto it = ns->find(name);
+	AccessAttrs attrs;
+	if (it != ns->end() && it->second != nullptr) {
+		attrs.priv = it->second->is_private();
+		attrs.readonly = it->second->is_readonly();
+	}
+	owner->mark_binding(name, attrs);
 }
 
 Object* Add(Object* lhs, Object* rhs){
@@ -272,6 +374,15 @@ void Environment_Store(BC::Environment* env, const std::string& name,
 	if (env->globals) {
 		auto it = env->globals->find(name);
 		if (it != env->globals->end()) {
+			// 模块常量绑定：以绑定级属性为权威（@readonly 声明经 MARK_BINDING
+			// 登记）。不再回退值级 is_readonly，避免被池化共享值（小整数等）
+			// 误标只读导致无关变量重赋值被拒。
+			Module* owner = LookupGlobalsModule(env->globals);
+			if (owner != nullptr && owner->is_readonly_binding(name)) {
+				Decref(value); // 消费待写引用（Environment_Store 接管所有权）
+				throw AttributeError("cannot reassign read-only binding '" +
+				                     name + "'.");
+			}
 			if (it->second) Decref(it->second);
 			it->second = value;
 		} else {
@@ -281,6 +392,39 @@ void Environment_Store(BC::Environment* env, const std::string& name,
 	}
 
 	Decref(value);
+}
+
+void Environment_KeepNamesOfCodeObject(BC::Environment* env,
+                                       const BC::Module* module,
+                                       std::size_t co_idx) {
+	if (env == nullptr || module == nullptr) return;
+	if (co_idx >= module->code_objects.size()) return;
+	for (const std::string& name : module->code_objects[co_idx].free_names) {
+		env->keep_names.insert(name);
+	}
+}
+
+void Environment_KeepNames(BC::Environment* env,
+                           const char* const* names, std::size_t count) {
+	if (env == nullptr || names == nullptr) return;
+	for (std::size_t i = 0; i < count; ++i) {
+		if (names[i] != nullptr) env->keep_names.insert(names[i]);
+	}
+}
+
+void Environment_ReleaseFrame(BC::Environment* env) {
+	if (env == nullptr) return;
+	const std::size_t n = env->locals.size();
+	for (std::size_t i = 0; i < n; ++i) {
+		Object* v = env->locals[i];
+		if (v == nullptr) continue;
+		// 被闭包捕获的槽位保留（交由 ~Environment 释放）；其余立即释放。
+		const bool kept = (i < env->local_names.size()) &&
+		                  (env->keep_names.count(env->local_names[i]) != 0);
+		if (kept) continue;
+		env->locals[i] = nullptr;
+		Decref(v);
+	}
 }
 
 // =============================================================

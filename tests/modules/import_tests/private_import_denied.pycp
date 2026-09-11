@@ -1,0 +1,9 @@
+// 预期失败用例（EXPECTED-FAIL）：private(...) 直接调用声明的私有符号
+// 不可被其他模块 import，import 语句抛 AttributeError → 非零退出。
+import io
+from mod_flag import secret
+
+func main() {
+	io.print(secret)
+}
+main()

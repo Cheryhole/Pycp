@@ -28,6 +28,20 @@
 
 namespace Pycp {
 
+// =============================================================
+// 运行时「类型类」注册表（typeof / __class__ 用）
+// =============================================================
+// 映射「C++ 运行时类型名 -> 类对象」，供内置值对象（String/Integer/
+// List/Map/File/None/Function/迭代器等）解析其所属类。native 模块
+// （pycp/io）在创建类型类后登记；未登记的类型名由 LookupTypeClass
+// 惰性合成普通 Class 并缓存。
+PYCP_API void RegisterTypeClass(const std::string& type_name, Class* cls);
+PYCP_API Class* LookupTypeClass(const std::string& type_name);  // Borrowed
+
+// pycp.Object 类全局指针（typeof 对类对象 / 类自身的 __class__ 返回它）。
+PYCP_API void RegisterObjectClass(Class* cls);
+PYCP_API Class* LookupObjectClass();                            // Borrowed
+
 class PYCP_API Class : public Object {
 private:
 	std::string name_;
@@ -37,6 +51,8 @@ private:
 	std::vector<std::string> member_names_;
 	// 成员变量可见性：name -> true 表示 private。
 	std::unordered_map<std::string, bool> member_visibility_;
+	// 成员变量只读：name -> true 表示 readonly（实例字段赋值/删除被拦截）。
+	std::unordered_map<std::string, bool> member_readonly_;
 	// 方法表：方法名 -> 方法对象（Function*）。类拥有其引用。
 	std::unordered_map<std::string, Function*> methods_;
 	// 方法可见性：name -> true 表示 private。
@@ -55,6 +71,9 @@ public:
 	// 覆盖基类虚函数：返回类名（供默认 __string__ 与异常信息使用）。
 	const char* get_name() const override { return name_.c_str(); }
 
+	// 类对象的类型（typeof/__class__）：统一返回 pycp.Object。
+	Class* get_type_class() override;
+
 	Class* get_parent() const { return parent_; }
 	void set_parent(Class* parent);
 
@@ -62,9 +81,14 @@ public:
 	void add_member_name(const std::string& name);
 	// 带可见性添加成员变量名。
 	void add_member_name(const std::string& name, bool is_private);
+	// 带可见性 + 只读添加成员变量名。
+	void add_member_name(const std::string& name, bool is_private, bool is_readonly);
 
 	// 成员可见性查询：name 未记录时默认 public（false）。
 	bool member_is_private(const std::string& name) const;
+
+	// 成员只读查询：name 未记录时默认可写（false）。
+	bool member_is_readonly(const std::string& name) const;
 
 	// 添加方法（接管引用计数：内部 Incref，析构 Decref）。
 	void add_method(const std::string& name, Function* fn);
@@ -139,6 +163,9 @@ public:
 	static Instance* New(Class* cls);
 
 	Class* get_class() const { return cls_; }
+
+	// 实例的类型（typeof/__class__）：返回所属类对象 cls_。
+	Class* get_type_class() override;
 
 	// 字段读写。
 	Object* __get_attribute__(const std::string& name) override;

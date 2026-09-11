@@ -49,7 +49,7 @@ Object* Function::__inspect__() {
 	std::vector<std::string> names = {
 		"__string__", "__call__",
 		"__get_attribute__", "__set_attribute__", "__delete_attribute__",
-		"__inspect__",
+		"__inspect__", "__class__",
 	};
 	return BuildNameList(names);
 }

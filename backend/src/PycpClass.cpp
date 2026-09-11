@@ -7,6 +7,8 @@
 #include "PycpMap.hpp"
 
 #include <unordered_set>
+#include <unordered_map>
+#include <mutex>
 
 #include <sstream>
 #include <vector>
@@ -20,11 +22,68 @@ namespace {
 thread_local int g_internal_access_depth = 0;
 thread_local std::vector<Instance*> g_current_self_stack;
 thread_local std::vector<Class*> g_current_class_stack;
+// 正在执行 __init_defaults__（构造初值写入）的深度：此期间允许写入
+// readonly 字段（声明初值），其余路径仍拦截。
+thread_local int g_in_init_defaults = 0;
 }
 
 int internal_access_depth() { return g_internal_access_depth; }
 void enter_internal_access() { ++g_internal_access_depth; }
 void leave_internal_access() { --g_internal_access_depth; }
+
+// =============================================================
+// 运行时「类型类」注册表（typeof / __class__）
+// =============================================================
+namespace {
+std::mutex g_type_reg_mutex;
+// 类型名 -> 类对象。条目持强引用（Incref）并被 GC 常驻 root，
+// 与模块/合成类型类同生命周期（进程常驻，native 模块不卸载）。
+std::unordered_map<std::string, Class*> g_type_classes;
+Class* g_object_class = nullptr;   // pycp.Object 类指针（root 持有）
+} // anonymous namespace
+
+void RegisterTypeClass(const std::string& type_name, Class* cls) {
+	if (cls == nullptr) return;
+	std::lock_guard<std::mutex> lock(g_type_reg_mutex);
+	auto it = g_type_classes.find(type_name);
+	if (it != g_type_classes.end() && it->second != nullptr) {
+		// 后注册覆盖先前的同名条目（可能为惰性合成类）。
+		GC_RemoveRoot(it->second);
+		Decref(it->second);
+	}
+	Incref(cls);
+	GC_AddRoot(cls);
+	g_type_classes[type_name] = cls;
+}
+
+Class* LookupTypeClass(const std::string& type_name) {
+	std::lock_guard<std::mutex> lock(g_type_reg_mutex);
+	auto it = g_type_classes.find(type_name);
+	if (it != g_type_classes.end()) return it->second;
+	// 未登记：惰性合成一个普通 Class（名=类型名，如 None/Function/Module）。
+	// 合成类无构造回调，仅为 typeof/__class__ 提供类对象标识。
+	Class* c = Class::New(type_name);
+	GC_AddRoot(c);
+	g_type_classes[type_name] = c;   // 持有 root，不额外 Incref
+	return c;                        // Borrowed
+}
+
+void RegisterObjectClass(Class* cls) {
+	if (cls == nullptr) return;
+	std::lock_guard<std::mutex> lock(g_type_reg_mutex);
+	if (g_object_class != nullptr) {
+		GC_RemoveRoot(g_object_class);
+		Decref(g_object_class);
+	}
+	Incref(cls);
+	GC_AddRoot(cls);
+	g_object_class = cls;
+}
+
+Class* LookupObjectClass() {
+	std::lock_guard<std::mutex> lock(g_type_reg_mutex);
+	return g_object_class;
+}
 
 // =============================================================
 // 当前 self 上下文（thread_local 栈）
@@ -108,13 +167,25 @@ void Class::add_member_name(const std::string& name) {
 }
 
 void Class::add_member_name(const std::string& name, bool is_private) {
+	add_member_name(name, is_private, false);
+}
+
+void Class::add_member_name(const std::string& name, bool is_private,
+                            bool is_readonly) {
 	member_names_.push_back(name);
 	member_visibility_[name] = is_private;
+	member_readonly_[name] = is_readonly;
 }
 
 bool Class::member_is_private(const std::string& name) const {
 	auto it = member_visibility_.find(name);
 	if (it == member_visibility_.end()) return false;
+	return it->second;
+}
+
+bool Class::member_is_readonly(const std::string& name) const {
+	auto it = member_readonly_.find(name);
+	if (it == member_readonly_.end()) return false;
 	return it->second;
 }
 
@@ -154,10 +225,20 @@ std::vector<std::string> Class::method_names() const {
 	return names;
 }
 
+Class* Class::get_type_class() {
+	// 类对象统一归类为 pycp.Object（metaclass 语义）。
+	Class* oc = LookupObjectClass();
+	return oc != nullptr ? oc : LookupTypeClass("Object");
+}
+
 Object* Class::__get_attribute__(const std::string& name) {
 	// 0) 内建只读属性 __name__：返回类型名（type_name()）对应的 String。
 	if (name == "__name__") {
 		return GetNameAttribute(this);
+	}
+	// 0.1) 只读 __class__：返回 pycp.Object（类对象的类型）。
+	if (name == "__class__") {
+		return get_type_class(); // Borrowed（pycp.Object 由注册表 root 持有）
 	}
 	// 1) 先从成员字典中查找（支持动态 set attribute）。
 	auto itm = members_.find(name);
@@ -236,6 +317,19 @@ Object* Class::__inspect__() {
 		}
 		if (!found) lst->append(String::FromCString(n.c_str()));
 	}
+	// 类对象的类型属性 __class__（只读，dir 可见）。
+	{
+		bool found = false;
+		for (std::size_t i = 0; i < lst->size(); ++i) {
+			Object* elem = lst->at(i);
+			if (elem != nullptr && elem->is_type("String") &&
+			    static_cast<String*>(elem)->get_value() == "__class__") {
+				found = true;
+				break;
+			}
+		}
+		if (!found) lst->append(String::FromCString("__class__"));
+	}
 	return lst;
 }
 
@@ -266,12 +360,20 @@ Object* Class::instantiate(Object** argv, std::size_t argc) {
 	Instance* inst = Pycp::New<Instance>(this);
 
 	// 1) 应用成员初始值（若类定义了隐式 __init_defaults__）。
+	//    此期间放开 readonly 字段写入（声明初值），其余路径仍拦截。
 	Function* init_defaults = find_method("__init_defaults__");
 	if (init_defaults != nullptr) {
-		Object* self = inst;
-		Object* dv[1] = { self };
-		Object* r = init_defaults->invoke(dv, 1);
-		if (r != nullptr) Decref(r);
+		++g_in_init_defaults;
+		try {
+			Object* self = inst;
+			Object* dv[1] = { self };
+			Object* r = init_defaults->invoke(dv, 1);
+			if (r != nullptr) Decref(r);
+		} catch (...) {
+			--g_in_init_defaults;
+			throw;
+		}
+		--g_in_init_defaults;
 	}
 
 	// 2) 调用 __initialize__（若定义）。
@@ -329,10 +431,19 @@ Instance::~Instance() {
 	if (cls_ != nullptr) Decref(cls_);
 }
 
+Class* Instance::get_type_class() {
+	if (cls_ != nullptr) return cls_;
+	return LookupTypeClass("Instance");
+}
+
 Object* Instance::__get_attribute__(const std::string& name) {
 	// 0) 内建只读属性 __name__：返回类型名（type_name()）对应的 String。
 	if (name == "__name__") {
 		return GetNameAttribute(this);
+	}
+	// 0.1) 只读 __class__：返回所属类对象 cls_。
+	if (name == "__class__") {
+		return get_type_class(); // Borrowed（所属类由实例持引用）
 	}
 	// 0.5) 用户 override 的属性访问钩子 __get_attribute__(self, name)。
 	//      Object 提供的默认实现（owner_class 为 Object）不触发，走 C++
@@ -425,10 +536,36 @@ Object* Instance::__inspect__() {
 		}
 		if (!found) lst->append(String::FromCString(n.c_str()));
 	}
+	// 实例的类型属性 __class__（只读，dir 可见）。
+	{
+		bool found = false;
+		for (std::size_t i = 0; i < lst->size(); ++i) {
+			Object* elem = lst->at(i);
+			if (elem != nullptr && elem->is_type("String") &&
+			    static_cast<String*>(elem)->get_value() == "__class__") {
+				found = true;
+				break;
+			}
+		}
+		if (!found) lst->append(String::FromCString("__class__"));
+	}
 	return lst;
 }
 
 void Instance::__set_attribute__(const std::string& name, Object* value) {
+	// __class__ 只读：拒绝赋值（消费 value 引用，对齐 private 错误路径惯例）。
+	if (name == "__class__") {
+		if (value != nullptr) Decref(value);
+		throw AttributeError("'__class__' is read-only.");
+	}
+	// 只读拦截：对象冻结或字段被声明为 readonly（@readonly）。
+	// 构造初值写入（g_in_init_defaults>0）放行 readonly 字段；对象冻结始终拦截。
+	if (is_readonly() ||
+	    (cls_ != nullptr && cls_->member_is_readonly(name) &&
+	     g_in_init_defaults == 0)) {
+		if (value != nullptr) Decref(value);
+		throw AttributeError("'" + name + "' is read-only.");
+	}
 	// 用户 override 的属性赋值钩子 __set_attribute__(self, name, value)。
 	// Object 提供的默认实现（owner_class 为 Object）不触发，走 C++ 默认。
 	if (cls_ != nullptr) {
@@ -645,6 +782,11 @@ Object* Instance::__map__() {
 }
 
 void Instance::__delete_attribute__(const std::string& name) {
+	// 只读拦截：对象冻结或字段被声明为 readonly。
+	if (is_readonly() ||
+	    (cls_ != nullptr && cls_->member_is_readonly(name))) {
+		throw AttributeError("'" + name + "' is read-only.");
+	}
 	// 优先从实例字段删除；否则从动态成员字典删除。
 	// 若用户定义了 __delete_attribute__(self, name) 钩子，则由其接管。
 	if (cls_ != nullptr) {

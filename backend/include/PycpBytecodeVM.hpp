@@ -108,6 +108,12 @@ private:
 	std::map<std::string, Module*>* registry_;
 	std::map<std::string, Pycp::Module*> module_cache_;
 
+	// 字节码模块 -> 其运行时模块对象（namespace 即该模块的 globals）。
+	// 供 call() 把「函数所属模块的命名空间」作为调用环境的 globals，使被导入
+	// 模块的函数能读到本模块的全局名（与 AOT 生成代码使用本模块 g_mod_ns 一致）。
+	// REPL 语句模块不在表内，按入口命名空间处理（fallback）。
+	std::unordered_map<Module*, Pycp::Module*> bc_owner_;
+
 	// 由 exec_module 提交、本 VM 负责释放的 Module 列表（REPL 场景）。
 	// 这些 Module 被 BytecodeFunction 闭包引用，须存活至 VM 析构。
 	std::vector<Module*> owned_modules_;

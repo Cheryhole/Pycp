@@ -72,6 +72,26 @@ Object* _builtin_public(Object* self, Object** argv, std::size_t argc) {
 	return _builtin_visibility(self, argv, argc, /*priv=*/false);
 }
 
+// =============================================================
+// readonly：只读装饰器函数
+//
+// @readonly 把被装饰对象（变量/函数/类/实例/任意对象）设为只读后
+// 原样返回。只读语义（C++ ABI 底层标志 readonly_）：
+//   - 任意对象冻结：拒绝 obj.attr = v / delete obj.attr；
+//   - 模块顶层常量绑定：该名字不可被再次赋值覆盖（由存储层检查）；
+//   - 类成员字段（经 MAKE_CLASS 读取返回对象 is_readonly）只读。
+// 与 Pycp 库 readonly 行为一致，两库均导出同名函数。
+// =============================================================
+Object* _builtin_readonly(Object*, Object** argv, std::size_t argc) {
+	if (argc != 1 || argv == nullptr || argv[0] == nullptr) {
+		throw TypeError("readonly decorator expects exactly 1 argument.");
+	}
+	argv[0]->set_readonly(true);
+	// 原样返回被装饰对象（装饰器替换逻辑用返回值替换原对象）。
+	Incref(argv[0]);
+	return argv[0];
+}
+
 // 将原生函数以指定名字放入模块命名空间。
 void set_func(Module* mod, const char* name, PycpNativeFunction fn) {
 	auto* ns = mod->get_namespace();
@@ -94,6 +114,9 @@ Module* make_classtools_module() {
 	// 调用，设置被装饰对象的可见性。
 	set_func(mod, "private", _builtin_private);
 	set_func(mod, "public",  _builtin_public);
+
+	// 只读装饰器：@readonly（对象冻结 / 模块常量绑定 / 只读成员）。
+	set_func(mod, "readonly", _builtin_readonly);
 
 	// super：运行时函数，返回父类 Class（thread_local self 上下文）。
 	set_func(mod, "super", _builtin_super);

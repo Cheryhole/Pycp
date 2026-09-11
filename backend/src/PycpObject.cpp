@@ -3,6 +3,7 @@
 #include "PycpList.hpp"
 #include "PycpBoolean.hpp"
 #include "PycpMap.hpp"
+#include "PycpClass.hpp"
 #include "PycpGC.hpp"
 #include "PycpMagic.hpp"
 
@@ -41,6 +42,12 @@ const char* Object::get_name() const {
   return ANONYMOUS_FUNCTION;
 }
 
+Class* Object::get_type_class() {
+  // 按运行时类型名查注册表（String/Integer/.../None/Function/File），
+  // 未登记则惰性合成一个同名普通 Class（如 <class "None">）。
+  return LookupTypeClass(type_name_);
+}
+
 Object* Object::__string__(){
   // 默认表示："<name at 0xADDR>"（作为所有未显式定义 __string__ 的
   // 对象的兜底输出；匿名对象 name 为 @anonymous）。
@@ -62,6 +69,10 @@ Object* Object::__get_attribute__(const std::string& name){
   if (name == "__name__") {
     return GetNameAttribute(this);
   }
+  // 0.1) 只读 __class__：返回所属类型类对象（注册表持有，Borrowed）。
+  if (name == "__class__") {
+    return get_type_class();
+  }
   // 1) 先从成员字典中查找。
   auto it = members_.find(name);
   if (it != members_.end() && it->second != nullptr) {
@@ -76,6 +87,16 @@ Object* Object::__get_attribute__(const std::string& name){
 }
 
 void Object::__set_attribute__(const std::string& name, Object* value){
+  // __class__ 只读：拒绝赋值（消费 value 引用，与调用方所有权约定一致）。
+  if (name == "__class__") {
+    if (value != nullptr) Decref(value);
+    throw AttributeError("'__class__' is read-only.");
+  }
+  // 对象冻结（readonly 装饰器）：拒绝任何动态属性写入。
+  if (is_readonly()) {
+    if (value != nullptr) Decref(value);
+    throw AttributeError("'" + name + "' is read-only on a readonly object.");
+  }
   // 写入成员字典：若已存在则释放旧引用。
   auto it = members_.find(name);
   if (it != members_.end()) {
@@ -192,6 +213,10 @@ Object* Object::__delete__(){
 }
 
 void Object::__delete_attribute__(const std::string& name){
+  // 对象冻结（readonly 装饰器）：拒绝属性删除。
+  if (is_readonly()) {
+    throw AttributeError("'" + name + "' is read-only on a readonly object.");
+  }
   // 默认从成员字典删除（释放旧引用）；不存在抛 AttributeError。
   auto it = members_.find(name);
   if (it == members_.end() || it->second == nullptr) {

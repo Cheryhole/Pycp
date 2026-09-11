@@ -1,4 +1,5 @@
 #include "PycpBytecodeVM.hpp"
+#include "PycpABI.hpp"
 #include "PycpBoolean.hpp"
 #include "PycpMap.hpp"
 
@@ -24,11 +25,28 @@ VM::VM(Module* module, std::map<std::string, Module*>* registry,
 		entry_mod_->set_module_name("__main__");
 		module_cache_[entry_name] = entry_mod_;
 		global_env_->globals = entry_mod_->get_namespace();
+		// 入口函数调用时的 globals = 入口模块命名空间（与 global_env_ 同一 map）。
+		bc_owner_[module_] = entry_mod_;
 	} else {
-		global_env_->globals = new std::unordered_map<std::string, Object*>();
-		// REPL：无入口模块，向全局 map 注入 __name__ = "__main__"。
+		// REPL（无源码模块）：同样创建「入口模块」承载全局命名空间，使
+		// @private/@readonly 的绑定级属性（MARK_BINDING）与只读绑定覆盖检查
+		// （Environment_Store）有权威登记处——否则 REPL 中 `@readonly a = 1`
+		// 之后 `a = 2` 不会被拒绝。占坑键用 MODULE_ENTRY_NAME（该串不是合法
+		// 模块名，不会与 import 冲突），使 VM 析构能随 module_cache_ 一并
+		// 清理命名空间内的全局值。
+		entry_mod_ = Pycp::Module::New(Pycp::MODULE_ENTRY_NAME);
+		GC_AddRoot(entry_mod_);
+		entry_mod_->set_module_name("__main__");
+		module_cache_[Pycp::MODULE_ENTRY_NAME] = entry_mod_;
+		global_env_->globals = entry_mod_->get_namespace();
+		// REPL 无源文件：向全局命名空间注入 __name__ = "__main__"（原行为）。
 		(*global_env_->globals)["__name__"] = Pycp::String::FromCString("__main__");
 	}
+
+	// 登记 globals -> entry_mod_：Environment_Store 的只读绑定检查与
+	// MARK_BINDING（@private/@readonly 声明）都经该映射查所属模块，
+	// 文件模式与 REPL 模式共用（REPL 此前缺失该登记，导致 @readonly 失效）。
+	Pycp::BindGlobalsModule(global_env_->globals, entry_mod_);
 
 	// 设置脚本所在目录，作为 import 查找第 3 层（cwd 之后）的候选目录。
 	// 取入口模块源路径的目录部分；REPL（module_ == nullptr）无脚本目录，
@@ -109,6 +127,7 @@ VM::~VM() {
 		Decref(entry_mod_);
 	}
 	module_cache_.clear();
+	bc_owner_.clear();
 
 	// 仅当入口 Module 未接管 globals（entry_mod_ 为空）时，
 	// global_env_->globals 才是独立 new 出的 map，需要此处释放。
@@ -173,6 +192,8 @@ Object* VM::run() {
 	CodeObject* top = &module_->code_objects[0];
 	std::shared_ptr<Environment> env = std::make_shared<Environment>();
 	env->globals = global_env_->globals;
+	// 登记 globals -> entry_mod_（模块只读绑定覆盖检查用）。
+	Pycp::BindGlobalsModule(env->globals, entry_mod_);
 	// 入口顶层执行期间：当前模块 = entry_mod_，供 pycp.__name__ 回退。
 	Pycp::Module* saved_current = Pycp::current_module_;
 	set_current_module(entry_mod_);
@@ -291,6 +312,8 @@ Pycp::Module* VM::load_from_bc_module(const std::string& name, Module* bc) {
 	// module_cache_ 持久持有，计入引用计数（与 native 模块分支一致）。
 	Incref(modobj);
 	module_cache_[name] = modobj;
+	// 登记 字节码模块 -> 模块对象：其函数被调用时 globals 用本模块命名空间。
+	bc_owner_[bc] = modobj;
 
 	// 规则 2：import 后自动在该模块命名空间注入 __name__ = 模块名，
 	// 使模块内裸名 __name__ 直接可用（refcount 1，命名空间为唯一持有者）。
@@ -300,6 +323,8 @@ Pycp::Module* VM::load_from_bc_module(const std::string& name, Module* bc) {
 	// 本版起不注入任何内建函数。
 	std::shared_ptr<Environment> sub_global = std::make_shared<Environment>();
 	sub_global->globals = modobj->get_namespace();
+	// 登记 globals -> modobj（模块只读绑定覆盖检查用）。
+	Pycp::BindGlobalsModule(sub_global->globals, modobj);
 
 	// 子模块顶层执行需要一个 VM 上下文。为复用 execute 循环，
 	// 用同一个 VM 实例（this）执行子模块 code_objects[0]，
@@ -369,9 +394,13 @@ Object* VM::call(Module* m, size_t co_idx, Object** argv, std::size_t argc,
 	module_ = m;
 
 	std::shared_ptr<Environment> env = std::make_shared<Environment>();
-	// 全局环境指向函数所属模块的 globals。
-	// 顶层入口模块用 global_env_；被导入模块的顶层函数需用其模块命名空间。
-	env->globals = global_env_->globals;
+	// 全局环境指向【函数所属模块】的命名空间：入口模块函数即 global_env_->globals
+	// （同一 map）；被导入模块的函数必须看到自己模块的全局名（否则读本模块全局名
+	// 会 NameError）。REPL 语句模块不在 bc_owner_ 中，回退到入口命名空间。
+	auto owner = bc_owner_.find(m);
+	env->globals = (owner != bc_owner_.end() && owner->second != nullptr)
+	                   ? owner->second->get_namespace()
+	                   : global_env_->globals;
 	env->captured = captured;
 	// 局部变量：参数名 + 编译期确定的其他局部名
 	env->local_names = co->names;
@@ -502,6 +531,16 @@ Object* VM::execute(CodeObject* co,
 
 				// 统一经 ABI 环境接口存储（局部 -> captured 链 -> 全局）
 				Environment_Store(env.get(), name, value);
+				break;
+			}
+
+			case Op::MARK_BINDING: {
+				// @private/@readonly 声明：读当前模块绑定值的 is_private/
+				// is_readonly 并登记模块绑定级属性（访问控制权威来源）。
+				std::size_t idx = static_cast<std::size_t>(ins.operand);
+				if (idx >= module_->symtab.size())
+					throw VMError(cur_file(), cur_line(), "symbol index out of range.");
+				Pycp::MarkBinding(env->globals, module_->symtab[idx]);
 				break;
 			}
 
@@ -683,6 +722,9 @@ Object* VM::execute(CodeObject* co,
 					throw VMError(cur_file(), cur_line(), "function index out of range.");
 				BytecodeFunction* fn = new BytecodeFunction(this, module_, fidx, env);
 				GC_Track(fn);
+				// 闭包捕获：登记该函数（含其创建的嵌套函数）引用的自由变量名，
+				// 使本帧退出时保留这些局部槽位，避免闭包持有已释放对象。
+				Pycp::Environment_KeepNamesOfCodeObject(env.get(), module_, fidx);
 				// 挂载默认值：定义点（MAKE_FUNCTION 之前）已按形参顺序把
 				// default_count 个默认值对象压栈，此处弹出并以 Owned 转入 fn。
 				// （若函数带装饰器，装饰器对象位于默认值之下，栈顶即默认值段。）
@@ -752,9 +794,10 @@ Object* VM::execute(CodeObject* co,
 						}
 						Class* parent = static_cast<Class*>(parent_obj);
 					cls->set_parent(parent);
-					// 复制父类成员（可见性一并复制）。
+					// 复制父类成员（可见性 + 只读一并复制）。
 					for (const auto& mn : parent->get_member_names()) {
-						cls->add_member_name(mn, parent->member_is_private(mn));
+						cls->add_member_name(mn, parent->member_is_private(mn),
+						                     parent->member_is_readonly(mn));
 					}
 					// 复制父类方法（复用父类方法对象，add_method 内部 Incref）。
 					for (const auto& mname : parent->method_names()) {
@@ -792,23 +835,32 @@ Object* VM::execute(CodeObject* co,
 					deco_base - method_default_total;
 
 				// 成员变量名（声明顺序）。带装饰器的成员调用装饰器函数
-				// （传一个临时占位对象，装饰器设置其可见性后返回），从
-				// 返回对象读 is_private() 得到可见性。成员变量本身无独立
-				// 运行时值对象（初始值经 __init_defaults__ 实例化时赋值），
-				// 故仅用占位对象确定可见性。
+				// （传一个临时占位对象，装饰器设置其可见性/只读后返回），从
+				// 返回对象读 is_private()/is_readonly() 得到成员标志。
+				// 成员变量本身无独立运行时值对象（初始值经 __init_defaults__
+				// 实例化时赋值），故仅用占位对象确定标志。
 				for (std::size_t i = 0; i < cdef.member_names.size(); ++i) {
-					bool priv = false;
 					if (i < cdef.member_decorators.size() &&
-					    cdef.member_decorators[i] != UINT32_MAX) {
-						std::size_t didx = deco_base + cdef.member_decorators[i];
-						if (didx >= stack.size()) {
-							Decref(cls);
-							throw VMError(cur_file(), cur_line(), "decorator stack index out of range.");
+					    !cdef.member_decorators[i].empty()) {
+						const std::vector<uint32_t>& group = cdef.member_decorators[i];
+						// 组内槽位按源码顺序连续存放；范围校验后交由 ABI 由内向外
+						// 串联应用（同一占位对象，private/readonly 标志自然累加）。
+						std::vector<Object*> decos;
+						decos.reserve(group.size());
+						for (uint32_t slot : group) {
+							const std::size_t didx = deco_base + slot;
+							if (didx >= stack.size()) {
+								Decref(cls);
+								throw VMError(cur_file(), cur_line(), "decorator stack index out of range.");
+							}
+							decos.push_back(stack[didx]);
 						}
-						Object* deco = stack[didx];
-						priv = Pycp::ApplyDecoratorVisibility(deco, cur_file(), cur_line());
+						Pycp::MemberFlags mf = Pycp::ApplyDecoratorMemberFlagsChain(
+							decos.data(), decos.size(), cur_file(), cur_line());
+						cls->add_member_name(cdef.member_names[i], mf.priv, mf.readonly);
+					} else {
+						cls->add_member_name(cdef.member_names[i], false, false);
 					}
-					cls->add_member_name(cdef.member_names[i], priv);
 				}
 				// 方法：从 code_objects 构造 BytecodeFunction，闭包捕获当前环境。
 				for (std::size_t i = 0; i < cdef.methods.size(); ++i) {
@@ -837,24 +889,23 @@ Object* VM::execute(CodeObject* co,
 						fn->set_defaults(defs); // 内部对每个元素 Incref（接管一份 Owned）
 					}
 					if (i < cdef.method_decorators.size() &&
-					    cdef.method_decorators[i] != UINT32_MAX) {
-						std::size_t didx = deco_base + cdef.method_decorators[i];
-						if (didx >= stack.size()) {
-							Decref(cls);
-							Decref(fn);
-							throw VMError(cur_file(), cur_line(), "decorator stack index out of range.");
+					    !cdef.method_decorators[i].empty()) {
+						const std::vector<uint32_t>& group = cdef.method_decorators[i];
+						std::vector<Object*> decos;
+						decos.reserve(group.size());
+						for (uint32_t slot : group) {
+							const std::size_t didx = deco_base + slot;
+							if (didx >= stack.size()) {
+								Decref(cls);
+								Decref(fn);
+								throw VMError(cur_file(), cur_line(), "decorator stack index out of range.");
+							}
+							decos.push_back(stack[didx]);
 						}
-						Object* deco = stack[didx];
-						// 装饰器作为函数：把方法对象传给它，用返回值替换。
-						Object* decorated = Pycp::ApplyDecorator(deco, fn, cur_file(), cur_line());
-						// 替换方法：释放原 fn，接管 decorated（须为 Function）。
-						if (decorated == nullptr || !decorated->is_type("Function")) {
-							Decref(cls);
-							Decref(fn);
-							if (decorated != nullptr) Decref(decorated);
-							throw TypeError(cur_file(), cur_line(),
-							                "decorator must return a function.");
-						}
+						// 叠加装饰器：由内向外逐层包裹方法对象（每次返回值须为
+						// Function），最后用返回值替换原方法。
+						Object* decorated = Pycp::ApplyDecoratorChain(
+							decos.data(), decos.size(), fn, cur_file(), cur_line());
 						Decref(fn);
 						fn = static_cast<BytecodeFunction*>(decorated);
 					}
@@ -914,14 +965,13 @@ Object* VM::execute(CodeObject* co,
 
 			case Op::RETURN: {
 				Object* ret = pop();
-				for (Object* v : env->locals) if (v) Decref(v);
-				env->locals.clear();
+				// 释放局部槽：被闭包捕获的槽位保留（由 ~Environment 释放）。
+				Pycp::Environment_ReleaseFrame(env.get());
 				for (Object* v : stack) Decref(v);
 				return ret;
 			}
 			case Op::RETURN_NONE: {
-				for (Object* v : env->locals) if (v) Decref(v);
-				env->locals.clear();
+				Pycp::Environment_ReleaseFrame(env.get());
 				for (Object* v : stack) Decref(v);
 				return None::instance;
 			}
@@ -1075,8 +1125,8 @@ Object* VM::execute(CodeObject* co,
 		}
 	}
 
-	for (Object* v : env->locals) if (v) Decref(v);
-	env->locals.clear();
+	// 正常走到代码末尾（无 RETURN）：同样按闭包捕获情况释放局部槽。
+	Pycp::Environment_ReleaseFrame(env.get());
 	for (Object* v : stack) Decref(v);
 	return None::instance;
 	}

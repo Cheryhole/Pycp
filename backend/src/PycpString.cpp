@@ -131,7 +131,7 @@ Object* String::__inspect__() {
 		"__equal__",
 		"__get_item__", "__list__", "__iterator__",
 		"__get_attribute__", "__set_attribute__", "__delete_attribute__", "__inspect__",
-		"__map__", "__hash__",
+		"__class__", "__map__", "__hash__",
 	};
 	for (const auto& n : extra) {
 		bool found = false;

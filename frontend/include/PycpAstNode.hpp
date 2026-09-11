@@ -98,6 +98,25 @@ struct Statement : Node {
 };
 
 // ============================================================
+// 装饰器列表辅助（@decorator 语法糖，支持叠加多个装饰器）
+// ============================================================
+//   列表按源码【自上而下】的顺序保存装饰器表达式；nullptr 或空列表表示无装饰器。
+//   应用语义与 Python 一致：最靠近被装饰对象（列表末尾）的装饰器最先应用。
+inline bool has_decorators(const std::vector<Expression*>* decorators) {
+	return decorators != nullptr && !decorators->empty();
+}
+
+// 拼接装饰器前缀（如 "@a @b "），无装饰器时返回空串（供 to_string 使用）。
+inline std::string decorators_prefix(const std::vector<Expression*>* decorators) {
+	if (!has_decorators(decorators)) return "";
+	std::string out;
+	for (const Expression* d : *decorators) {
+		out += "@" + d->to_string() + " ";
+	}
+	return out;
+}
+
+// ============================================================
 // Program 节点
 // ============================================================
 struct Program : Node {
@@ -119,8 +138,11 @@ struct Program : Node {
 struct AssignmentStatement : Statement {
 	Expression* target;
 	Expression* value;
+	// 变量声明装饰器列表（@readonly x = expr 语法糖，可叠加），nullptr 表示无装饰器。
+	std::vector<Expression*>* decorators;
 
-	AssignmentStatement(Expression* t, Expression* v, int line = -1);
+	AssignmentStatement(Expression* t, Expression* v, int line = -1,
+	                    std::vector<Expression*>* decos = nullptr);
 	~AssignmentStatement() override;
 
 	NodeType get_type() const override { return NodeType::ASSIGNMENT_STATEMENT; }
@@ -207,13 +229,13 @@ struct FunctionExpression : Expression {
 	std::string name;
 	std::vector<Param> params;
 	Program* body;
-	// 顶层函数装饰器表达式（@decorator），nullptr 表示无装饰器。
+	// 顶层函数装饰器列表（@decorator，可叠加），nullptr 表示无装饰器。
 	// 仅用于顶层函数定义（func name(){}）；匿名函数/类内方法无此字段。
-	Expression* decorator;
+	std::vector<Expression*>* decorators;
 
 	FunctionExpression(std::vector<Param> p, Program* b,
 	                   std::string n = "@anonymous", int line = -1,
-	                   Expression* deco = nullptr);
+	                   std::vector<Expression*>* decos = nullptr);
 	~FunctionExpression() override;
 
 	NodeType get_type() const override { return NodeType::FUNCTION_EXPRESSION; }
@@ -479,11 +501,14 @@ struct ClassDefinition : Statement {
 	std::string* parent_name;
 	std::vector<Statement*>* member_variables;
 	std::vector<Statement*>* methods;
+	// 类定义装饰器列表（@readonly class B{} 语法糖，可叠加），nullptr 表示无装饰器。
+	std::vector<Expression*>* decorators;
 
 	ClassDefinition(std::string* n,
 	                std::string* parent,
 	                std::vector<Statement*>* mv,
-	                std::vector<Statement*>* ms, int line = -1);
+	                std::vector<Statement*>* ms, int line = -1,
+	                std::vector<Expression*>* decos = nullptr);
 	~ClassDefinition() override;
 
 	NodeType get_type() const override { return NodeType::CLASS_DEFINITION; }
@@ -493,18 +518,18 @@ struct ClassDefinition : Statement {
 // ============================================================
 // MemberVariable 节点（成员变量声明：name = value 或 name）
 // ============================================================
-//   name      : 成员变量名
-//   value     : 初始值表达式（可能为 nullptr，表示仅声明不初始化）
-//   decorator : 装饰器表达式（@expr），nullptr 表示无装饰器（默认 public）。
-//               可为 IdentifierExpression（@private）或 AttributeExpression
-//               （@classtools.private），运行时求值得到装饰器函数。
+//   name       : 成员变量名
+//   value      : 初始值表达式（可能为 nullptr，表示仅声明不初始化）
+//   decorators : 装饰器表达式列表（@expr，可叠加），nullptr 表示无装饰器（默认 public）。
+//                元素可为 IdentifierExpression（@private）或 AttributeExpression
+//                （@classtools.private），运行时求值得到装饰器函数。
 struct MemberVariable : Statement {
 	std::string* name;
 	Expression* value;
-	Expression* decorator;
+	std::vector<Expression*>* decorators;
 
 	MemberVariable(std::string* n, Expression* v, int line = -1,
-	               Expression* decorator = nullptr);
+	               std::vector<Expression*>* decorators = nullptr);
 	~MemberVariable() override;
 
 	NodeType get_type() const override { return NodeType::MEMBER_VARIABLE; }
@@ -515,13 +540,13 @@ struct MemberVariable : Statement {
 // MethodDefinition 节点（类内方法：func name(params){...}）
 // ============================================================
 //   复用 FunctionExpression 承载方法签名与函数体。
-//   decorator : 装饰器表达式（@expr），nullptr 表示无装饰器（默认 public）。
+//   decorators : 装饰器表达式列表（@expr，可叠加），nullptr 表示无装饰器（默认 public）。
 struct MethodDefinition : Statement {
 	FunctionExpression* function;
-	Expression* decorator;
+	std::vector<Expression*>* decorators;
 
 	explicit MethodDefinition(FunctionExpression* f, int line = -1,
-	                           Expression* decorator = nullptr);
+	                           std::vector<Expression*>* decorators = nullptr);
 	~MethodDefinition() override;
 
 	NodeType get_type() const override { return NodeType::METHOD_DEFINITION; }

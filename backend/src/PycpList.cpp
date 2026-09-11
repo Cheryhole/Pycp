@@ -1,4 +1,5 @@
 #include "PycpList.hpp"
+#include "PycpClass.hpp"
 #include "PycpInteger.hpp"
 #include "PycpString.hpp"
 #include "PycpBoolean.hpp"
@@ -137,7 +138,7 @@ Object* List::__inspect__() {
 		"__iterator__", "__list__", "__boolean__", "__addition__", "__string__",
 		"__get_item__", "__set_item__", "__delete_item__",
 		"__get_attribute__", "__set_attribute__", "__delete_attribute__", "__inspect__",
-		"__map__",
+		"__class__", "__map__",
 	};
 	for (const auto& n : extra) {
 		// 避免重复（若已在 members_ 中则跳过）。
@@ -204,6 +205,10 @@ Object* List::__get_attribute__(const std::string& name) {
 	// 0) 内建只读属性 __name__：返回类型名（type_name()）对应的 String。
 	if (name == "__name__") {
 		return GetNameAttribute(this);
+	}
+	// 0.1) 只读 __class__：返回类型类对象（Borrowed，注册表持有）。
+	if (name == "__class__") {
+		return get_type_class();
 	}
 	// 1) 先从成员字典中查找（支持动态 set attribute）。
 	auto it = members_.find(name);

@@ -16,8 +16,19 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace Pycp {
+
+// 绑定级访问属性（模块顶层符号 / 类成员等的权威来源）：
+//   priv     : 私有（对其他文件 / 类外不可见）
+//   readonly : 只读常量绑定（禁止再次赋值覆盖）
+// 与 Object 上的值级 private_/readonly_ 区分：绑定级属性描述“这个名字”，
+// 不污染绑定的值对象（尤其被池化共享的 Integer/String）。
+struct AccessAttrs {
+	bool priv = false;
+	bool readonly = false;
+};
 
 class PYCP_API Module : public Object {
 private:
@@ -29,6 +40,9 @@ private:
 	// 模块命名空间：该模块顶层定义的名称（含函数、变量等）。
 	// 由执行该模块顶层的 VM / AOT 填充。
 	std::unordered_map<std::string, Object*> namespace_;
+	// 绑定级访问属性：name -> {priv, readonly}。由顶层声明装饰器登记，
+	// 为模块符号可见性 / 常量绑定的权威来源。
+	std::unordered_map<std::string, AccessAttrs> binding_attrs_;
 
 public:
 	explicit Module(const std::string& name);
@@ -44,12 +58,34 @@ public:
 	// 覆盖基类虚函数：返回模块名。
 	const char* get_name() const override { return name_.c_str(); }
 
+	// 模块的类型（typeof/__class__）：Module 的 type_name_ 是模块名，
+	// 固定查注册表 "Module" 键（未登记则合成 <class "Module">）。
+	Class* get_type_class() override;
+
 	// 设置 __name__ 规范值（入口模块设为 "__main__"，其余保持模块名）。
 	void set_module_name(const std::string& n) { module_name_ = n; }
 
 	// 读取/写入命名空间（供 VM / AOT 填充与查询）。
 	// 注意：直接操作裸指针，引用计数由调用方管理。
 	std::unordered_map<std::string, Object*>* get_namespace() { return &namespace_; }
+
+	// 绑定级属性登记/查询。
+	//   mark_binding(name, attrs) 覆盖写入该名字的属性；
+	//   binding_attrs(name) 返回其属性（未登记默认全 false）；
+	//   is_readonly_binding 为只读常量绑定的便捷查询（兼容旧调用点）。
+	void mark_binding(const std::string& name, const AccessAttrs& attrs) {
+		binding_attrs_[name] = attrs;
+	}
+	AccessAttrs binding_attrs(const std::string& name) const {
+		auto it = binding_attrs_.find(name);
+		return (it != binding_attrs_.end()) ? it->second : AccessAttrs{};
+	}
+	void mark_readonly_binding(const std::string& name) {
+		binding_attrs_[name].readonly = true;
+	}
+	bool is_readonly_binding(const std::string& name) const {
+		return binding_attrs(name).readonly;
+	}
 
 	// 解析 __name__ 值对象（无递归）：
 	//   members_ 覆盖 -> namespace_["__name__"] -> 回退 String(module_name_)。
@@ -58,6 +94,9 @@ public:
 
 	// 属性访问：namespace_ 中查 name，未找到抛 AttributeError。
 	Object* __get_attribute__(const std::string& name) override;
+
+	// 属性赋值：拒绝写入只读常量绑定（@readonly）；其余走通用动态成员。
+	void __set_attribute__(const std::string& name, Object* value) override;
 
 	// 覆盖基类虚函数：返回该模块所有可用成员名（成员字典 key +
 	// 命名空间中非 private 的公开名称）的 List。

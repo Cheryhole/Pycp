@@ -151,6 +151,8 @@ Module* make_io_module() {
 		file_cls->add_method("__delete_attribute__", static_cast<Function*>(GetMagicMethodFunction("__delete_attribute__")));
 		file_cls->add_method("__map__",            static_cast<Function*>(GetMagicMethodFunction("__map__")));
 		file_cls->add_method("__boolean__",        static_cast<Function*>(GetMagicMethodFunction("__boolean__")));
+		// 登记 File 到运行时类型类注册表：File 对象经 typeof/__class__ 解析到 io.File。
+		RegisterTypeClass("File", file_cls);
 		(*ns)["File"] = file_cls;
 		Incref(file_cls);
 		Decref(file_cls); // namespace 持有

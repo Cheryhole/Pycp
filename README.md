@@ -49,7 +49,9 @@ Pycp 对象的类型判定使用**字符串**（而非枚举），与 ABI 保持
 - **列表（List）**：方括号字面量 `[a, b, c]`、下标访问 `obj[key]` 与赋值 `obj[key] = value`、
   负索引、`length()` 方法、`+` 拼接、字符串表示、`pycp.List(obj)` 转换
   （支持 `__get_item__` / `__set_item__` / `__list__` 魔术方法，自定义类可重载）
-- 装饰器语法糖（`@decorator`）：把被装饰对象传给装饰器函数，用返回值替换
+- 装饰器语法糖（`@decorator`）：把被装饰对象传给装饰器函数，用返回值替换；支持**叠加装饰器**
+  （连续多行 `@d1` 换行 `@d2` 修饰同一目标，最靠近目标的装饰器最先应用）；
+  访问控制装饰器（`readonly`/`private`/`public`）也可**直接调用**模块顶层名字，效果与 `@` 一致
 - 成员可见性（`@private` / `@public` 修饰类内成员，控制类外访问）
 - 模块顶层装饰器与文件级导出（`@private` 的顶层符号对其他文件 import 不可见）
 - 模块导入（`import foo` / `import foo as bar` / `from foo import a, b`）
@@ -413,6 +415,60 @@ io.print(a.age())   # 类外访问 public 方法正常
 # a._age 在类外访问会抛 AttributeError（private 成员）
 ```
 
+叠加装饰器（同一目标可连续书写多个装饰器，装饰器之间与目标之间均允许换行）：
+
+```
+import io
+from classtools import readonly
+
+@private
+@readonly
+func secret() {
+    return 5
+}
+
+@private
+@readonly
+class Box {
+    @private
+    @readonly
+    value = 3
+}
+
+@readonly
+@private
+CONST = 7
+```
+
+叠加顺序与 Python 一致：**最靠近被装饰对象的装饰器最先应用**，
+即 `@d1` 换行 `@d2` 换行 `target` 等价于 `d1(d2(target))`。
+函数、变量（`@d1` 换行 `@d2` 换行 `NAME = value`）、类与类成员（成员变量 / 方法）
+均支持叠加；类成员上 `@private` 与 `@readonly` 可同时生效。
+
+访问控制装饰器（`readonly` / `private` / `public`，来自 `pycp` 或 `classtools`）
+**也可以直接调用**，效果与 `@` 语法糖一致（等价形式）：
+
+```
+import pycp
+from classtools import private, public, readonly
+
+secret = 1
+shown = 2
+CONST = 3
+
+secret2 = 4
+func helper() { return 5 }
+
+private(secret)        # 等价于 @private secret = 1（跨模块不可见）
+public(shown)          # 等价于 @public  shown = 2
+private(helper)        # 等价于 @private func helper() {...}
+readonly(CONST)        # 等价于 @readonly CONST = 3（不可重赋值）
+```
+
+直接调用时实参必须是**模块顶层名字**（裸标识符，非当前函数局部名）：
+编译器在调用后为该名字登记绑定级属性；若实参是属性/下标/表达式结果，或该名字是
+函数局部变量，则只保留值级效果（对象冻结等），不产生绑定级声明。
+
 ### 文件扩展名
 
 | 扩展名 | 类型 | 说明 |
@@ -687,6 +743,54 @@ cmake --build build -j
 
 ## 最近更新
 
+- **访问控制装饰器可直接调用（`@` 语法糖的等价形式）**：`pycp.readonly(a)` /
+  `pycp.private(f)` / `pycp.public(x)`（含 `classtools` 同名函数、`from` 导入后的裸名、
+  模块别名 `p.readonly`）与 `@readonly a = ...` 效果一致。实参为模块顶层裸标识符时，
+  编译器在 `CALL` 后补发 `MARK_BINDING`，按当前值标记登记（或清除）该名字的
+  绑定级属性：`readonly` 后重赋值被拒、`private` 后跨模块不可见、`public` 可重新公开。
+  实参为局部变量/表达式时仅保留值级效果（解释器与 AOT 一致）。
+- **修复「被导入模块的函数读不到本模块全局名」**：`VM::call` 此前一律把入口命名空间的
+  globals 作为调用环境，导致 `mod.pycp` 中 `G = 42; func get() { return G }` 被 import 后
+  调用报 `NameError`（AOT 生成代码本就使用本模块 `g_mod_ns`，两者不一致）。现按
+  「字节码模块 → 运行时模块对象」映射取函数所属模块的命名空间（REPL 语句模块回退到
+  入口命名空间）。
+
+- **三处解析/运行缺陷修复**：
+  1. **`.cpycp` 加载后类方法名/成员名丢失**：序列化时类名、父类名、成员名、方法名、
+     代码对象名与函数局部名都以「符号表索引」写入，而编译器只 intern 了指令操作数
+     用到的名字，缺失者被写成索引 0（`<module>`），于是 `__initialize__`、
+     `__init_defaults__` 等隐式方法在反序列化后消失（实例属性永不初始化、
+     `self.x` 报 `AttributeError`）。现改为序列化前把待写名字统一追加到符号表副本
+     末尾（只追加，既有索引不变）。
+  2. **闭包捕获的局部变量在定义帧退出时被释放**：此前 VM/AOT 在函数返回时无条件
+     释放并清空局部槽，即使该环境已被闭包捕获——闭包随后读到已释放对象或越界读取
+     （典型表现：装饰器返回「捕获被装饰函数」的闭包并回写同名全局时段错误）。
+     现 `Environment` 新增 `keep_names`（闭包自由变量名集合）与析构释放，帧退出改用
+     `Environment_ReleaseFrame`（保留被捕获槽位，其余立即释放）；新增
+     `CodeObject::free_names`（编译/反序列化后由 `ComputeFreeNames` 传递性计算，
+     不参与序列化）与 ABI `Environment_KeepNames` / `Environment_KeepNamesOfCodeObject`，
+     解释器与 AOT 两条路径行为一致且不引入引用环泄漏。
+  3. **匿名 `repeat N` / `repeat from a to b` 嵌套时计数器互相覆盖**：匿名循环此前
+     共用固定变量名 `$repeat`，内层循环会把外层计数器一起重置（外层 N 大于内层 N 时
+     外层永不退出 = 挂死）。现每个匿名循环使用唯一临时名。
+  4. **REPL 中 `@readonly` / `@private` 绑定不生效**：REPL 使用无入口模块的 VM
+     （`VM(nullptr)`），全局命名空间是独立 map 且未登记归属模块，而 `MARK_BINDING`
+     与只读重赋值检查都依赖「globals → Module」映射，故 `@readonly a = 1` 后
+     `a = 2` 不会被拒绝。现 REPL 同样创建入口模块承载全局命名空间并登记该映射
+     （键为 `<entry>`），`@readonly` / `@private` 在交互模式下与文件模式行为一致。
+
+- **叠加装饰器（stacked decorators）**：同一目标现可连续书写多个装饰器
+  （`@d1` 换行 `@d2` 换行 目标，装饰器之间与目标之间均允许换行），应用顺序与
+  Python 一致——最靠近目标的装饰器最先应用（`@d1` 换行 `@d2` 换行 `f` 等价于
+  `f = d1(d2(f))`）。支持函数定义、变量声明（`NAME = value`）、类定义与类成员
+  （成员变量 / 方法），单一装饰器写法与行为完全不变。实现：语法层新增
+  `decorator_list` 非终结符，AST 五个节点的 `decorator` 字段改为 `decorators`
+  列表，codegen 按「源码顺序压栈 + 连续 N 次 `CALL 1`」实现；`ClassDef` 的成员 /
+  方法装饰器槽位由「每成员单槽位」改为「连续槽位分组」，新增 ABI
+  `ApplyDecoratorChain` / `ApplyDecoratorMemberFlagsChain` 供 VM 与 AOT 共用
+  （由内向外串联，`private` / `readonly` 等标志自然累加）。字节码 Minor 版本
+  1 → 2（Minor 向后兼容：`minor < 2` 仍按旧单槽位格式读取）。
+
 - **AOT 支持 `--static` / `--shared` 两种链接模式 + 一致性回归测试**：
   `--emit-cpp` 默认 `--shared`（动态链接，保持原有行为零改动）；`--static`
   改为静态链接运行时与三个原生扩展（io / Pycp / classtools），产物为单个
@@ -819,7 +923,11 @@ cmake --build build -j
 - **默认字符串表示**：未定义 `__string__` 的对象输出 `<name at 0xADDR>`；函数输出 `<function "name" at 0xADDR>`；类输出 `<class "name">`；类实例输出 `<Name instance at 0xADDR>`；模块输出 `<module "name">`。匿名函数 / 匿名类沿用各自格式，仅名字位置为内部名 `@anonymous`，即 `<function "@anonymous" at 0xADDR>` / `<class "@anonymous">`（其类实例为 `<@anonymous instance at 0xADDR>`）。
 - **运算符重载**（魔术方法）：`__addition__` / `__subtraction__` / `__multiplication__` / `__division__` / `__power__` / `__negation__`，及比较 `__less_than__` / `__less_equal__` / `__equal__` / `__not_equal__` / `__greater_than__` / `__greater_equal__`。
 - **装饰器语法糖**：`@decorator` 把被装饰对象（函数或任意对象）作为参数传给装饰器函数，用返回值替换原对象。
-- **成员可见性**：`@private` / `@public` 修饰类内成员，控制该成员在类外的访问可见性（方法内部经 `self` 访问不受限）。
+- **叠加装饰器**：同一目标可连续书写多个装饰器（`@d1` 换行 `@d2` 换行 目标），
+  应用顺序与 Python 一致——最靠近目标的装饰器最先应用（`d1(d2(target))`）；
+  支持函数、变量（`@d1` 换行 `@d2` 换行 `NAME = value`）、类定义与类成员（成员变量 / 方法）。
+- **成员可见性**：`@private` / `@public` 修饰类内成员，控制该成员在类外的访问可见性（方法内部经 `self` 访问不受限）；叠加使用时可与 `@readonly` 等标志同时生效。
+- **访问控制装饰器可直接调用**：`pycp.readonly(a)` / `pycp.private(f)` / `pycp.public(x)`（或 `classtools` 同名函数 / `from` 导入后的裸名）与 `@` 语法糖等价，实参须为模块顶层名字。
 - **文件级导出**：模块顶层符号默认 public；`@private func foo(){}` 的顶层符号对其他文件 `import` 时不可见。
 - **内置库**（`stdlib/` 目录，C++ 原生实现）：
   - `io`：`io.stdin` / `io.stdout` / `io.stderr` 文件对象（`write` / `readline` 方法），以及 `io.print(value)`（输出内容后自动换行）与 `io.input(prompt)`（打印提示后读取一行）。

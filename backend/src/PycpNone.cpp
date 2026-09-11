@@ -52,7 +52,7 @@ Object* None::__inspect__() {
 	std::vector<std::string> names = {
 		"__string__", "__integer__", "__boolean__",
 		"__get_attribute__", "__set_attribute__", "__delete_attribute__",
-		"__inspect__",
+		"__inspect__", "__class__",
 	};
 	return BuildNameList(names);
 }

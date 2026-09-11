@@ -189,7 +189,7 @@ Object* Integer::__inspect__() {
 		"__less_than__", "__less_equal__", "__equal__", "__not_equal__",
 		"__greater_than__", "__greater_equal__",
 		"__get_attribute__", "__set_attribute__", "__delete_attribute__", "__inspect__",
-		"__map__", "__hash__",
+		"__class__", "__map__", "__hash__",
 	};
 	for (const auto& n : extra) {
 		bool found = false;

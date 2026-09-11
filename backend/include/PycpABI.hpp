@@ -34,6 +34,7 @@
 #include "PycpList.hpp"
 
 #include <string>
+#include <cstddef>
 #include <istream>
 #include <ostream>
 
@@ -68,6 +69,38 @@ PYCP_API Object* ApplyDecorator(Object* deco, Object* target,
                                 const std::string& file, int line);
 PYCP_API bool ApplyDecoratorVisibility(Object* deco,
                                        const std::string& file, int line);
+
+// 类成员装饰：一次读取可见性 + 只读两种标志（VM 与 AOT 的 MAKE_CLASS 用）。
+struct MemberFlags {
+	bool priv = false;
+	bool readonly = false;
+};
+PYCP_API MemberFlags ApplyDecoratorMemberFlags(Object* deco,
+                                               const std::string& file, int line);
+
+// 叠加装饰器（多个装饰器作用于同一目标）：
+//   decos 按源码【自上而下】顺序给出，decos[count-1] 最靠近目标、最先应用。
+//   ApplyDecoratorChain 由内向外逐层应用并返回最终对象（Owned）；
+//   target 的所有权仍归调用方；任一步装饰器返回非 Function 抛 TypeError。
+//   ApplyDecoratorMemberFlagsChain 用同一占位对象串联应用装饰器，读取最终
+//   对象的可见性 + 只读标志（= ApplyDecoratorMemberFlags 的多装饰器版）。
+//   count 必须 >= 1，调用方保证 decos 至少含 count 个元素。
+PYCP_API Object* ApplyDecoratorChain(Object** decos, std::size_t count,
+                                     Object* target,
+                                     const std::string& file, int line);
+PYCP_API MemberFlags ApplyDecoratorMemberFlagsChain(Object** decos, std::size_t count,
+                                                    const std::string& file, int line);
+
+// globals map 指针 -> 所属 Module 的进程级注册表：执行模块顶层前登记，
+// 使 Environment_Store 覆盖全局名时能查询该模块的只读绑定（常量）。
+//   globals 为模块命名空间 map 指针（void* 避免暴露具体类型）。
+PYCP_API void BindGlobalsModule(void* globals, Module* mod);
+PYCP_API Module* LookupGlobalsModule(void* globals);
+
+// 登记模块绑定级属性：以 globals 中 name 当前值的 is_private()/is_readonly()
+// 写入所属 Module 的 binding_attrs_（供 @private/@readonly 声明式访问控制）。
+// VM 与 AOT 共用（对应 MARK_BINDING opcode）。
+PYCP_API void MarkBinding(void* globals, const std::string& name);
 
 // 运算：内部转调虚函数，返回 Owned 结果
 PYCP_API Object* Add(Object* lhs, Object* rhs);
@@ -171,6 +204,20 @@ PYCP_API Object* Environment_Lookup(BC::Environment* env, const std::string& nam
 // globals 为 nullptr 时直接 Decref value（防御，避免泄漏）。
 PYCP_API void Environment_Store(BC::Environment* env, const std::string& name,
                                  Object* value);
+
+// 闭包捕获登记（VM 路径）：把代码对象 co_idx 及其创建的嵌套函数所引用的
+// 自由变量名加入 env 的保留集合。MAKE_FUNCTION 创建闭包时调用。
+PYCP_API void Environment_KeepNamesOfCodeObject(BC::Environment* env,
+                                                const BC::Module* module,
+                                                std::size_t co_idx);
+
+// 闭包捕获登记（AOT 路径）：按名字列表登记（生成代码内联字符串数组常量）。
+PYCP_API void Environment_KeepNames(BC::Environment* env,
+                                    const char* const* names, std::size_t count);
+
+// 帧退出（RETURN/HALT）：释放局部变量中未被闭包捕获的槽位；被捕获的槽位保留
+// （由 Environment 析构统一释放），避免闭包引用已释放对象 / 越界读取。
+PYCP_API void Environment_ReleaseFrame(BC::Environment* env);
 
 } // namespace Pycp
 

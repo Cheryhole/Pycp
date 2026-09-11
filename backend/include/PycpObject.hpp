@@ -11,6 +11,9 @@
 
 namespace Pycp{
 
+// 前向声明（Object::get_type_class 等返回 Class*，需在使用前可见）。
+class Class;
+
 // 对象头 GC 标记位（gc_flags）
 enum class GCFlag : uint32_t{
 	NONE    = 0,
@@ -53,6 +56,11 @@ class PYCP_API Object{
 		//   - 类内成员：控制该成员在类外的访问可见性。
 		//   - 模块顶层符号：控制其他文件 import 时是否可访问。
 		bool private_;
+		// 只读标记：true 表示对象被冻结（readonly）。由 readonly 装饰器
+		// （C++ ABI 底层）设置，用于：
+		//   - 任意对象冻结：阻止该对象的动态属性写入/删除（obj.attr = v）。
+		//   - 模块只读绑定（常量）：顶层符号绑定不可被再次赋值覆盖。
+		bool readonly_ = false;
 
 	protected:
 		// 成员字典：name -> Object*（类似 Python 的 __dict__）。
@@ -82,6 +90,10 @@ class PYCP_API Object{
 		bool is_private() const { return private_; }
 		void set_private(bool priv) { private_ = priv; }
 
+		// 只读查询/设置（默认可写，即 readonly_ == false）。
+		bool is_readonly() const { return readonly_; }
+		void set_readonly(bool ro) { readonly_ = ro; }
+
 		// 引用计数访问（仅 GC 层使用）
 		uint32_t _refcount() const { return refcount; }
 		void _set_refcount(uint32_t n) { refcount = n; }
@@ -96,6 +108,12 @@ class PYCP_API Object{
 		// 默认返回匿名占位名 @anonymous；有名字的子类型（Function /
 		// Class / Module 等）override 返回各自的真实名字。
 		virtual const char* get_name() const;
+
+		// 对象所属「类型类」（typeof / __class__ 用）。
+		// 默认按运行时类型名查注册表（LookupTypeClass），未登记则惰性合成；
+		// Class 覆写为返回 pycp.Object，Instance 返回所属类，Module 固定查
+		// "Module" 键（其 type_name_ 为模块名，不能按名查表）。
+		virtual Class* get_type_class();
 
 		virtual Object* __integer__();
 		virtual Object* __string__();
@@ -178,6 +196,7 @@ class PYCP_API Object{
 
 class Integer;
 class String;
+class Class;
 
 // 引用计数操作（C-ABI 别名 PYCP_Incref/PYCP_Decref），声明于 PycpGC.hpp。
 void Decref(Object* obj);

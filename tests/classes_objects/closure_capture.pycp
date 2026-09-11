@@ -1,0 +1,106 @@
+// 闭包捕获测试：外层帧退出后，被闭包引用的局部变量必须仍然存活
+// （此前 VM 无条件释放局部槽，导致闭包读到已释放对象/越界，表现为段错误）。
+import io
+
+// 1) 装饰器返回捕获「被装饰函数」的闭包，且回写到同名全局
+//    （被测函数对象在覆盖后仅由闭包环境持有）。
+func wrap(f) {
+	func g() {
+		return f()
+	}
+	return g
+}
+
+@wrap
+func decorated() {
+	return 8
+}
+
+// 2) 手工等价写法（不使用装饰器语法）
+func base2() {
+	return 9
+}
+
+base2 = wrap(base2)
+
+// 3) 跨层捕获：inner 引用最外层 outer 的局部变量 x。
+//    outer 帧、mid 帧先后退出后，inner 仍必须能读到 x。
+func outer() {
+	x = 100
+
+	func mid() {
+		func inner() {
+			return x
+		}
+		return inner
+	}
+
+	return mid()
+}
+
+// 4) 闭包工厂：返回的闭包被丢弃多次（回归验证不崩溃、不误释放）
+func make_adder(k) {
+	func add(v) {
+		return v + k
+	}
+	return add
+}
+
+func main() {
+	fail = 0
+
+	if (decorated() == 8) {
+	} else {
+		io.print("closure_capture: decorated closure mismatch")
+		fail = fail + 1
+	}
+
+	if (base2() == 9) {
+	} else {
+		io.print("closure_capture: manual closure mismatch")
+		fail = fail + 1
+	}
+
+	o = outer()
+	if (o() == 100) {
+	} else {
+		io.print("closure_capture: transitive capture mismatch")
+		fail = fail + 1
+	}
+
+	a = make_adder(3)
+	if (a(4) == 7) {
+	} else {
+		io.print("closure_capture: adder mismatch")
+		fail = fail + 1
+	}
+
+	// 丢弃大量闭包（不应崩溃）。嵌套匿名循环同时校验：计数器互不干扰，
+	// 共执行 200 * 50 = 10000 次（此前匿名循环共用同一计数器，内层会覆盖
+	// 外层导致外层空转甚至死循环）。
+	n = 0
+	repeat 200 {
+		repeat 50 {
+			tmp = make_adder(1)
+			n = n + 1
+		}
+	}
+	if (n == 10000) {
+	} else {
+		io.print("closure_capture: nested repeat counter broken")
+		fail = fail + 1
+	}
+
+	// 丢弃后原闭包仍可用（不应被误释放）
+	if (a(10) == 13) {
+	} else {
+		io.print("closure_capture: closure invalidated")
+		fail = fail + 1
+	}
+
+	if (fail == 0) {
+		io.print("TEST PASS: closure_capture")
+	}
+}
+
+main()

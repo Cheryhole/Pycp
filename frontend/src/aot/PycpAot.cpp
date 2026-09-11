@@ -255,6 +255,14 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 				break;
 			}
 
+			case Pycp::BC::Op::MARK_BINDING: {
+				std::size_t idx = static_cast<std::size_t>(ins.operand);
+				const std::string& name = module.symtab[idx];
+				os << "    Pycp::MarkBinding(env->globals, "
+				   << cpp_string_literal(name) << ");\n";
+				break;
+			}
+
 			case Pycp::BC::Op::LOAD_MODULE: {
 				std::size_t idx = static_cast<std::size_t>(ins.operand);
 				const std::string& dep = module.imports[idx];
@@ -480,6 +488,18 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 				os << "      Pycp::GC_Track(fn);\n";
 				os << "      fn->set_param_info(" << mco.nparams << ", "
 				   << mco.default_count << ");\n";
+				// 闭包捕获：登记该函数（含其创建的嵌套函数）引用的自由变量名，
+				// 使本帧退出时保留这些局部槽位，避免闭包持有已释放对象。
+				if (!mco.free_names.empty()) {
+					os << "      { static const char* const s_keep[] = {";
+					for (std::size_t k = 0; k < mco.free_names.size(); ++k) {
+						if (k > 0) os << ", ";
+						os << cpp_string_literal(mco.free_names[k]);
+					}
+					os << "};\n";
+					os << "        Pycp::Environment_KeepNames(env.get(), s_keep, "
+					   << mco.free_names.size() << "); }\n";
+				}
 				if (mco.default_count > 0) {
 					// 弹出定义点压栈的默认值（栈顶连续段），以 Owned 转入 fn；
 					// 与原栈引用抵消引用计数。
@@ -579,7 +599,7 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 					os << "      Pycp::Class* parent = static_cast<Pycp::Class*>(parent_obj);\n";
 					os << "      cls->set_parent(parent);\n";
 					os << "      for (const auto& mn : parent->get_member_names())\n";
-					os << "        cls->add_member_name(mn, parent->member_is_private(mn));\n";
+					os << "        cls->add_member_name(mn, parent->member_is_private(mn), parent->member_is_readonly(mn));\n";
 					os << "      for (const auto& mname : parent->method_names()) {\n";
 					os << "        Pycp::Function* pfn = parent->find_method(mname);\n";
 					os << "        if (pfn != nullptr) cls->add_method(mname, pfn, parent->method_is_private(mname));\n";
@@ -595,19 +615,28 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 					   << md_total << ";\n";
 				}
 
-				// 4) 成员变量（声明顺序）：带装饰器的成员经占位对象确定可见性。
+				// 4) 成员变量（声明顺序）：带装饰器的成员经占位对象确定
+				//    可见性 + 只读两种标志；叠加装饰器由内向外串联应用。
 				for (std::size_t i = 0; i < cdef.member_names.size(); ++i) {
-					bool has_deco = i < cdef.member_decorators.size() &&
-					                cdef.member_decorators[i] != UINT32_MAX;
+					const bool has_deco = i < cdef.member_decorators.size() &&
+					                      !cdef.member_decorators[i].empty();
 					if (has_deco) {
-						os << "      bool priv" << i << " = Pycp::ApplyDecoratorVisibility(st[deco_base + "
-						   << cdef.member_decorators[i] << "], " << cpp_string_literal(file)
-						   << ", " << lineno << ");\n";
-						os << "      cls->add_member_name(" << cpp_string_literal(cdef.member_names[i])
-						   << ", priv" << i << ");\n";
+						const std::vector<uint32_t>& group = cdef.member_decorators[i];
+						os << "      { Pycp::Object* dg" << i << "[] = {";
+						for (std::size_t k = 0; k < group.size(); ++k) {
+							if (k > 0) os << ", ";
+							os << "st[deco_base + " << group[k] << "]";
+						}
+						os << "};\n";
+						os << "        Pycp::MemberFlags mf" << i
+						   << " = Pycp::ApplyDecoratorMemberFlagsChain(dg" << i << ", "
+						   << group.size() << ", " << cpp_string_literal(file) << ", "
+						   << lineno << ");\n";
+						os << "        cls->add_member_name(" << cpp_string_literal(cdef.member_names[i])
+						   << ", mf" << i << ".priv, mf" << i << ".readonly); }\n";
 					} else {
 						os << "      cls->add_member_name(" << cpp_string_literal(cdef.member_names[i])
-						   << ", false);\n";
+						   << ", false, false);\n";
 					}
 				}
 
@@ -616,8 +645,8 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 				for (std::size_t i = 0; i < cdef.methods.size(); ++i) {
 					std::size_t co_idx = static_cast<std::size_t>(cdef.methods[i].second);
 					const std::string& mname = cdef.methods[i].first;
-					bool has_deco = i < cdef.method_decorators.size() &&
-					                cdef.method_decorators[i] != UINT32_MAX;
+					const bool has_deco = i < cdef.method_decorators.size() &&
+					                      !cdef.method_decorators[i].empty();
 					if (has_deco) {
 						os << "      Pycp::BytecodeFunction* mfn" << i << " = new Pycp::BytecodeFunction("
 						   << cpp_string_literal(module.code_objects[co_idx].name)
@@ -637,24 +666,27 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 								os << "      }\n";
 							}
 						}
-						os << "      Pycp::Object* dm" << i << " = Pycp::ApplyDecorator(st[deco_base + "
-						   << cdef.method_decorators[i] << "], mfn" << i << ", " << cpp_string_literal(file)
-						   << ", " << lineno << ");\n";
-						os << "      if (dm" << i << " == nullptr || !dm" << i << "->is_type(\"Function\")) {\n";
-						os << "        Pycp::Decref(mfn" << i << "); if (dm" << i << ") Pycp::Decref(dm" << i << "); Pycp::Decref(cls);\n";
-						os << "        throw Pycp::TypeError(" << cpp_string_literal(file) << ", "
-						   << lineno << ", \"decorator must return a function.\");\n";
-						os << "      }\n";
-						os << "      Pycp::Decref(mfn" << i << ");\n";
-						os << "      Pycp::BytecodeFunction* mfn2_" << i << " = static_cast<Pycp::BytecodeFunction*>(dm" << i << ");\n";
-						os << "      cls->add_method(" << cpp_string_literal(mname)
+						const std::vector<uint32_t>& dgroup = cdef.method_decorators[i];
+						os << "      { Pycp::Object* dg" << i << "[] = {";
+						for (std::size_t k = 0; k < dgroup.size(); ++k) {
+							if (k > 0) os << ", ";
+							os << "st[deco_base + " << dgroup[k] << "]";
+						}
+						os << "};\n";
+						os << "        Pycp::Object* dm" << i << " = Pycp::ApplyDecoratorChain(dg"
+						   << i << ", " << dgroup.size() << ", mfn" << i << ", "
+						   << cpp_string_literal(file) << ", " << lineno << ");\n";
+						os << "        Pycp::Decref(mfn" << i << ");\n";
+						os << "        Pycp::BytecodeFunction* mfn2_" << i
+						   << " = static_cast<Pycp::BytecodeFunction*>(dm" << i << ");\n";
+						os << "        cls->add_method(" << cpp_string_literal(mname)
 						   << ", mfn2_" << i << ", mfn2_" << i << "->is_private());\n";
 						// 记录方法所属类，供 super() 按「当前执行方法所属类」解析
 						// 父类（与解释器 PycpBytecodeVM 建类处一致）。缺失时
 						// super() 会退化成按最派生实例类解析，继承链上重复调用
 						// super 将无限递归到自身（AOT 下表现为栈溢出）。
-						os << "      mfn2_" << i << "->set_owner_class(cls);\n";
-						os << "      Pycp::Decref(mfn2_" << i << ");\n";
+						os << "        mfn2_" << i << "->set_owner_class(cls);\n";
+						os << "        Pycp::Decref(mfn2_" << i << "); }\n";
 					} else {
 						os << "      Pycp::BytecodeFunction* mfn" << i << " = new Pycp::BytecodeFunction("
 						   << cpp_string_literal(module.code_objects[co_idx].name)
@@ -844,9 +876,10 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	os << "static std::unordered_map<std::string, Pycp::Object*>* g_mod_ns = nullptr;\n\n";
 
 	// ---- 辅助函数：环境/栈清理 ----
+	// 局部槽释放交给 Environment_ReleaseFrame：被闭包捕获的槽位保留
+	// （由 ~Environment 释放），其余立即释放。
 	os << "static void pycp_cleanup_env(std::shared_ptr<Pycp::BC::Environment>& env, std::vector<Pycp::Object*>& st) {\n";
-	os << "    for (Pycp::Object* v : env->locals) { if (v) Pycp::Decref(v); }\n";
-	os << "    env->locals.clear();\n";
+	os << "    Pycp::Environment_ReleaseFrame(env.get());\n";
 	os << "    for (Pycp::Object* v : st) Pycp::Decref(v);\n";
 	os << "    st.clear();\n";
 	os << "}\n\n";
@@ -957,6 +990,7 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	os << "        mod = Pycp::Module::New(" << cpp_string_literal(modname) << ");\n";
 	os << "        Pycp::GC_AddRoot(mod);\n";
 	os << "        g_mod_ns = mod->get_namespace();\n";
+	os << "        Pycp::BindGlobalsModule((void*)g_mod_ns, mod);\n";
 	// __name__ 注入（规则 2/1）：入口模块 set_module_name(\"__main__\") 且不注入
 	// 命名空间（裸名经 pycp.__name__ 回退）；其余模块命名空间注入 __name__ = 模块名。
 	if (is_entry) {

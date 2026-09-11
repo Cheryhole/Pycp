@@ -1,0 +1,19 @@
+// 被导入模块的函数必须看到【自己模块】的全局名（此前 VM::call 一律使用入口
+// 命名空间，导致子模块函数读取本模块全局名报 NameError）。
+import io
+import mod_globals
+
+func main() {
+	if (mod_globals.get() == 42) {
+	} else {
+		io.print("module_globals: 子模块函数读取本模块全局名失败")
+		return None
+	}
+	if (mod_globals.CONST == 7) {
+	} else {
+		io.print("module_globals: 子模块常量读取失败")
+		return None
+	}
+	io.print("IMPORT TEST PASS: module_globals")
+}
+main()

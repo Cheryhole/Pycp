@@ -185,6 +185,20 @@ Object* _builtin_insp(Object*, Object** argv, std::size_t argc) {
 	return argv[0]->__inspect__();
 }
 
+// typeof(obj)：返回 obj 所属的类对象（类对象返回 pycp.Object）。
+// 语义对齐 Python 的 type(x) / x.__class__。
+Object* _builtin_typeof(Object*, Object** argv, std::size_t argc) {
+	if (argc != 1) throw TypeError("typeof() expects exactly 1 argument.");
+	if (argv[0] == nullptr) throw TypeError("typeof() argument is null.");
+	Class* c = argv[0]->get_type_class();
+	if (c == nullptr) {
+		throw TypeError("typeof(): cannot determine type class of '" +
+		                 argv[0]->type_name() + "'.");
+	}
+	Incref(c); // 返回 Owned（类对象由注册表/实例持有，此处增持引用）
+	return c;
+}
+
 // 将类对象以指定名字放入模块命名空间（构造 BuiltinTypeClass ->
 // Incref 进 map -> 释放 Owned）。返回 cls 以便调用方 add_method 注册
 // 类型方法，使 Pycp.X.__inspect__() 能枚举到（而非空列表）。
@@ -241,6 +255,20 @@ Object* _builtin_public(Object* self, Object** argv, std::size_t argc) {
 	return _builtin_visibility(self, argv, argc, /*priv=*/false);
 }
 
+// @readonly 装饰器：把被装饰对象（变量/函数/类/实例/任意对象）设为只读
+// 后原样返回（与 classtools.readonly 行为一致）。只读语义由底层
+// readonly_ 标志承载：任意对象冻结（属性写/删被拒）、模块常量绑定
+// （不可再赋值覆盖）、类成员只读字段。
+Object* _builtin_readonly(Object*, Object** argv, std::size_t argc) {
+	if (argc != 1 || argv == nullptr || argv[0] == nullptr) {
+		throw TypeError("readonly decorator expects exactly 1 argument.");
+	}
+	argv[0]->set_readonly(true);
+	// 原样返回被装饰对象（装饰器替换逻辑用返回值替换原对象）。
+	Incref(argv[0]);
+	return argv[0];
+}
+
 // 将原生函数以指定名字放入模块命名空间。
 void set_func(Module* mod, const char* name, PycpNativeFunction fn) {
 	auto* ns = mod->get_namespace();
@@ -290,7 +318,7 @@ Object* _object_string(Object* /*fn*/, Object** argv, std::size_t argc) {
 }
 
 // 将普通类对象放入命名空间，并附带默认 __initialize__（用于 Pycp.Object）。
-void set_object_class(Module* mod, const char* name) {
+Class* set_object_class(Module* mod, const char* name) {
 	auto* ns = mod->get_namespace();
 	Class* cls = New<Class>(name);
 	// 默认 __initialize__：空实现，供子类 super().__initialize__(self) 调用。
@@ -316,6 +344,7 @@ void set_object_class(Module* mod, const char* name) {
 	(*ns)[name] = cls;
 	Incref(cls);
 	Decref(cls); // namespace 持有
+	return cls;
 }
 
 Module* make_pycp_module() {
@@ -330,6 +359,14 @@ Module* make_pycp_module() {
 	BuiltinTypeClass* list_cls    = set_type_class(mod, "List",   _builtin_list_ctor);
 	BuiltinTypeClass* boolean_cls = set_type_class(mod, "Boolean", _builtin_boolean_ctor);
 	BuiltinTypeClass* map_cls     = set_type_class(mod, "Map",    _builtin_map_ctor);
+
+	// 登记到运行时「类型类」注册表：使 String/Integer/... 值对象经
+	// typeof/__class__ 解析到对应类型类（pycp.String 等）。
+	RegisterTypeClass("String", string_cls);
+	RegisterTypeClass("Integer", integer_cls);
+	RegisterTypeClass("Boolean", boolean_cls);
+	RegisterTypeClass("List", list_cls);
+	RegisterTypeClass("Map", map_cls);
 
 	// List 的公开方法（真实实例方法）：length / append。
 	list_cls->add_method("length", New<Function>("length", List_length_fn()));
@@ -374,14 +411,21 @@ Module* make_pycp_module() {
 	// Pycp.Object 基类：类似 Python 的 object，含默认空 __initialize__
 	// （供子类 super().__initialize__(self) 调用）。不自动继承；
 	// 实例化走默认 instantiate（返回 Instance）。
-	set_object_class(mod, "Object");
+	Class* object_cls = set_object_class(mod, "Object");
+	RegisterObjectClass(object_cls); // 类对象的 typeof/__class__ 返回它
 
 	// 可见性装饰器函数：@private / @public（与 classtools 库功能一致）。
 	set_func(mod, "private", _builtin_private);
 	set_func(mod, "public",  _builtin_public);
 
+	// 只读装饰器：@readonly（对象冻结 / 模块常量绑定 / 只读成员）。
+	set_func(mod, "readonly", _builtin_readonly);
+
 	// insp(obj)：返回对象所有成员名称（含方法）的 List。
 	set_func(mod, "insp", _builtin_insp);
+
+	// typeof(obj)：返回对象所属的类对象（类对象返回 pycp.Object）。
+	set_func(mod, "typeof", _builtin_typeof);
 
 	// argv：命令行参数列表（对齐 Python 的 sys.argv）。构造时从宿主注入的
 	// 全局 argv（Pycp::GetArgv）构建为 List[String]，读一次快照加入命名空间。

@@ -1,4 +1,5 @@
 #include "PycpMap.hpp"
+#include "PycpClass.hpp"
 #include "PycpInteger.hpp"
 #include "PycpString.hpp"
 #include "PycpBoolean.hpp"
@@ -275,6 +276,10 @@ Object* Map::__get_attribute__(const std::string& name) {
 	if (name == "__name__") {
 		return GetNameAttribute(this);
 	}
+	// 0.1) 只读 __class__：返回类型类对象（Borrowed，注册表持有）。
+	if (name == "__class__") {
+		return get_type_class();
+	}
 	// 1) 先从成员字典中查找（支持动态 set attribute）。
 	auto it = members_.find(name);
 	if (it != members_.end() && it->second != nullptr) {
@@ -310,6 +315,7 @@ Object* Map::__inspect__() {
 		"__map__", "__boolean__", "__string__",
 		"__get_item__", "__set_item__", "__delete_item__",
 		"__get_attribute__", "__set_attribute__", "__delete_attribute__", "__inspect__",
+		"__class__",
 	};
 	for (const auto& n : extra) {
 		bool found = false;

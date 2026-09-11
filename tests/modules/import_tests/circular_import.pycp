@@ -1,7 +1,6 @@
 // 循环导入（真正互相 import）场景：ca import cb，cb import ca。
-// 已知行为：业务代码可成功执行（双方顶层符号可用），但进程退出阶段
-// 会段错误（模块缓存互相引用，GC 释放时崩溃）。故本用例被 runner 标记
-// 为 EXPECTED-FAIL（预期非零退出），用于如实记录该边界行为。
+// 现已正常：双方顶层符号可用，且进程干净退出（模块缓存循环引用被 GC 正确
+// 打破，不再段错误）。作为正常 PASS 用例回归。
 import io
 import pycp
 import mod_circ_x
@@ -10,7 +9,7 @@ import mod_circ_y
 func main() {
 	io.print(mod_circ_x.X_VAL)
 	io.print(mod_circ_y.Y_VAL)
-	io.print("circular_import reached main (business logic ran)")
+	io.print("IMPORT TEST PASS: circular_import")
 }
 
 main()

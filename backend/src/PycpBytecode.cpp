@@ -1,5 +1,8 @@
 #include "PycpBytecode.hpp"
 
+#include <functional>
+#include <unordered_set>
+
 namespace Pycp::BC {
 
 // =============================================================
@@ -164,10 +167,36 @@ std::vector<uint8_t> Serialize(const Module& module) {
 	}
 
 	// ---- 符号表段 ----
+	// 注意：代码对象名 / 函数局部名 / 类名 / 父类名 / 成员名 / 方法名都以
+	// 「符号表索引」形式写入，而编译器只 intern 了指令操作数实际用到的名字。
+	// 诸如类方法名 __initialize__、隐式生成的 __init_defaults__、成员变量名、
+	// 未被引用的形参名等可能不在 module.symtab 中；若按索引 0 兜底，反序列化
+	// 后这些名字会退化为 "<module>"（曾导致 .cpycp 加载的类丢失 __initialize__，
+	// 实例属性永不初始化）。此处先构造符号表副本并补齐所有待写名字：只在末尾
+	// 追加新名字，既有索引保持不变，故 LOAD_VAR/LOAD_ATTR 等操作数仍然有效。
+	std::vector<std::string> symtab = module.symtab;
+	auto name_index = [&symtab](const std::string& n) -> std::size_t {
+		for (std::size_t i = 0; i < symtab.size(); ++i) {
+			if (symtab[i] == n) return i;
+		}
+		symtab.push_back(n);
+		return symtab.size() - 1;
+	};
+	// 预扫描（顺序稳定）：先补代码对象相关名，再补类相关名。
+	for (const auto& co : module.code_objects) {
+		name_index(co.name);
+		for (const auto& n : co.names) name_index(n);
+	}
+	for (const auto& cd : module.classes) {
+		name_index(cd.name);
+		if (!cd.parent_name.empty()) name_index(cd.parent_name);
+		for (const auto& mn : cd.member_names) name_index(mn);
+		for (const auto& m : cd.methods) name_index(m.first);
+	}
 	{
 		std::vector<uint8_t> seg;
-		WriteULEB128(seg, module.symtab.size());
-		for (const auto& name : module.symtab) {
+		WriteULEB128(seg, symtab.size());
+		for (const auto& name : symtab) {
 			WriteULEB128(seg, name.size());
 			put_bytes(seg, reinterpret_cast<const uint8_t*>(name.data()), name.size());
 		}
@@ -197,11 +226,7 @@ std::vector<uint8_t> Serialize(const Module& module) {
 		WriteULEB128(seg, module.code_objects.size());
 		for (const auto& co : module.code_objects) {
 			// name（符号索引）
-			size_t name_idx = 0;
-			for (size_t i = 0; i < module.symtab.size(); ++i) {
-				if (module.symtab[i] == co.name) { name_idx = i; break; }
-			}
-			WriteULEB128(seg, name_idx);
+			WriteULEB128(seg, name_index(co.name));
 			WriteULEB128(seg, co.nparams);
 			WriteULEB128(seg, co.default_count); // format minor >= 1
 			WriteULEB128(seg, co.nlocals);
@@ -209,11 +234,7 @@ std::vector<uint8_t> Serialize(const Module& module) {
 			// 局部变量名表（符号索引序列）
 			WriteULEB128(seg, co.names.size());
 			for (const auto& n : co.names) {
-				size_t nidx = 0;
-				for (size_t i = 0; i < module.symtab.size(); ++i) {
-					if (module.symtab[i] == n) { nidx = i; break; }
-				}
-				WriteULEB128(seg, nidx);
+				WriteULEB128(seg, name_index(n));
 			}
 
 			// 指令流
@@ -239,56 +260,45 @@ std::vector<uint8_t> Serialize(const Module& module) {
 		WriteULEB128(seg, module.classes.size());
 		for (const auto& cd : module.classes) {
 			// 类名（符号索引）
-			size_t name_idx = 0;
-			for (size_t i = 0; i < module.symtab.size(); ++i) {
-				if (module.symtab[i] == cd.name) { name_idx = i; break; }
-			}
-			WriteULEB128(seg, name_idx);
+			WriteULEB128(seg, name_index(cd.name));
 
-			// 父类名（符号索引，空串则索引为 ULEB128 0 特殊标记）
+			// 父类名（符号索引 + 1，0 表示无父类）
 			if (cd.parent_name.empty()) {
 				WriteULEB128(seg, 0);
 			} else {
-				size_t pidx = 0;
-				bool found = false;
-				for (size_t i = 0; i < module.symtab.size(); ++i) {
-					if (module.symtab[i] == cd.parent_name) { pidx = i + 1; found = true; break; }
-				}
-				if (!found) pidx = 0; // 父类名不在符号表（防御）
-				WriteULEB128(seg, pidx);
+				WriteULEB128(seg, name_index(cd.parent_name) + 1);
 			}
 
 			// 成员变量名表（符号索引序列）
 			WriteULEB128(seg, cd.member_names.size());
 			for (const auto& mn : cd.member_names) {
-				size_t nidx = 0;
-				for (size_t i = 0; i < module.symtab.size(); ++i) {
-					if (module.symtab[i] == mn) { nidx = i; break; }
-				}
-				WriteULEB128(seg, nidx);
+				WriteULEB128(seg, name_index(mn));
 			}
 
-			// 成员装饰器栈槽序号（与 member_names 对齐；UINT32_MAX 表示无装饰器）
+			// 成员装饰器栈槽序号分组（与 member_names 对齐；空组表示无装饰器）。
+			// 每组编码为「组内槽数 + 各槽位」，支持叠加装饰器。
 			WriteULEB128(seg, cd.member_decorators.size());
-			for (uint32_t d : cd.member_decorators) {
-				WriteULEB128(seg, d);
+			for (const auto& slots : cd.member_decorators) {
+				WriteULEB128(seg, slots.size());
+				for (uint32_t d : slots) {
+					WriteULEB128(seg, d);
+				}
 			}
 
 			// 方法表：方法名（符号索引）+ 方法代码对象索引
 			WriteULEB128(seg, cd.methods.size());
 			for (const auto& m : cd.methods) {
-				size_t nidx = 0;
-				for (size_t i = 0; i < module.symtab.size(); ++i) {
-					if (module.symtab[i] == m.first) { nidx = i; break; }
-				}
-				WriteULEB128(seg, nidx);
+				WriteULEB128(seg, name_index(m.first));
 				WriteULEB128(seg, m.second);
 			}
 
-			// 方法装饰器栈槽序号（与 methods 对齐；UINT32_MAX 表示无装饰器）
+			// 方法装饰器栈槽序号分组（与 methods 对齐；空组表示无装饰器）。
 			WriteULEB128(seg, cd.method_decorators.size());
-			for (uint32_t d : cd.method_decorators) {
-				WriteULEB128(seg, d);
+			for (const auto& slots : cd.method_decorators) {
+				WriteULEB128(seg, slots.size());
+				for (uint32_t d : slots) {
+					WriteULEB128(seg, d);
+				}
 			}
 
 			// 装饰器对象总数
@@ -299,6 +309,59 @@ std::vector<uint8_t> Serialize(const Module& module) {
 	}
 
 	return out;
+}
+
+// =============================================================
+// 自由变量名计算（闭包捕获用）
+// =============================================================
+
+void ComputeFreeNames(Module& module) {
+	const std::size_t n = module.code_objects.size();
+	if (n == 0) return;
+
+	// 1) 直接自由名：指令引用了（LOAD_VAR/STORE_VAR）但不属于自身局部名的名字。
+	//    这些名字在运行期只能经 captured 链或 globals 解析；若由外层函数的
+	//    局部槽提供，则外层帧退出时必须保留该槽位。
+	std::vector<std::unordered_set<std::string>> direct(n);
+	for (std::size_t i = 0; i < n; ++i) {
+		const CodeObject& co = module.code_objects[i];
+		std::unordered_set<std::string> locals(co.names.begin(), co.names.end());
+		for (const Instruction& ins : co.code) {
+			if (ins.op != Op::LOAD_VAR && ins.op != Op::STORE_VAR) continue;
+			const std::size_t idx = static_cast<std::size_t>(ins.operand);
+			if (idx >= module.symtab.size()) continue;
+			const std::string& name = module.symtab[idx];
+			if (locals.find(name) == locals.end()) direct[i].insert(name);
+		}
+	}
+
+	// 2) 嵌套关系：MAKE_FUNCTION 操作数指向本代码对象内创建的函数。
+	std::vector<std::vector<std::size_t>> nested(n);
+	for (std::size_t i = 0; i < n; ++i) {
+		for (const Instruction& ins : module.code_objects[i].code) {
+			if (ins.op != Op::MAKE_FUNCTION) continue;
+			const std::size_t f = static_cast<std::size_t>(ins.operand);
+			if (f < n) nested[i].push_back(f);
+		}
+	}
+
+	// 3) 后序 DFS 求传递闭包（state 防递归函数造成的环）。
+	std::vector<int> state(n, 0); // 0=未访问 1=进行中 2=已完成
+	std::function<void(std::size_t)> dfs = [&](std::size_t i) {
+		if (state[i] == 1) return; // 环（自递归）：直接返回，后续仍会并集
+		if (state[i] == 2) return;
+		state[i] = 1;
+		for (std::size_t child : nested[i]) {
+			dfs(child);
+			for (const std::string& name : module.code_objects[child].free_names) {
+				direct[i].insert(name);
+			}
+		}
+		state[i] = 2;
+		CodeObject& co = module.code_objects[i];
+		co.free_names.assign(direct[i].begin(), direct[i].end());
+	};
+	for (std::size_t i = 0; i < n; ++i) dfs(i);
 }
 
 // =============================================================
@@ -327,6 +390,9 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 	}
 	// format minor >= 1 的代码对象记录含 default_count 字段。
 	const bool has_default_count = (minor >= 1);
+	// format minor >= 2 的 ClassDef 成员/方法装饰器按「槽位数 + 槽位」分组编码
+	// （支持叠加装饰器）；minor < 2 为旧的「每成员单槽位，UINT32_MAX 表示无」。
+	const bool has_grouped_decorators = (minor >= 2);
 	(void)get_u32(data, size, off); // flags 预留
 
 	Module module;
@@ -484,12 +550,24 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 				cd.member_names.push_back(module.symtab[nidx]);
 			}
 
-			// 成员装饰器栈槽序号（与 member_names 对齐；UINT32_MAX = 无装饰器）
+			// 成员装饰器栈槽序号分组（与 member_names 对齐；空组 = 无装饰器）
 			uint64_t mvcount = ReadULEB128(data, size, off);
 			cd.member_decorators.reserve(mvcount);
 			for (uint64_t k = 0; k < mvcount; ++k) {
-				cd.member_decorators.push_back(
-					static_cast<uint32_t>(ReadULEB128(data, size, off)));
+				std::vector<uint32_t> slots;
+				if (has_grouped_decorators) {
+					uint64_t n = ReadULEB128(data, size, off);
+					slots.reserve(n);
+					for (uint64_t j = 0; j < n; ++j) {
+						slots.push_back(
+							static_cast<uint32_t>(ReadULEB128(data, size, off)));
+					}
+				} else {
+					// 旧格式：单槽位，0xFFFFFFFF 表示无装饰器。
+					uint32_t d = static_cast<uint32_t>(ReadULEB128(data, size, off));
+					if (d != 0xFFFFFFFFu) slots.push_back(d);
+				}
+				cd.member_decorators.push_back(std::move(slots));
 			}
 
 			// 方法表：方法名（符号索引）+ 方法代码对象索引
@@ -503,12 +581,24 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 				cd.methods.emplace_back(module.symtab[nidx], static_cast<uint32_t>(co_idx));
 			}
 
-			// 方法装饰器栈槽序号（与 methods 对齐；UINT32_MAX = 无装饰器）
+			// 方法装饰器栈槽序号分组（与 methods 对齐；空组 = 无装饰器）
 			uint64_t mtvcount = ReadULEB128(data, size, off);
 			cd.method_decorators.reserve(mtvcount);
 			for (uint64_t k = 0; k < mtvcount; ++k) {
-				cd.method_decorators.push_back(
-					static_cast<uint32_t>(ReadULEB128(data, size, off)));
+				std::vector<uint32_t> slots;
+				if (has_grouped_decorators) {
+					uint64_t n = ReadULEB128(data, size, off);
+					slots.reserve(n);
+					for (uint64_t j = 0; j < n; ++j) {
+						slots.push_back(
+							static_cast<uint32_t>(ReadULEB128(data, size, off)));
+					}
+				} else {
+					// 旧格式：单槽位，0xFFFFFFFF 表示无装饰器。
+					uint32_t d = static_cast<uint32_t>(ReadULEB128(data, size, off));
+					if (d != 0xFFFFFFFFu) slots.push_back(d);
+				}
+				cd.method_decorators.push_back(std::move(slots));
 			}
 
 			// 装饰器对象总数
@@ -538,6 +628,9 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 		}
 		GC_AddRoot(module.runtime_consts.back());
 	}
+
+	// 派生数据：计算闭包自由变量名（不参与序列化，反序列化后需重建）。
+	ComputeFreeNames(module);
 
 	return module;
 }

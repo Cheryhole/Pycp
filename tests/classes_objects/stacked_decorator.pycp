@@ -1,0 +1,144 @@
+// 叠加装饰器测试：@d0 换行 @d1 换行 ... 目标
+// 语义与 Python 一致：最靠近被装饰对象的装饰器最先应用（a(b(target))）。
+import io
+import pycp
+import classtools
+from classtools import readonly
+
+// 恒等装饰器：原样返回被装饰对象。
+func identity(f) {
+	return f
+}
+
+// 三个「常量」装饰器：装饰后调用分别返回 1 / 2 / 3。
+// 由于叠加时最外层（源码中最靠上）的装饰器决定最终可调用对象，
+// 调用外层装饰器的结果即可判定叠加顺序是否正确。
+func d1(f) {
+	func g() {
+		return 1
+	}
+	return g
+}
+
+func d2(f) {
+	func g() {
+		return 2
+	}
+	return g
+}
+
+func d3(f) {
+	func g() {
+		return 3
+	}
+	return g
+}
+
+// 值装饰器：返回 v * 10 + 1
+func scale1(v) {
+	return v * 10 + 1
+}
+
+// 值装饰器：返回 v * 10 + 2
+func scale2(v) {
+	return v * 10 + 2
+}
+
+// 叠加装饰器（函数，三个）：源码自上而下为 d1 -> d2 -> d3，
+// 最靠近函数的 d3 最先应用，最终 layered = d1(d2(d3(base)))，
+// 调用返回 d1 的结果 1；顺序错误或只应用部分装饰器会得到 2 或 3。
+@d1
+@d2
+@d3
+func layered() {
+	return 0
+}
+
+// 单装饰器写法（向后兼容）：@d2 func name() {...}
+@d2 func single() {
+	return 0
+}
+
+// 叠加装饰器（变量）：scale2 先应用，再应用 scale1。
+// STACKED_NUM = scale1(scale2(5)) = (5 * 10 + 2) * 10 + 1 = 521。
+@scale1
+@scale2
+STACKED_NUM = 5
+
+// 叠加装饰器（变量 / 只读绑定）：identity 先应用，readonly 最后应用，
+// 绑定登记为只读常量（不可覆写语义由 import 测试套件覆盖）。
+@readonly
+@identity
+STACKED_CONST = 9
+
+// 叠加装饰器（类）：identity 先应用，readonly 最后应用。
+@identity
+@readonly
+class Point {
+	// 叠加装饰器（类成员变量）：@readonly 先应用，@classtools.private 最后
+	// 应用，两个标志同时生效（类外不可见、不可改）。
+	@classtools.private
+	@readonly
+	x = 7
+
+	// 单装饰器成员（向后兼容）：私有成员，类内可访问。
+	@classtools.private
+	y = 8
+
+	// 叠加装饰器（类成员方法）：两个 identity 叠加，方法仍可正常调用。
+	@identity
+	@identity
+	func sum(self) {
+		return self.x + self.y
+	}
+}
+
+func main() {
+	fail = 0
+
+	// 1) 函数叠加（三个装饰器）：layered() == 1
+	if (layered() == 1) {
+	} else {
+		io.print("stacked_decorator: function order mismatch")
+		fail = fail + 1
+	}
+
+	// 2) 单装饰器函数：仍可用
+	if (single() == 2) {
+	} else {
+		io.print("stacked_decorator: single decorator function broken")
+		fail = fail + 1
+	}
+
+	// 3) 变量叠加：STACKED_NUM == 521
+	if (STACKED_NUM == 521) {
+	} else {
+		io.print("stacked_decorator: variable stacking mismatch")
+		fail = fail + 1
+	}
+
+	// 4) 变量叠加 + 只读：绑定值可读
+	if (STACKED_CONST == 9) {
+	} else {
+		io.print("stacked_decorator: readonly stacked variable mismatch")
+		fail = fail + 1
+	}
+
+	// 5) 类叠加 + 成员/方法叠加：实例可创建，私有只读成员类内可读，
+	//    叠加装饰器的方法可正常调用。
+	p = Point()
+	if (p.sum() == 15) {
+	} else {
+		io.print("stacked_decorator: class/member/method stacking mismatch")
+		fail = fail + 1
+	}
+
+	// 人工观察成员标志（private + readonly 均生效）。
+	io.print(pycp.insp(p))
+
+	if (fail == 0) {
+		io.print("TEST PASS: stacked_decorator")
+	}
+}
+
+main()

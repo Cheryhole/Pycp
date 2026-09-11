@@ -15,7 +15,10 @@ if [[ ! -x "$PYCP" ]]; then
 fi
 
 # 预期会失败（非零退出）的用例，名称包含这些子串的判定为 EXPECTED-FAIL
-EXPECTED_FAIL_PATTERNS=("import_unknown" "circular_import")
+#   import_unknown            导入不存在模块（ImportError）
+#   private_import_denied     导入 @private/private() 声明的私有符号（AttributeError）
+#   readonly_reassign_denied  重赋值 @readonly/readonly() 声明的常量（AttributeError）
+EXPECTED_FAIL_PATTERNS=("import_unknown" "private_import_denied" "readonly_reassign_denied")
 
 pass=0
 fail=0

@@ -1,4 +1,5 @@
 #include "PycpFile.hpp"
+#include "PycpClass.hpp"
 #include "PycpException.hpp"
 #include "PycpGC.hpp"
 #include "PycpString.hpp"
@@ -449,6 +450,10 @@ PycpNativeFunction File_close_fn()   { return _file_close; }
 PycpNativeFunction File_open_fn()    { return _file_open; }
 
 Object* File::__get_attribute__(const std::string& attr_name) {
+    // 0) 只读 __class__：返回 File 类型类对象（Borrowed，注册表持有）。
+    if (attr_name == "__class__") {
+        return get_type_class();
+    }
     // 1) 成员字典
     auto itm = members_.find(attr_name);
     if (itm != members_.end() && itm->second != nullptr) {
@@ -534,7 +539,7 @@ Object* File::__inspect__() {
 		"closed", "name", "mode",
 		"write", "read", "readline", "readlines", "close", "open",
 		"__string__", "__inspect__", "__get_attribute__", "__set_attribute__",
-		"__delete_attribute__", "__map__", "__boolean__"
+		"__delete_attribute__", "__class__", "__map__", "__boolean__"
 	};
 	return BuildNameList(names);
 }

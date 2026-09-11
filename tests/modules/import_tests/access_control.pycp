@@ -1,0 +1,30 @@
+// 访问控制装饰器（public/private/readonly 运行时函数）断言：
+//   - @public 模块符号可被其他模块 import / 属性访问；
+//   - @private 模块符号不出现在 insp（且跨模块访问抛 AttributeError，另测）；
+//   - @readonly 模块常量可读，重赋值抛只读绑定错误（另测）。
+import io
+import pycp
+from mod_acc import shown, visible, CONST
+import mod_acc
+
+func main() {
+	if (shown == 2) {
+	} else {
+		io.print("access_control: @public 变量导入失败")
+		return None
+	}
+	if (visible() == 5) {
+	} else {
+		io.print("access_control: @public 函数导入失败")
+		return None
+	}
+	if (CONST == 3) {
+	} else {
+		io.print("access_control: @readonly 常量读取失败")
+		return None
+	}
+	// insp 应只含公开符号（人工观察：不含 secret / hidden）。
+	io.print(pycp.insp(mod_acc))
+	io.print("IMPORT TEST PASS: access_control")
+}
+main()

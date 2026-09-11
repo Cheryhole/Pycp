@@ -29,6 +29,15 @@ static std::string binary_op_to_string(BinaryOp op) {
 	}
 }
 
+// 释放装饰器列表（元素 + 容器），nullptr 安全。
+static void free_decorators(std::vector<Expression*>*& decorators) {
+	if (decorators != nullptr) {
+		for (Expression* d : *decorators) delete d;
+		delete decorators;
+		decorators = nullptr;
+	}
+}
+
 // ============================================================
 // Program 实现
 // ============================================================
@@ -64,14 +73,16 @@ std::string Program::to_string() const {
 // ============================================================
 // AssignmentStatement 实现
 // ============================================================
-AssignmentStatement::AssignmentStatement(Expression* t, Expression* v, int line)
-	: target(t), value(v) {
+AssignmentStatement::AssignmentStatement(Expression* t, Expression* v, int line,
+                                          std::vector<Expression*>* decos)
+	: target(t), value(v), decorators(decos) {
 	lineno = line;
 }
 
 AssignmentStatement::~AssignmentStatement() {
 	delete value;
 	delete target;
+	free_decorators(decorators);
 }
 
 std::string AssignmentStatement::to_string() const {
@@ -149,14 +160,14 @@ std::string BinaryExpression::to_string() const {
 FunctionExpression::FunctionExpression(std::vector<Param> p,
                                        Program* b,
                                        std::string n, int line,
-                                       Expression* deco)
-	: name(std::move(n)), params(std::move(p)), body(b), decorator(deco) {
+                                       std::vector<Expression*>* decos)
+	: name(std::move(n)), params(std::move(p)), body(b), decorators(decos) {
 	lineno = line;
 }
 
 FunctionExpression::~FunctionExpression() {
 	delete body;
-	delete decorator;
+	free_decorators(decorators);
 	for (Param& param : params) {
 		delete param.name;
 		delete param.default_value;
@@ -186,7 +197,7 @@ std::string FunctionExpression::to_string() const {
 		body_str = "\n  " + body_str + "\n";
 	}
 
-	return "<Function: " + name + "(" + params_str + ")" + body_str + ">";
+	return "<Function: " + decorators_prefix(decorators) + name + "(" + params_str + ")" + body_str + ">";
 }
 
 // ============================================================
@@ -516,12 +527,15 @@ std::string IndexExpression::to_string() const {
 ClassDefinition::ClassDefinition(std::string* n,
                                  std::string* parent,
                                  std::vector<Statement*>* mv,
-                                 std::vector<Statement*>* ms, int line)
-	: name(n), parent_name(parent), member_variables(mv), methods(ms) {
+                                 std::vector<Statement*>* ms, int line,
+                                 std::vector<Expression*>* decos)
+	: name(n), parent_name(parent), member_variables(mv), methods(ms),
+	  decorators(decos) {
 	lineno = line;
 }
 
 ClassDefinition::~ClassDefinition() {
+	free_decorators(decorators);
 	delete name;
 	delete parent_name;
 	if (member_variables != nullptr) {
@@ -556,19 +570,19 @@ std::string ClassDefinition::to_string() const {
 // MemberVariable 实现
 // ============================================================
 MemberVariable::MemberVariable(std::string* n, Expression* v, int line,
-                               Expression* decorator)
-	: name(n), value(v), decorator(decorator) {
+                               std::vector<Expression*>* decorators_)
+	: name(n), value(v), decorators(decorators_) {
 	lineno = line;
 }
 
 MemberVariable::~MemberVariable() {
 	delete name;
 	delete value;
-	delete decorator;
+	free_decorators(decorators);
 }
 
 std::string MemberVariable::to_string() const {
-	std::string dec = (decorator != nullptr) ? ("@" + decorator->to_string() + " ") : "";
+	std::string dec = decorators_prefix(decorators);
 	if (value != nullptr) {
 		return "<Member: " + dec + (name ? *name : "?") + " = " + value->to_string() + ">";
 	}
@@ -579,18 +593,18 @@ std::string MemberVariable::to_string() const {
 // MethodDefinition 实现
 // ============================================================
 MethodDefinition::MethodDefinition(FunctionExpression* f, int line,
-                                   Expression* decorator)
-	: function(f), decorator(decorator) {
+                                   std::vector<Expression*>* decorators_)
+	: function(f), decorators(decorators_) {
 	lineno = line;
 }
 
 MethodDefinition::~MethodDefinition() {
 	delete function;
-	delete decorator;
+	free_decorators(decorators);
 }
 
 std::string MethodDefinition::to_string() const {
-	std::string dec = (decorator != nullptr) ? ("@" + decorator->to_string() + " ") : "";
+	std::string dec = decorators_prefix(decorators);
 	return "<Method: " + dec + (function ? function->to_string() : "?") + ">";
 }
 

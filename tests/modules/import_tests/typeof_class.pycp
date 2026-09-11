@@ -1,0 +1,35 @@
+// pycp.typeof / obj.__class__ 行为（输出类名，人工比对 + PASS 标记）。
+import io
+import pycp
+
+class Box {
+	v = 1
+}
+
+func main() {
+	// 内置值类型 -> pycp 对应类型类
+	io.print(pycp.typeof(42))       // <class "Integer">
+	io.print((42).__class__)        // <class "Integer">
+	io.print(pycp.typeof("abc"))    // <class "String">
+	io.print(pycp.typeof(None))     // <class "None">
+	io.print(pycp.typeof(True))     // <class "Boolean">
+	io.print(pycp.typeof([1, 2]))   // <class "List">
+	io.print(pycp.typeof({1: 2}))   // <class "Map">
+	// File -> io.File
+	io.print(pycp.typeof(io.stdout))  // <class "File">
+	// 用户类实例 -> 所属类
+	b = Box()
+	io.print(pycp.typeof(b))        // <class "Box">
+	io.print(b.__class__)           // <class "Box">
+	// 类对象 -> pycp.Object
+	io.print(pycp.typeof(Box))      // <class "Object">
+	io.print(pycp.typeof(pycp.Integer))  // <class "Object">
+	io.print(pycp.typeof(pycp.Object))   // <class "Object">
+	// 模块 -> Module 类型类
+	io.print(pycp.typeof(io))       // <class "Module">
+	// dir 可见 + __map__ 视图仍可构造（含 __class__ 解析）
+	io.print(pycp.insp("abc"))
+	m = "abc".__map__()
+	io.print("IMPORT TEST PASS: typeof_class")
+}
+main()

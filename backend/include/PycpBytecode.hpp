@@ -99,6 +99,8 @@ enum class Op : uint8_t {
 	SET_ITEM    = 0x57,  // 无操作数           -> obj key value -> obj[key]=value（转调 SetItem）
 	BUILD_MAP   = 0x58,  // 操作数: 键值对个数  -> 弹栈顶 2n 个元素（k,v 交替）构造 Map 压栈
 
+	MARK_BINDING = 0x59, // 操作数: name_idx -> 读该全局绑定值的 is_private/is_readonly 并登记模块绑定属性（@private/@readonly 声明）
+
 	// ---- 其他 ----
 	HALT          = 0x00, // 模块执行结束
 };
@@ -151,6 +153,10 @@ struct CodeObject {
 	std::vector<std::string> names;   // 本函数引用的符号（复用全局符号表索引）
 	std::vector<size_t> const_refs;   // code 中 LOAD_CONST 引用的全局常量索引（运行时重建用）
 	std::vector<size_t> name_refs;    // code 中 LOAD_VAR/STORE_VAR 引用的全局符号索引
+	// 自由变量名（闭包捕获用）：本代码对象及其创建的嵌套函数引用了但不属于
+	// 自身局部名的变量名。运行时派生数据，不参与序列化（由 ComputeFreeNames
+	// 在编译/反序列化完成后填充），供帧退出时决定保留哪些局部槽位。
+	std::vector<std::string> free_names;
 };
 
 // =============================================================
@@ -161,16 +167,16 @@ struct ClassDef {
 	std::string name;                            // 类名
 	std::string parent_name;                     // 父类名（空串表示无父类）
 	std::vector<std::string> member_names;       // 成员变量名（声明顺序）
-	// 成员变量装饰器栈槽序号：与 member_names 对齐。
-	//   值 < decorator_count 表示该成员有装饰器，指向「装饰器栈区」中的
-	//   第 idx 个装饰器对象；UINT32_MAX 表示无装饰器（默认 public）。
-	//   装饰器对象在 MAKE_CLASS 之前按「先成员变量、后方法」顺序求值压栈。
-	std::vector<uint32_t> member_decorators;
+	// 成员变量装饰器栈槽序号【分组】：与 member_names 对齐。每个元素是该成员
+	//   按源码【自上而下】排列的装饰器栈槽序号（连续）；空组表示无装饰器
+	//   （默认 public）。装饰器对象在 MAKE_CLASS 之前按「先成员变量、后方法」
+	//   顺序求值压栈，第 idx 个装饰器 = 「装饰器栈区」中第 idx 个槽位。
+	std::vector<std::vector<uint32_t>> member_decorators;
 	// 方法：方法名 -> 方法代码对象索引（指向 code_objects）。
 	std::vector<std::pair<std::string, uint32_t>> methods;
-	// 方法装饰器栈槽序号：与 methods 对齐（语义同 member_decorators）。
-	std::vector<uint32_t> method_decorators;
-	// 装饰器对象总数（= 所有带装饰器成员的数量），MAKE_CLASS 据此
+	// 方法装饰器栈槽序号分组：与 methods 对齐（语义同 member_decorators）。
+	std::vector<std::vector<uint32_t>> method_decorators;
+	// 装饰器对象总数（= 所有分组槽位之和），MAKE_CLASS 据此
 	// 从栈上取装饰器对象并在结束时弹出。
 	uint32_t decorator_count = 0;
 };
@@ -213,6 +219,12 @@ std::vector<uint8_t> Serialize(const Module& module);
 //   runtime_consts 会被重建为 Object*（经 Integer::FromLong/String::FromCString/None），
 //   调用方负责对其 AddRoot（或由 VM 统一管理）。
 Module Deserialize(const uint8_t* data, std::size_t size);
+
+// 计算每个代码对象的自由变量名（CodeObject::free_names）：其指令引用但不属于
+// 自身局部名的变量，并传递性并入其创建的嵌套函数的自由变量名（闭包可跨层
+// 引用外层变量）。属于运行时派生数据，不参与序列化；编译与反序列化完成后各
+// 调用一次。闭包捕获（MAKE_FUNCTION）据此在帧退出后保留被引用的局部槽位。
+void ComputeFreeNames(Module& module);
 
 // =============================================================
 // LEB128 编码辅助（无符号）

@@ -200,6 +200,45 @@ static void compile_class_body(Emitter& em, const std::string& name,
 // 表达式编译
 // =============================================================
 
+// 访问控制装饰器的「直接调用」识别（@ 语法糖的等价形式）：
+//   `pycp.readonly(a)` / `pycp.private(f)` / `pycp.public(x)`
+//   （classtools 同名函数、from 导入后的裸名调用、模块别名形式 p.readonly 均可）
+// 这些函数把实参对象标记后原样返回，@ 语法糖依赖紧随的 MARK_BINDING 把标记
+// 落到「名字」上。直接调用时由编译器在 CALL 后补发同一条 MARK_BINDING，使两者
+// 对模块顶层绑定的效果一致。仅当唯一实参是裸标识符且不是当前作用域的局部名时
+// 适用（局部变量不涉及模块绑定；属性/下标/调用结果等无名字可登记，仅保留值级
+// 效果；把函数先赋给别的名字再调用也退化为值级效果）。
+static bool is_access_flag_function_name(const std::string& name) {
+	return name == "readonly" || name == "private" || name == "public";
+}
+
+// 取标识符/属性访问路径的末段名（a、a.b.c → c）；其他表达式返回空串。
+static std::string expr_last_name(Expression* e) {
+	if (e == nullptr) return std::string();
+	switch (e->get_type()) {
+		case NodeType::IDENTIFIER_EXPRESSION:
+			return *static_cast<IdentifierExpression*>(e)->name;
+		case NodeType::ATTRIBUTE_EXPRESSION:
+			return *static_cast<AttributeExpression*>(e)->attr;
+		default:
+			return std::string();
+	}
+}
+
+// 若 ce 是「访问控制装饰器函数 + 单个模块顶层标识符实参」的直接调用，
+// 返回该实参名；否则返回空串（表示无需补发 MARK_BINDING）。
+static std::string access_flag_binding_target(CallExpression* ce, const Scope& scope) {
+	if (ce == nullptr || ce->arguments.size() != 1) return std::string();
+	if (!is_access_flag_function_name(expr_last_name(ce->callee))) return std::string();
+	Expression* arg = ce->arguments[0];
+	if (arg == nullptr || arg->get_type() != NodeType::IDENTIFIER_EXPRESSION)
+		return std::string();
+	const std::string& name = *static_cast<IdentifierExpression*>(arg)->name;
+	// 同名局部变量会遮蔽模块绑定，此时不做绑定级登记。
+	if (scope.index_of(name) != static_cast<std::size_t>(-1)) return std::string();
+	return name;
+}
+
 // 若表达式为整数字面量，取出其值（否则返回 false）。用于 repeat 循环
 // 方向/步长推导。
 static bool literal_int_value(Expression* e, int64_t& out) {
@@ -353,14 +392,17 @@ static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 			// 弹回父代码对象。
 			em.pop_code_object();
 
-			// 默认值与装饰器在【定义处作用域】求值，紧邻 MAKE_FUNCTION 之前
-			// 压栈（Python 语义：函数定义执行时求值一次）。栈布局约定：
-			//   装饰器在底（作 callee），随后 default_count 个默认值在顶；
-			// VM/AOT 的 MAKE_FUNCTION 处理器弹出 default_count 个栈顶值后
-			// 把新建函数压栈，因此 [deco, d0..dk-1] 变为 [deco, fn]，
-			// 装饰器变体随即 CALL 1 用装饰器返回值替换函数。
-			if (fe->decorator != nullptr) {
-				compile_expr(em, fe->decorator, scope);
+			// 装饰器与默认值在【定义处作用域】求值，紧邻 MAKE_FUNCTION 之前
+			// 压栈（Python 语义：函数定义执行时求值一次）。多个装饰器按源码
+			// 自上而下依次压栈，故栈布局为 [d0, d1, ..., dN-1, 默认值...]；
+			// VM/AOT 的 MAKE_FUNCTION 处理器弹出 default_count 个栈顶值后把
+			// 新建函数压栈（[d0..dN-1, fn]），随后连续 N 次 CALL 1：第一次调用
+			// dN-1（最靠近函数的装饰器），最后一次调用 d0，最终得到
+			// d0(d1(...dN-1(fn)))，与 Python 叠加语义一致。
+			const std::size_t deco_n = (fe->decorators != nullptr)
+			                               ? fe->decorators->size() : 0;
+			for (std::size_t i = 0; i < deco_n; ++i) {
+				compile_expr(em, (*fe->decorators)[i], scope);
 			}
 			for (const Param& prm : fe->params) {
 				if (prm.default_value != nullptr) {
@@ -370,20 +412,26 @@ static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 				}
 			}
 
-			if (fe->decorator != nullptr) {
-				em.emit(Op::MAKE_FUNCTION, static_cast<int32_t>(co_idx));
+			em.emit(Op::MAKE_FUNCTION, static_cast<int32_t>(co_idx));
+			for (std::size_t i = 0; i < deco_n; ++i) {
 				em.emit(Op::CALL, 1);
-			} else {
-				em.emit(Op::MAKE_FUNCTION, static_cast<int32_t>(co_idx));
 			}
 			break;
 		}
 		case NodeType::CALL_EXPRESSION: {
 			CallExpression* ce = static_cast<CallExpression*>(e);
+			// 直接调用访问控制装饰器（@ 语法糖的等价形式）：CALL 之后补发
+			// MARK_BINDING，使 `pycp.readonly(a)` 与 `@pycp.readonly a = ...`
+			// 对模块顶层绑定的效果一致（详见 access_flag_binding_target）。
+			const std::string flag_target = access_flag_binding_target(ce, scope);
 			compile_expr(em, ce->callee, scope);
 			for (Expression* arg : ce->arguments)
 				compile_expr(em, arg, scope);
 			em.emit(Op::CALL, static_cast<int32_t>(ce->arguments.size()));
+			if (!flag_target.empty()) {
+				em.emit(Op::MARK_BINDING,
+				        static_cast<int32_t>(em.intern_name(flag_target)));
+			}
 			break;
 		}
 		case NodeType::ATTRIBUTE_EXPRESSION: {
@@ -444,10 +492,38 @@ static void compile_stmt(Emitter& em, Statement* s, Scope& scope, bool top_level
 	switch (s->get_type()) {
 		case NodeType::ASSIGNMENT_STATEMENT: {
 			AssignmentStatement* as = static_cast<AssignmentStatement*>(s);
+			const std::size_t as_deco_n = (as->decorators != nullptr)
+			                                  ? as->decorators->size() : 0;
+			if (as_deco_n > 0 &&
+			    as->target->get_type() != NodeType::IDENTIFIER_EXPRESSION) {
+				throw Pycp::Exception(
+					"Codegen: decorator only allowed on variable declaration assignment.");
+			}
 			if (as->target->get_type() == NodeType::IDENTIFIER_EXPRESSION) {
-				compile_expr(em, as->value, scope);
 				IdentifierExpression* id = static_cast<IdentifierExpression*>(as->target);
+				// 变量装饰 @d0 @d1 ... x = expr：按源码顺序自顶向下求值装饰器
+				// （作 callee）压栈，再求值 RHS，随后连续 CALL 1（第一次调用
+				// 最靠近值的装饰器），STORE 绑定，最后 MARK_BINDING 依据结果的
+				// is_private/is_readonly 登记模块绑定级属性（访问控制权威）。
+				for (std::size_t i = 0; i < as_deco_n; ++i) {
+					compile_expr(em, (*as->decorators)[i], scope);
+				}
+				compile_expr(em, as->value, scope);
+				for (std::size_t i = 0; i < as_deco_n; ++i) {
+					em.emit(Op::CALL, 1);
+				}
 				em.emit(Op::STORE_VAR, static_cast<int32_t>(em.intern_name(*id->name)));
+				// 顶层函数定义 @deco func f(){}：装饰器内嵌于 FunctionExpression，
+				// 值已由 FUNCTION_EXPRESSION 分支应用装饰器，此处同样登记绑定属性。
+				bool decorated = (as_deco_n > 0);
+				if (as->value != nullptr &&
+				    as->value->get_type() == NodeType::FUNCTION_EXPRESSION) {
+					FunctionExpression* fe = static_cast<FunctionExpression*>(as->value);
+					if (has_decorators(fe->decorators)) decorated = true;
+				}
+				if (decorated) {
+					em.emit(Op::MARK_BINDING, static_cast<int32_t>(em.intern_name(*id->name)));
+				}
 			} else if (as->target->get_type() == NodeType::ATTRIBUTE_EXPRESSION) {
 				// 成员赋值：obj.attr = value
 				AttributeExpression* ae = static_cast<AttributeExpression*>(as->target);
@@ -593,9 +669,11 @@ static void compile_stmt(Emitter& em, Statement* s, Scope& scope, bool top_level
 					break;
 				}
 				case RepeatMode::COUNT: {
-					// 用 var_name（或匿名临时名）承载计数器：v 取 0..N-1
+					// 用 var_name（或唯一匿名临时名）承载计数器：v 取 0..N-1。
+					// 匿名临时名必须唯一：若多个匿名循环共用同一名字，嵌套时内层
+					// 会把外层计数器一起重置（外层 N > 内层 N 时外层永不退出）。
 					std::string v = (rs->var_name != nullptr)
-						? *rs->var_name : "$repeat";
+						? *rs->var_name : em.new_temp("repeat_i");
 					em.emit(Op::LOAD_CONST, static_cast<int32_t>(em.intern_int(0)));
 					em.emit(Op::STORE_VAR, static_cast<int32_t>(em.intern_name(v)));
 					loop_start = em.here(); // 条件判断处即循环起点
@@ -613,9 +691,10 @@ static void compile_stmt(Emitter& em, Statement* s, Scope& scope, bool top_level
 					break;
 				}
 				case RepeatMode::RANGE: {
-					// 用 var_name 承载循环变量 i，取 a, a+step, ..., b（含端点）
+					// 用 var_name 承载循环变量 i，取 a, a+step, ..., b（含端点）。
+					// 匿名时用唯一临时名（理由同 COUNT：嵌套循环不得共享计数器）。
 					std::string v = (rs->var_name != nullptr)
-						? *rs->var_name : "$repeat";
+						? *rs->var_name : em.new_temp("repeat_i");
 					// 临时变量缓存端点/步长（唯一名避免嵌套冲突）
 					std::string end_tmp = em.new_temp("to");
 					std::string step_tmp = em.new_temp("by");
@@ -810,10 +889,25 @@ static void compile_stmt(Emitter& em, Statement* s, Scope& scope, bool top_level
 // =============================================================
 
 // 命名类定义：class name [inherits parent]{...}，绑定到类名。
+// @d0 @d1 ... class name{...}：装饰器按源码顺序先于类对象压栈（作 callee），
+// MAKE_CLASS 后连续 N 次 CALL 1 用装饰器返回值替换类对象（最靠近类的装饰器
+// 最先应用，如 @readonly 置只读标志）。
 static void compile_class_def(Emitter& em, ClassDefinition* cd, Scope& scope) {
+	const std::size_t deco_n = (cd->decorators != nullptr)
+	                               ? cd->decorators->size() : 0;
+	for (std::size_t i = 0; i < deco_n; ++i) {
+		compile_expr(em, (*cd->decorators)[i], scope);
+	}
 	compile_class_body(em, *cd->name, cd->parent_name,
 	                   cd->member_variables, cd->methods, scope);
+	for (std::size_t i = 0; i < deco_n; ++i) {
+		em.emit(Op::CALL, 1);
+	}
 	em.emit(Op::STORE_VAR, static_cast<int32_t>(em.intern_name(*cd->name)));
+	// 类装饰 @deco class B{}：依据装饰器结果登记绑定级属性（@private/@readonly）。
+	if (deco_n > 0) {
+		em.emit(Op::MARK_BINDING, static_cast<int32_t>(em.intern_name(*cd->name)));
+	}
 }
 
 // 匿名类表达式：class [inherits parent]{...}，内部名用 config 常量。
@@ -855,17 +949,20 @@ static void compile_class_body(Emitter& em, const std::string& name,
 		}
 	}
 
-	// 成员变量名 + 装饰器（声明顺序）。带装饰器的成员先求值装饰器表达式
-	// 压栈，并记录栈槽序号；无装饰器记为 UINT32_MAX。
+	// 成员变量名 + 装饰器（声明顺序）。每个成员的装饰器按源码顺序求值压栈，
+	// 记录其【连续】栈槽序号分组；无装饰器记为空组。
 	for (Statement* mv : *member_variables) {
 		MemberVariable* m = static_cast<MemberVariable*>(mv);
 		cdef.member_names.push_back(*m->name);
-		if (m->decorator != nullptr) {
-			compile_expr(em, m->decorator, scope);
-			cdef.member_decorators.push_back(deco_idx++);
-		} else {
-			cdef.member_decorators.push_back(UINT32_MAX);
+		std::vector<uint32_t> slots;
+		if (m->decorators != nullptr) {
+			slots.reserve(m->decorators->size());
+			for (Expression* d : *m->decorators) {
+				compile_expr(em, d, scope);
+				slots.push_back(deco_idx++);
+			}
 		}
+		cdef.member_decorators.push_back(std::move(slots));
 	}
 
 	// 方法：编译每个方法为独立代码对象，记录 (方法名, code_idx) + 装饰器。
@@ -902,13 +999,17 @@ static void compile_class_body(Emitter& em, const std::string& name,
 		em.pop_code_object();
 
 		cdef.methods.emplace_back(fe->name, static_cast<uint32_t>(co_idx));
-		if (md->decorator != nullptr) {
-			// 回到外层 code object 后求值装饰器表达式压栈。
-			compile_expr(em, md->decorator, scope);
-			cdef.method_decorators.push_back(deco_idx++);
-		} else {
-			cdef.method_decorators.push_back(UINT32_MAX);
+		// 回到外层 code object 后按源码顺序求值各装饰器表达式压栈，
+		// 记录该方法的【连续】栈槽序号分组；无装饰器记为空组。
+		std::vector<uint32_t> method_slots;
+		if (md->decorators != nullptr) {
+			method_slots.reserve(md->decorators->size());
+			for (Expression* d : *md->decorators) {
+				compile_expr(em, d, scope);
+				method_slots.push_back(deco_idx++);
+			}
 		}
+		cdef.method_decorators.push_back(std::move(method_slots));
 	}
 
 	// 成员变量初始值：若存在带初始值的成员（var = expr），生成隐式方法
@@ -945,7 +1046,8 @@ static void compile_class_body(Emitter& em, const std::string& name,
 			em.pop_code_object();
 
 			cdef.methods.emplace_back("__init_defaults__", static_cast<uint32_t>(co_idx));
-			cdef.method_decorators.push_back(UINT32_MAX); // __init_defaults__ 无装饰器（public）
+			// __init_defaults__ 无装饰器（public）。
+			cdef.method_decorators.push_back(std::vector<uint32_t>());
 			}
 	}
 
@@ -986,6 +1088,10 @@ BC::Module Compile(Program* program, bool repl_eval) {
 	em.current()->nparams = 0;
 	em.current()->nlocals = 0;
 	em.current()->names.clear();
+
+	// 派生数据：计算每个代码对象的自由变量名，供闭包捕获时在帧退出后保留
+	// 被外层闭包引用的局部槽位（否则闭包会持有已释放对象）。
+	ComputeFreeNames(em.module);
 
 	return std::move(em.module);
 }

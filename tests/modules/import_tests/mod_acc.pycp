@@ -1,0 +1,15 @@
+// 访问控制测试辅助模块：public/private/readonly 三种修饰符作用于模块符号。
+import io
+from classtools import private, public, readonly
+
+@private secret = 1
+@public shown = 2
+@readonly CONST = 3
+
+@private func hidden() {
+	return 4
+}
+
+@public func visible() {
+	return 5
+}

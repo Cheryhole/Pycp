@@ -34,7 +34,7 @@ static Pycp::Ast::FunctionExpression* make_func_expr(
 	Pycp::Ast::Program* body,
 	const std::string& name,
 	int line,
-	Pycp::Ast::Expression* deco = nullptr) {
+	std::vector<Pycp::Ast::Expression*>* decos = nullptr) {
 	std::vector<Pycp::Ast::Param> pv;
 	if (params != nullptr) {
 		pv.reserve(params->size());
@@ -44,7 +44,7 @@ static Pycp::Ast::FunctionExpression* make_func_expr(
 		}
 		delete params;
 	}
-	return new Pycp::Ast::FunctionExpression(std::move(pv), body, name, line, deco);
+	return new Pycp::Ast::FunctionExpression(std::move(pv), body, name, line, decos);
 }
 
 // 语法错误计数（定义于本文件末尾）；解析期语义动作据此标记“已报错”，
@@ -165,6 +165,7 @@ static bool has_default_param(const std::vector<Pycp::Ast::Param*>* ps) {
 %type <node> method_definition
 %type <node> class_member_with_modifier
 %type <node> decorator_expr
+%type <expressions> decorator_list
 
 %type <node> if_statement
 %type <if_branches> elif_clauses
@@ -290,6 +291,17 @@ statement: assignment_statement {
 				static_cast<Expression*>($1),
 				@$.first_line
 			);
+		}
+		// 装饰器列表 + name = expr：变量声明装饰（@readonly x = expr 常量绑定，可叠加）。
+		| decorator_list IDENTIFIER OP_EQUALS expression {
+			AssignmentStatement* as = new AssignmentStatement(
+				new IdentifierExpression(new std::string(*$2), @$.first_line),
+				static_cast<Expression*>($4),
+				@$.first_line,
+				$1                               // decorators
+			);
+			delete $2;
+			$$ = as;
 		}
 ;
 
@@ -418,8 +430,9 @@ map_pair: expression OP_COLON expression {
 // 函数定义语句：func name(params) { body }
 // 语法糖 —— 等价于将匿名函数表达式赋值给 name，
 // 与 .old PLY 版本的实现一致。
-// 可选装饰器前缀：@decorator func name(...){...}，装饰器表达式存入
-// FunctionExpression::decorator，运行时由 codegen 发射装饰器调用替换。
+// 可选装饰器前缀：@decorator [换行] @decorator ... func name(...){...}，
+// 装饰器列表存入 FunctionExpression::decorators，运行时由 codegen 逐个发射
+// 装饰器调用替换（最靠近函数的装饰器最先应用）。
 function_def_statement: KW_FUNC IDENTIFIER OP_LPARENTHESES parameter_list OP_RPARENTHESES code_block {
 			FunctionExpression* func = make_func_expr(
 				$4,                                  // params
@@ -435,15 +448,15 @@ function_def_statement: KW_FUNC IDENTIFIER OP_LPARENTHESES parameter_list OP_RPA
 				@$.first_line
 			);
 		}
-	| OP_AT decorator_expr opt_newlines KW_FUNC IDENTIFIER OP_LPARENTHESES parameter_list OP_RPARENTHESES code_block {
+	| decorator_list KW_FUNC IDENTIFIER OP_LPARENTHESES parameter_list OP_RPARENTHESES code_block {
 			FunctionExpression* func = make_func_expr(
-				$7,                                  // params
-				new Program($9),                     // body
-				*($5),                               // name
+				$5,                                  // params
+				new Program($7),                     // body
+				*($3),                               // name
 				@$.first_line,
-				static_cast<Expression*>($2)          // decorator
+				$1                                   // decorators
 			);
-			delete $5;
+			delete $3;
 
 			$$ = new AssignmentStatement(
 				new IdentifierExpression(new std::string(func->name)),
@@ -478,7 +491,7 @@ function_expr: KW_FUNC OP_LPARENTHESES parameter_list OP_RPARENTHESES code_block
 //
 // 成员变量声明：`name = expr` 或 `name`（仅声明）。
 // 方法定义：`func name(params){ body }`（复用 function 语法）。
-// 成员可用 @private / @public 修饰（一次修饰一个成员）。
+// 成员可用 @private / @public 修饰（可叠加多个装饰器修饰一个成员）。
 // ============================================================
 class_def_statement: KW_CLASS IDENTIFIER opt_inherits OP_LBRACE class_body OP_RBRACE {
 			// 分离成员变量与方法。
@@ -496,6 +509,24 @@ class_def_statement: KW_CLASS IDENTIFIER opt_inherits OP_LBRACE class_body OP_RB
 			}
 			delete members;
 			$$ = new ClassDefinition($2, $3, vars, methods, @$.first_line);
+		}
+	// 装饰器列表 + class name {...}：类定义装饰（@readonly class B{} 常量绑定，可叠加）。
+	| decorator_list KW_CLASS IDENTIFIER opt_inherits OP_LBRACE class_body OP_RBRACE {
+			std::vector<Statement*>* members = static_cast<std::vector<Statement*>*>($6);
+			std::vector<Statement*>* vars = new std::vector<Statement*>();
+			std::vector<Statement*>* methods = new std::vector<Statement*>();
+			for (Statement* m : *members) {
+				if (m->get_type() == NodeType::MEMBER_VARIABLE) {
+					vars->push_back(m);
+				} else if (m->get_type() == NodeType::METHOD_DEFINITION) {
+					methods->push_back(m);
+				} else {
+					delete m;
+				}
+			}
+			delete members;
+			$$ = new ClassDefinition($3, $4, vars, methods, @$.first_line,
+			                         $1); // decorators
 		}
 ;
 
@@ -580,20 +611,20 @@ class_member: member_variable {
 		}
 ;
 
-// 带装饰器的成员：@expr 后跟一个成员变量或方法。expr 为装饰器表达式，
-// 可为单个标识符（@private）或点分名称路径（@classtools.private），
-// 运行时求值得到装饰器函数（如 classtools 导出的 private/public），
-// 由 MAKE_CLASS 调用该函数设置被装饰对象的可见性。
-// 装饰器与成员之间允许换行（与 class_object 示例一致）。
-class_member_with_modifier: OP_AT decorator_expr opt_newlines member_variable {
-		MemberVariable* mv = static_cast<MemberVariable*>($4);
-		mv->decorator = static_cast<Expression*>($2);
-		$$ = $4;
+// 带装饰器的成员：装饰器列表后跟一个成员变量或方法。装饰器表达式可为单个
+// 标识符（@private）或点分名称路径（@classtools.private），运行时求值得到
+// 装饰器函数（如 classtools 导出的 private/public），由 MAKE_CLASS 调用该函数
+// 设置被装饰对象的可见性；多个装饰器叠加时由内向外依次应用。
+// 装饰器与成员之间、装饰器之间均允许换行（与 class_object 示例一致）。
+class_member_with_modifier: decorator_list member_variable {
+		MemberVariable* mv = static_cast<MemberVariable*>($2);
+		mv->decorators = $1;
+		$$ = $2;
 	}
-	| OP_AT decorator_expr opt_newlines method_definition {
-		MethodDefinition* md = static_cast<MethodDefinition*>($4);
-		md->decorator = static_cast<Expression*>($2);
-		$$ = $4;
+	| decorator_list method_definition {
+		MethodDefinition* md = static_cast<MethodDefinition*>($2);
+		md->decorators = $1;
+		$$ = $2;
 	}
 ;
 
@@ -606,6 +637,21 @@ decorator_expr: IDENTIFIER {
 	| decorator_expr OP_DOT IDENTIFIER {
 		$$ = new AttributeExpression(
 			static_cast<Expression*>($1), $3, @$.first_line);
+	}
+;
+
+// 装饰器列表：@d0 [换行] @d1 [换行] ...，按源码【自上而下】顺序收集。
+// 列表长度即装饰器个数（单个装饰器为长度 1 的列表，与旧语法等价）；
+// 应用语义与 Python 一致：列表末尾（最靠近被装饰对象）的装饰器最先应用，
+// 即 @a 换行 @b 换行 target 等价于 a(b(target))。
+decorator_list: OP_AT decorator_expr opt_newlines {
+		std::vector<Expression*>* list = new std::vector<Expression*>();
+		list->push_back(static_cast<Expression*>($2));
+		$$ = list;
+	}
+	| decorator_list OP_AT decorator_expr opt_newlines {
+		$1->push_back(static_cast<Expression*>($3));
+		$$ = $1;
 	}
 ;
 

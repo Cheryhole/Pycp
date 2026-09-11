@@ -1,0 +1,46 @@
+// @readonly 装饰器（pycp / classtools）：类成员只读字段、模块常量绑定。
+import io
+import pycp
+from classtools import readonly
+
+class A {
+	@readonly x = 5
+}
+
+@readonly func foo() {
+	return 1
+}
+
+@readonly class B {
+	y = 2
+}
+
+@readonly PI = 3
+
+func main() {
+	a = A()
+	if (a.x == 5) {
+	} else {
+		io.print("readonly: member init value mismatch")
+		return None
+	}
+	if (foo() == 1) {
+	} else {
+		io.print("readonly: readonly func call failed")
+		return None
+	}
+	if (B().y == 2) {
+	} else {
+		io.print("readonly: readonly class instantiate failed")
+		return None
+	}
+	if (PI == 3) {
+	} else {
+		io.print("readonly: readonly var read failed")
+		return None
+	}
+	// 只读名在 dir/insp 中可见（pycp.insp 输出含该名，人工观察）。
+	io.print(pycp.insp(a))
+	io.print("IMPORT TEST PASS: readonly_decorator")
+}
+main()

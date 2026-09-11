@@ -41,7 +41,9 @@ constexpr const char* AOT_BUILTIN_REG_CPP_FILENAME = "__pycp_builtin_reg.gen.cpp
 constexpr char BYTECODE_MAGIC[] = "CYCP";        // 4 字节魔数
 constexpr uint16_t BYTECODE_VERSION_MAJOR = 3;
 // minor 1：CodeObject 新增 default_count 字段（尾部默认值形参个数）。
-constexpr uint16_t BYTECODE_VERSION_MINOR = 1;
+// minor 2：ClassDef 的成员/方法装饰器改为【分组】编码（支持叠加装饰器），
+//          每组为「槽数 + 各槽位」；minor < 2 仍按旧的单槽位格式读取。
+constexpr uint16_t BYTECODE_VERSION_MINOR = 2;
 
 // =============================================================
 // AOT 生成符号前缀（跨模块链接约定）

@@ -1,0 +1,18 @@
+// 子模块全局名可见性辅助模块：
+//   1) 本模块函数读取本模块的全局名（此前 VM::call 一律用入口命名空间 → NameError）；
+//   2) 函数内直接调用 pycp.readonly(CONST)，绑定级登记应落在【本模块】的 CONST 上。
+import io
+import pycp
+
+G = 42
+CONST = 7
+
+func get() {
+	return G
+}
+
+func mark_const() {
+	pycp.readonly(CONST)
+}
+
+mark_const()

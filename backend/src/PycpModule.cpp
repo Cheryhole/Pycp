@@ -20,6 +20,11 @@ Object* GetCurrentModuleName() {
 	return current_module_->resolve_name_value(); // 无递归（resolve 不走 pycp 回退）
 }
 
+Class* Module::get_type_class() {
+	// Module 的 type_name_ 是模块名，不能按名查表，固定使用 "Module" 类型类。
+	return LookupTypeClass("Module");
+}
+
 Module::Module(const std::string& name)
 	: Object(name), name_(name), module_name_(name) {}
 
@@ -65,6 +70,12 @@ Object* Module::__get_attribute__(const std::string& name) {
 		}
 		return GetCurrentModuleName();
 	}
+	// 0.1) 只读 __class__：返回 Module 类型类对象（Owned）。
+	if (name == "__class__") {
+		Class* c = get_type_class();
+		Incref(c);
+		return c;
+	}
 	// 1) 先从成员字典中查找（支持动态 set attribute）。
 	auto itm = members_.find(name);
 	if (itm != members_.end() && itm->second != nullptr) {
@@ -88,9 +99,11 @@ Object* Module::__get_attribute__(const std::string& name) {
 		throw AttributeError("module '" + name_ + "' has no attribute '" + name + "'");
 	}
 	// 文件级导出：private 符号对其他文件（跨模块 import / module.x 访问）
-	// 不可见。模块自身内部顶层符号读取走 LOAD_VAR（直接查 globals
-	// namespace），不经过 __get_attribute__，故此过滤不会误伤模块内部访问。
-	if (it->second != nullptr && it->second->is_private()) {
+	// 不可见。以绑定级属性为权威（@private 声明经 MARK_BINDING 登记），
+	// 不使用值级 is_private()，避免对共享池化值（小整数等）打标造成误伤。
+	// 模块自身内部顶层符号读取走 LOAD_VAR（直接查 globals namespace），
+	// 不经过 __get_attribute__，故此过滤不会误伤模块内部访问。
+	if (binding_attrs(name).priv) {
 		throw AttributeError("module '" + name_ + "' attribute '" + name +
 		                     "' is private");
 	}
@@ -98,6 +111,15 @@ Object* Module::__get_attribute__(const std::string& name) {
 	// 不再额外 Incref，统一在此将借用语义的命名空间成员转为 Owned。
 	Incref(it->second);
 	return it->second;
+}
+
+void Module::__set_attribute__(const std::string& name, Object* value) {
+	// 只读常量绑定（@readonly）：禁止经 module.attr = v 覆盖（含跨模块）。
+	if (binding_attrs(name).readonly) {
+		if (value != nullptr) Decref(value); // 消费待写引用（对齐 STORE_ATTR）
+		throw AttributeError("cannot reassign read-only binding '" + name + "'.");
+	}
+	Object::__set_attribute__(name, value);
 }
 
 Object* Module::__inspect__() {
@@ -108,7 +130,8 @@ Object* Module::__inspect__() {
 	std::vector<std::string> exported;
 	for (const auto& kv : namespace_) {
 		if (kv.second == nullptr) continue;
-		if (kv.second->is_private()) continue; // 与 __get_attribute__ 过滤一致
+		// 与 __get_attribute__ 过滤一致：仅以绑定级属性判定。
+		if (binding_attrs(kv.first).priv) continue;
 		exported.push_back(kv.first);
 	}
 	for (const auto& n : exported) {
@@ -139,6 +162,7 @@ Object* Module::__inspect__() {
 	append_unique("__string__");
 	append_unique("__inspect__");
 	append_unique("__name__");
+	append_unique("__class__");
 	return lst;
 }
 

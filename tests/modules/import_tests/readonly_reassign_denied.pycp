@@ -1,0 +1,11 @@
+// 预期失败用例（EXPECTED-FAIL）：mod_globals 在【函数内】直接调用
+// pycp.readonly(CONST)，只读登记必须落在该模块自己的 CONST 绑定上，
+// 故跨模块重赋值应抛 AttributeError → 非零退出。
+import io
+import mod_globals
+
+func main() {
+	mod_globals.CONST = 9
+	io.print("readonly 绑定未被拦截")
+}
+main()
