@@ -6,7 +6,7 @@
 #include "PycpConfig.hpp"
 #include "PycpABI.hpp"
 #include "PycpClass.hpp"
-#include "PycpExt.h"         // PYCP_EXPORT_MODULE（Windows 下带 dllexport）
+#include "PycpExtension.hpp" // 扩展唯一对外头（导出宏 + set_* + 参数规范框架）
 
 namespace Pycp {
 
@@ -16,8 +16,10 @@ namespace {
 // 通过 thread_local 当前 self 上下文（push_current_self/current_self）取
 // 当前方法执行中的接收者实例，再取其所属类 → 父类。语义对齐 Python 的
 // super()。返回 Borrowed 引用经 Incref 转为 Owned。
-Object* _builtin_super(Object*, Object** argv [[maybe_unused]], std::size_t argc) {
-	if (argc != 0) throw TypeError("super() expects 0 arguments.");
+// 无参：个数校验由参数规范表完成。
+Object* _builtin_super(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs("super", {});
+	spec.Bind(args, kwargs);
 	Instance* self = current_self();
 	if (self == nullptr) {
 		throw TypeError("super() used outside a method.");
@@ -54,22 +56,29 @@ Object* _builtin_super(Object*, Object** argv [[maybe_unused]], std::size_t argc
 // 同名装饰器函数以保证 `from classtools import public` 与
 // `from Pycp import public` 行为一致。
 // =============================================================
-Object* _builtin_visibility(Object*, Object** argv, std::size_t argc, bool priv) {
-	if (argc != 1 || argv == nullptr || argv[0] == nullptr) {
+// 内部辅助（非注册函数）：参数个数与类型已由 private/public 的框架 thunk 校验。
+Object* _builtin_visibility(Object* target, bool priv) {
+	if (target == nullptr) {
 		throw TypeError("visibility decorator expects exactly 1 argument.");
 	}
-	argv[0]->set_private(priv);
+	target->set_private(priv);
 	// 原样返回被装饰对象（装饰器替换逻辑用返回值替换原对象）。
-	Incref(argv[0]);
-	return argv[0];
+	Incref(target);
+	return target;
 }
 
-Object* _builtin_private(Object* self, Object** argv, std::size_t argc) {
-	return _builtin_visibility(self, argv, argc, /*priv=*/true);
+Object* _builtin_private(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"private", { Extension::Arg::Required("target") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	return _builtin_visibility(r["target"], /*priv=*/true);
 }
 
-Object* _builtin_public(Object* self, Object** argv, std::size_t argc) {
-	return _builtin_visibility(self, argv, argc, /*priv=*/false);
+Object* _builtin_public(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"public", { Extension::Arg::Required("target") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	return _builtin_visibility(r["target"], /*priv=*/false);
 }
 
 // =============================================================
@@ -82,44 +91,36 @@ Object* _builtin_public(Object* self, Object** argv, std::size_t argc) {
 //   - 类成员字段（经 MAKE_CLASS 读取返回对象 is_readonly）只读。
 // 与 Pycp 库 readonly 行为一致，两库均导出同名函数。
 // =============================================================
-Object* _builtin_readonly(Object*, Object** argv, std::size_t argc) {
-	if (argc != 1 || argv == nullptr || argv[0] == nullptr) {
+Object* _builtin_readonly(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"readonly", { Extension::Arg::Required("target") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	Object* target = r["target"];
+	if (target == nullptr) {
 		throw TypeError("readonly decorator expects exactly 1 argument.");
 	}
-	argv[0]->set_readonly(true);
+	target->set_readonly(true);
 	// 原样返回被装饰对象（装饰器替换逻辑用返回值替换原对象）。
-	Incref(argv[0]);
-	return argv[0];
-}
-
-// 将原生函数以指定名字放入模块命名空间。
-void set_func(Module* mod, const char* name, PycpCFunction fn) {
-	auto* ns = mod->get_namespace();
-	Function* f = New<Function>(name, fn);
-	(*ns)[name] = f;
-	Incref(f);
-	Decref(f); // namespace 持有
+	Incref(target);
+	return target;
 }
 
 Module* make_classtools_module() {
 	Module* mod = Module::New(MODULE_NAME);
-	auto* ns = mod->get_namespace();
 
 	// 规则 2：classtools 模块命名空间注入 __name__ = 模块名。
-	(*ns)["__name__"] = String::FromCString(MODULE_NAME);
-	Incref((*ns)["__name__"]);
-	Decref((*ns)["__name__"]); // namespace 持有
+	mod->set_variable("__name__", String::FromCString(MODULE_NAME));
 
 	// 可见性装饰器函数：@private / @public 作为普通函数被装饰器语法糖
 	// 调用，设置被装饰对象的可见性。
-	set_func(mod, "private", _builtin_private);
-	set_func(mod, "public",  _builtin_public);
+	mod->set_function("private", _builtin_private);
+	mod->set_function("public",  _builtin_public);
 
 	// 只读装饰器：@readonly（对象冻结 / 模块常量绑定 / 只读成员）。
-	set_func(mod, "readonly", _builtin_readonly);
+	mod->set_function("readonly", _builtin_readonly);
 
 	// super：运行时函数，返回父类 Class（thread_local self 上下文）。
-	set_func(mod, "super", _builtin_super);
+	mod->set_function("super", _builtin_super);
 
 	return mod;
 }

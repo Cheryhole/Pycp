@@ -1,0 +1,4 @@
+import eg
+
+// 缺参：有 *rest 时下界不变，必填参数 a 缺失按名报错
+eg.pick()

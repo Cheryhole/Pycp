@@ -96,7 +96,7 @@ if "$PYCP" --emit-cpp tests/argv/argv_demo.pycp -o build/argv_work/aot >/dev/nul
 		arc=$?
 		# argv[0] 为程序路径（含 aot_argv），argv[1..3] 为传入参数。
 		if [[ $arc -eq 0 && "$aout" == *"ARGV LEN=4"* && \
-		      "$aout" == *"ARGV0=*"*"aot_argv"* && \
+		      "$aout" == *"ARGV0="*"aot_argv"* && \
 		      "$aout" == *"ARGV1=a"* && "$aout" == *"ARGV2=b"* && \
 		      "$aout" == *"ARGV3=c"* && "$aout" == *"ARGV TEST PASS"* ]]; then
 			echo "[PASS] AOT 产物传参 pycp.argv == [程序路径, a, b, c]"

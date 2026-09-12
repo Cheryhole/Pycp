@@ -7,26 +7,38 @@
 #include "PycpList.hpp"      // List_method_table
 #include "PycpFixedList.hpp" // FixedList_method_table / FixedList
 #include "PycpMap.hpp"       // Map_method_table
-#include "PycpMethodTable.hpp" // MethodEntry / MethodTableFn（RegisterTypeObject 用）
 #include "PycpNone.hpp"
 #include "PycpGC.hpp"
 #include "PycpException.hpp"
 #include "PycpConfig.hpp"
 #include "PycpABI.hpp"
-#include "PycpClass.hpp"     // RegisterTypeObject / RegisterObjectClass
+#include "PycpClass.hpp"     // RegisterObjectClass / 类型对象注册（Module::set_type）
 #include "PycpNativeExt.hpp" // SetArgv/GetArgv：构建 pycp.argv 的宿主注入来源
-#include "PycpExt.h"         // PYCP_EXPORT_MODULE（Windows 下带 dllexport）
+#include "PycpExtension.hpp" // 扩展唯一对外头（导出宏 + set_* + 参数规范框架）
 
 namespace Pycp {
 
 namespace {
 
+// 参数拆箱辅助（业务侧自行判型：框架只校验个数与名字，不做类型检查）。
+std::string require_string(const char* fn, const char* param, Object* v) {
+	if (v == nullptr || !IsString(v)) {
+		throw TypeError(std::string(fn) + ": argument '" + param +
+		                "' expects a string, got '" +
+		                (v != nullptr ? v->type_name() : std::string("None")) + "'.");
+	}
+	return AsString(v);
+}
+
 // String(x)：String 类型构造器。调用对象的 __string__ 转换为字符串，
 // 返回内置 String 对象。语义对齐 Python 的 str(x)。
-Object* _builtin_string_ctor(Object*, Object** argv, std::size_t argc) {
-	if (argc != 1) throw TypeError("String() expects exactly 1 argument.");
-	if (argv[0] == nullptr) throw TypeError("String() argument is null.");
-	Object* s = argv[0]->__string__();
+Object* _builtin_string_ctor(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"String", { Extension::Arg::Required("value") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	Object* src = r["value"];
+	if (src == nullptr) throw TypeError("String() argument is null.");
+	Object* s = src->__string__();
 	if (s == nullptr) return String::FromCString("");
 	// __string__ 可能返回 Borrowed（如 String 返回 this），需 Incref 转为
 	// Owned（BuiltinTypeClass::instantiate 期望 Owned 返回值）。
@@ -37,41 +49,53 @@ Object* _builtin_string_ctor(Object*, Object** argv, std::size_t argc) {
 // Integer(x)：Integer 类型构造器。复用 Integer(Object*) 构造：
 // Integer 传入返回自身；String 传入解析为整数（String::__integer__，
 // 非法抛 ValueError）；其他对象调 __integer__。语义对齐 Python 的 int(x)。
-Object* _builtin_integer_ctor(Object*, Object** argv, std::size_t argc) {
-	if (argc != 1) throw TypeError("Integer() expects exactly 1 argument.");
-	if (argv[0] == nullptr) throw TypeError("Integer() argument is null.");
-	return New<Integer>(argv[0]);
+Object* _builtin_integer_ctor(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"Integer", { Extension::Arg::Required("value") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	Object* src = r["value"];
+	if (src == nullptr) throw TypeError("Integer() argument is null.");
+	return New<Integer>(src);
 }
 
 // Boolean(x)：Boolean 类型构造器。复用 Boolean(Object*) 构造。
 // Integer 传入（0/非0）转换为 False/True；String 按 Python 规则
 // ("", "False", "0" 为 False，其余 True) 由 String::__integer__ 还原。
-Object* _builtin_boolean_ctor(Object*, Object** argv, std::size_t argc) {
-	if (argc != 1) throw TypeError("Boolean() expects exactly 1 argument.");
-	if (argv[0] == nullptr) throw TypeError("Boolean() argument is null.");
-	return New<Boolean>(argv[0]);
+Object* _builtin_boolean_ctor(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"Boolean", { Extension::Arg::Required("value") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	Object* src = r["value"];
+	if (src == nullptr) throw TypeError("Boolean() argument is null.");
+	return New<Boolean>(src);
 }
 
 // List(x)：List 类型构造器。调用对象的 __list__ 转换，返回内置 List。
 // 本版仅 list -> list 幂等（返回自身）；其他类型抛 TypeError。
-Object* _builtin_list_ctor(Object*, Object** argv, std::size_t argc) {
-	if (argc != 1) throw TypeError("List() expects exactly 1 argument.");
-	if (argv[0] == nullptr) throw TypeError("List() argument is null.");
-	Object* r = argv[0]->__list__();
-	if (r == nullptr) throw TypeError("List() conversion failed.");
-	return r;
+Object* _builtin_list_ctor(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"List", { Extension::Arg::Required("value") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	Object* src = r["value"];
+	if (src == nullptr) throw TypeError("List() argument is null.");
+	Object* out = src->__list__();
+	if (out == nullptr) throw TypeError("List() conversion failed.");
+	return out;
 }
 
 // FixedList([x])：FixedList 类型构造器（对应 Python tuple(x)）。
 //   0 参：空 FixedList。
 //   1 参：转换 —— FixedList/List 浅拷贝为独立 FixedList；其他可迭代对象经
 //          __iterator__ 逐个取出材料化；不可迭代抛 TypeError。
-Object* _builtin_fixedlist_ctor(Object*, Object** argv, std::size_t argc) {
-	if (argc == 0) {
+// source 为可选参数，省略时规范表给出默认值 None（表示空构造）。
+Object* _builtin_fixedlist_ctor(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"FixedList", { Extension::Arg::Optional("source") });   // 省略 -> None
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	Object* src = r["source"];
+	if (!r.given("source") || src == nullptr || src == None::instance) {
 		return FixedList::New(std::vector<Object*>{});
 	}
-	if (argc != 1) throw TypeError("FixedList() expects 0 or 1 argument.");
-	Object* src = argv[0];
 	if (src == nullptr) throw TypeError("FixedList() argument is null.");
 
 	bool is_fixed = IsType(src, PycpTypeId::FixedList);
@@ -230,15 +254,16 @@ static Object* _map_from_pairs(Object* src) {
 //       * 提供 keys() + __get_item__(k) 的对象 -> 逐键取值构造
 //       * 二元组 List（[[k, v], ...]）-> 逐对构造
 //       * 其余类型 -> TypeError
-Object* _builtin_map_ctor(Object*, Object** argv, std::size_t argc) {
-	if (argc == 0) {
-		// 空构造：调用方应按约定提供非空 argv 数组（元素为 null）。
+// 可选参数：省略时规范表给出默认值 None（表示空构造）。
+Object* _builtin_map_ctor(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"Map", { Extension::Arg::Optional("source") });   // 省略 -> None
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	Object* src = r["source"];
+	if (!r.given("source") || src == nullptr || src == None::instance) {
+		// 空构造（无实参）。
 		return Map::New();
 	}
-	if (argc != 1) {
-		throw TypeError("Map() expects 0 or 1 argument.");
-	}
-	Object* src = argv[0];
 	if (src == nullptr) throw TypeError("Map() argument is null.");
 	if (Map* m = dynamic_cast<Map*>(src)) {
 		return m->copy_shallow();
@@ -250,21 +275,27 @@ Object* _builtin_map_ctor(Object*, Object** argv, std::size_t argc) {
 
 // insp(obj)：返回包含 obj 所有成员名称（含方法）的 List。
 // 模块公开接口名与 Python 惯例一致用短名 insp（inspect 的缩写）。
-Object* _builtin_insp(Object*, Object** argv, std::size_t argc) {
-	if (argc != 1) throw TypeError("insp() expects exactly 1 argument.");
-	if (argv[0] == nullptr) throw TypeError("insp() argument is null.");
-	return argv[0]->__inspect__();
+Object* _builtin_insp(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"insp", { Extension::Arg::Required("obj") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	Object* obj = r["obj"];
+	if (obj == nullptr) throw TypeError("insp() argument is null.");
+	return obj->__inspect__();
 }
 
 // typeof(obj)：返回 obj 所属的类对象（类对象返回 pycp.Object）。
 // 语义对齐 Python 的 type(x) / x.__class__。
-Object* _builtin_typeof(Object*, Object** argv, std::size_t argc) {
-	if (argc != 1) throw TypeError("typeof() expects exactly 1 argument.");
-	if (argv[0] == nullptr) throw TypeError("typeof() argument is null.");
-	Class* c = argv[0]->get_type_class();
+Object* _builtin_typeof(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"typeof", { Extension::Arg::Required("obj") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	Object* obj = r["obj"];
+	if (obj == nullptr) throw TypeError("typeof() argument is null.");
+	Class* c = obj->get_type_class();
 	if (c == nullptr) {
 		throw TypeError("typeof(): cannot determine type class of '" +
-		                 argv[0]->type_name() + "'.");
+		                 obj->type_name() + "'.");
 	}
 	Incref(c); // 返回 Owned（类对象由注册表/实例持有，此处增持引用）
 	return c;
@@ -285,50 +316,54 @@ Object* _builtin_typeof(Object*, Object** argv, std::size_t argc) {
 // 两库均导出同名装饰器函数以保证 `from classtools import public`
 // 与 `from Pycp import public` 行为一致。
 // =============================================================
-Object* _builtin_visibility(Object*, Object** argv, std::size_t argc, bool priv) {
-	if (argc != 1 || argv == nullptr || argv[0] == nullptr) {
+// 内部辅助（非注册函数）：参数个数与类型已由 private/public 的框架 thunk 校验。
+Object* _builtin_visibility(Object* target, bool priv) {
+	if (target == nullptr) {
 		throw TypeError("visibility decorator expects exactly 1 argument.");
 	}
-	argv[0]->set_private(priv);
+	target->set_private(priv);
 	// 原样返回被装饰对象（装饰器替换逻辑用返回值替换原对象）。
-	Incref(argv[0]);
-	return argv[0];
+	Incref(target);
+	return target;
 }
 
-Object* _builtin_private(Object* self, Object** argv, std::size_t argc) {
-	return _builtin_visibility(self, argv, argc, /*priv=*/true);
+Object* _builtin_private(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"private", { Extension::Arg::Required("target") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	return _builtin_visibility(r["target"], /*priv=*/true);
 }
 
-Object* _builtin_public(Object* self, Object** argv, std::size_t argc) {
-	return _builtin_visibility(self, argv, argc, /*priv=*/false);
+Object* _builtin_public(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"public", { Extension::Arg::Required("target") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	return _builtin_visibility(r["target"], /*priv=*/false);
 }
 
 // @readonly 装饰器：把被装饰对象（变量/函数/类/实例/任意对象）设为只读
 // 后原样返回（与 classtools.readonly 行为一致）。只读语义由底层
 // readonly_ 标志承载：任意对象冻结（属性写/删被拒）、模块常量绑定
 // （不可再赋值覆盖）、类成员只读字段。
-Object* _builtin_readonly(Object*, Object** argv, std::size_t argc) {
-	if (argc != 1 || argv == nullptr || argv[0] == nullptr) {
+Object* _builtin_readonly(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"readonly", { Extension::Arg::Required("target") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	Object* target = r["target"];
+	if (target == nullptr) {
 		throw TypeError("readonly decorator expects exactly 1 argument.");
 	}
-	argv[0]->set_readonly(true);
+	target->set_readonly(true);
 	// 原样返回被装饰对象（装饰器替换逻辑用返回值替换原对象）。
-	Incref(argv[0]);
-	return argv[0];
-}
-
-// 将原生函数以指定名字放入模块命名空间。
-void set_func(Module* mod, const char* name, PycpCFunction fn) {
-	auto* ns = mod->get_namespace();
-	Function* f = New<Function>(name, fn);
-	(*ns)[name] = f;
-	Incref(f);
-	Decref(f); // namespace 持有
+	Incref(target);
+	return target;
 }
 
 // Object 的默认 __initialize__（空实现，接受 self，供子类 super() 调用）。
-Object* _object_init(Object*, Object** argv, std::size_t argc) {
-	(void)argv; (void)argc;
+Object* _object_init(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec =
+		Extension::CompileArgs("__initialize__", {});
+	spec.Bind(args, kwargs);
 	return None::instance; // 无操作
 }
 
@@ -340,33 +375,34 @@ Object* _object_init(Object*, Object** argv, std::size_t argc) {
 // 注意：Instance 的属性访问/赋值钩子分派对 Object 默认实现回退 C++
 // 内部路径（见 PycpClass.cpp），故这些 native 主要供方法存在性/枚举/
 // super() 调用，且用户 override 后优先走用户实现。
-Object* _object_get_attribute(Object* /*fn*/, Object** argv, std::size_t argc) {
-	if (argc != 2)
-		throw TypeError("__get_attribute__() expects 2 arguments (self, name).");
-	if (argv[1] == nullptr || !argv[1]->is_type("String"))
-		throw TypeError("__get_attribute__() name must be a String.");
-	const std::string& nm = static_cast<String*>(argv[1])->get_value();
-	return argv[0]->__get_attribute__(nm); // 转发到 C++ 虚方法（Owned 语义）
+// name 须为 String（业务侧自行判型，框架只校验个数与名字）。
+Object* _object_get_attribute(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"__get_attribute__", { Extension::Arg::Required("name") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	std::string name = require_string("__get_attribute__", "name", r["name"]);
+	return self->__get_attribute__(name); // 转发到 C++ 虚方法（Owned 语义）
 }
 
-Object* _object_set_attribute(Object* /*fn*/, Object** argv, std::size_t argc) {
-	if (argc != 3)
-		throw TypeError("__set_attribute__() expects 3 arguments (self, name, value).");
-	if (argv[1] == nullptr || !argv[1]->is_type("String"))
-		throw TypeError("__set_attribute__() name must be a String.");
-	const std::string& nm = static_cast<String*>(argv[1])->get_value();
-	argv[0]->__set_attribute__(nm, argv[2]);
+Object* _object_set_attribute(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"__set_attribute__", { Extension::Arg::Required("name"),
+		                       Extension::Arg::Required("value") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	std::string name = require_string("__set_attribute__", "name", r["name"]);
+	self->__set_attribute__(name, r["value"]);
 	return None::instance;
 }
 
-Object* _object_string(Object* /*fn*/, Object** argv, std::size_t argc) {
-	if (argc != 1)
-		throw TypeError("__string__() expects 1 argument (self).");
-	return argv[0]->__string__();
+Object* _object_string(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec =
+		Extension::CompileArgs("__string__", {});
+	spec.Bind(args, kwargs);
+	return self->__string__();
 }
 
 // Pycp.Object 的方法表（协议方法：属性访问/赋值钩子、字符串化）。
-// 对象自身的 __initialize__ 经 RegisterTypeObject 的 initialize 参数注册，
+// 对象自身的 __initialize__ 经 Module::set_type 的 initialize 参数注册，
 // 与其它方法一并随对象一次性完成。
 const std::vector<MethodEntry>& Object_method_table() {
 	static const std::vector<MethodEntry> table = {
@@ -384,54 +420,54 @@ Module* make_pycp_module() {
 	// 调用时走类实例化路径（BuiltinTypeClass::instantiate），把参数传给
 	// 构造回调并返回内置对象（语义对齐 Python 的 str(x)/int(x)/list(x) 等）。
 	// 方法表为各类型「全部方法」的唯一权威来源，注册与 __inspect__ 同源。
-	RegisterTypeObject(mod, "String",  _builtin_string_ctor,  /*initialize=*/nullptr,
-	                String_method_table);
-	RegisterTypeObject(mod, "Integer", _builtin_integer_ctor, /*initialize=*/nullptr,
-	                Integer_method_table);
+	// 函数名与可选参数默认值均由各构造器内部的参数规范表登记（构造调用时
+	// self 为 nullptr，故规范表内显式写明函数名以生成可读报错）。
+	mod->set_type("String", _builtin_string_ctor, /*initialize=*/nullptr,
+	              String_method_table);
+	mod->set_type("Integer", _builtin_integer_ctor, /*initialize=*/nullptr,
+	              Integer_method_table);
 	// Boolean 继承 Integer，复用同一方法表。
-	RegisterTypeObject(mod, "Boolean", _builtin_boolean_ctor, /*initialize=*/nullptr,
-	                Integer_method_table);
-	RegisterTypeObject(mod, "List",    _builtin_list_ctor,    /*initialize=*/nullptr,
-	                List_method_table);
-	RegisterTypeObject(mod, "FixedList", _builtin_fixedlist_ctor, /*initialize=*/nullptr,
-	                FixedList_method_table);
-	RegisterTypeObject(mod, "Map",     _builtin_map_ctor,     /*initialize=*/nullptr,
-	                Map_method_table);
+	mod->set_type("Boolean", _builtin_boolean_ctor, /*initialize=*/nullptr,
+	              Integer_method_table);
+	mod->set_type("List", _builtin_list_ctor, /*initialize=*/nullptr,
+	              List_method_table);
+	// 可选参数 source 省略 -> None（空 FixedList / 空 Map）。
+	mod->set_type("FixedList", _builtin_fixedlist_ctor, /*initialize=*/nullptr,
+	              FixedList_method_table);
+	mod->set_type("Map", _builtin_map_ctor, /*initialize=*/nullptr,
+	              Map_method_table);
 
 	// Pycp.Object 基类：类似 Python 的 object。对象自身的 __initialize__
 	// （空实现）随对象一次性注册，供子类 super().__initialize__(self) 调用；
 	// 协议方法（__get_attribute__ 等）由 Object_method_table 提供。
 	// 不自动继承，实例化走默认 instantiate（返回 Instance）。
-	Class* object_cls = RegisterTypeObject(mod, "Object", /*ctor=*/nullptr,
-	                                    _object_init, Object_method_table);
+	Class* object_cls = mod->set_type("Object", /*ctor=*/nullptr, _object_init,
+	                                  Object_method_table);
 	RegisterObjectClass(object_cls); // 类对象的 typeof/__class__ 返回它
 
 	// 可见性装饰器函数：@private / @public（与 classtools 库功能一致）。
-	set_func(mod, "private", _builtin_private);
-	set_func(mod, "public",  _builtin_public);
+	mod->set_function("private", _builtin_private);
+	mod->set_function("public",  _builtin_public);
 
 	// 只读装饰器：@readonly（对象冻结 / 模块常量绑定 / 只读成员）。
-	set_func(mod, "readonly", _builtin_readonly);
+	mod->set_function("readonly", _builtin_readonly);
 
 	// insp(obj)：返回对象所有成员名称（含方法）的 List。
-	set_func(mod, "insp", _builtin_insp);
+	mod->set_function("insp", _builtin_insp);
 
 	// typeof(obj)：返回对象所属的类对象（类对象返回 pycp.Object）。
-	set_func(mod, "typeof", _builtin_typeof);
+	mod->set_function("typeof", _builtin_typeof);
 
 	// argv：命令行参数列表（对齐 Python 的 sys.argv）。构造时从宿主注入的
 	// 全局 argv（Pycp::GetArgv）构建为 List[String]，读一次快照加入命名空间。
 	// 未注入（如 REPL）时为空列表 []。各元素为 String（FromCString 返回 Owned，
 	// append 内部 Incref），故列表与元素均交命名空间持有引用。
 	{
-		auto* ns = mod->get_namespace();
 		List* argv_list = List::New();
 		for (const auto& a : Pycp::GetArgv()) {
 			argv_list->append(String::FromCString(a.c_str()));
 		}
-		(*ns)["argv"] = argv_list;
-		Incref(argv_list);
-		Decref(argv_list); // 命名空间持有
+		mod->set_variable("argv", argv_list);
 	}
 
 	return mod;

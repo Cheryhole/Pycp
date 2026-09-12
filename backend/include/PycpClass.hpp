@@ -29,7 +29,9 @@
 
 namespace Pycp {
 
-class Module;   // RegisterTypeObject 的宿主模块参数（仅以指针使用）
+class Module;      // 类型对象注册的宿主模块（仅以指针使用）
+class FixedList;   // 位置参数容器
+class Map;         // 关键字参数字典
 
 // =============================================================
 // 运行时「类型类」注册表（typeof / __class__ 用）
@@ -46,24 +48,12 @@ PYCP_API void RegisterObjectClass(Class* cls);
 PYCP_API Class* LookupObjectClass();                            // Borrowed
 
 // =============================================================
-// 统一类型对象注册（方法表驱动，一次性完整注册）
+// 统一类型对象注册
 //
-// 把「创建类型对象 + 放入模块命名空间 + 逐条注册方法 + 注册对象自身
-// __initialize__ + 登记类型类注册表」收敛为单次调用；方法清单以传入的
-// 方法表为唯一权威来源。供 pycp / io 等原生扩展共用（ABI 层）。
-//
-//   mod        : 宿主模块（必须非空；类型对象放入其命名空间）。
-//   name       : 类型名（= 命名空间键 = 类型类注册键）。
-//   ctor       : 非空 → BuiltinTypeClass（实例化走 ctor）；
-//                空   → 普通 Class（实例化走默认 Instance 创建）。
-//   initialize : 对象自身的 __initialize__（nullptr 表示无）。
-//   table      : 方法表访问器（全部方法的唯一权威来源，可为 nullptr）。
-// 返回创建的类型对象（Borrowed，由命名空间与类型类注册表持有）。
+// 已收敛为 Module::set_type（见 PycpModule.hpp）：扩展作者经
+// `mod->set_type(name, ctor, initialize, table)` 一次完成「创建类型对象 +
+// 放入命名空间 + 逐条注册方法 + 注册 __initialize__ + 登记类型类表」。
 // =============================================================
-PYCP_API Class* RegisterTypeObject(Module* mod, const char* name,
-                                   PycpCFunction ctor,
-                                   PycpCFunction initialize,
-                                   MethodTableFn table);
 
 class PYCP_API Class : public Object {
 private:
@@ -144,7 +134,11 @@ public:
 	// 默认实现创建 Instance，先应用成员初始值（__init_defaults__），
 	// 再调用 __initialize__（MAGIC_INITIALIZE）并返回该实例（Owned）。
 	// 子类（如 BuiltinTypeClass）可重写以返回内置对象。
-	virtual Object* instantiate(Object** argv, std::size_t argc);
+	//
+	// 容器形态为主入口（唯一虚函数）；数组重载为 VM / AOT 兼容入口，
+	// 内部打包为容器后转调主入口。
+	Object* instantiate(Object** argv, std::size_t argc);
+	virtual Object* instantiate(FixedList* args, Map* kwargs);
 
 	// GC 子引用遍历：枚举方法表（methods_）中的 Function。
 	void foreach_ref(const std::function<void(Object*)>& visit) override;
@@ -159,14 +153,14 @@ public:
 // =============================================================
 class PYCP_API BuiltinTypeClass : public Class {
 private:
-	// 原生构造回调：接收 argv/argc，返回 Owned 内置对象。
+	// 原生构造回调（容器形态）：返回 Owned 内置对象。
 	PycpCFunction ctor_;
 
 public:
 	BuiltinTypeClass(const std::string& name, PycpCFunction ctor);
 
-	// 校验参数个数后调用构造回调，返回内置对象。
-	Object* instantiate(Object** argv, std::size_t argc) override;
+	// 调用构造回调（参数个数由构造回调自身经参数规范表校验），返回内置对象。
+	Object* instantiate(FixedList* args, Map* kwargs) override;
 };
 
 class PYCP_API Instance : public Object {
@@ -291,7 +285,9 @@ public:
 	BoundMethod(Object* inst, Function* method);
 	~BoundMethod() override;
 
-	Object* invoke(Object** argv, std::size_t argc) override;
+	// 容器形态调用：把绑定的接收者作为 self 转交底层方法（实参数组不再
+	// 需要把接收者塞进 argv[0]）。
+	Object* invoke(Object* self, FixedList* args, Map* kwargs) override;
 
 	// GC 子引用遍历：枚举绑定接收者（instance_）与底层方法（method_）。
 	void foreach_ref(const std::function<void(Object*)>& visit) override;

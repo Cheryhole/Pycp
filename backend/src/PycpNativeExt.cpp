@@ -331,28 +331,8 @@ void NativeExt_Finalize() {
 	g_handles = nullptr;
 }
 
-// =============================================================
-// 拆箱辅助
-// =============================================================
-
-int64_t ArgInt(Object** argv, std::size_t i, const char* fn) {
-	if (argv == nullptr || argv[i] == nullptr || !IsIntegerExact(argv[i])) {
-		throw TypeError(std::string(fn) + "(): argument " + std::to_string(i + 1) +
-		                " expects an integer.");
-	}
-	return static_cast<Integer*>(argv[i])->get_value();
-}
-
-std::string ArgString(Object** argv, std::size_t i, const char* fn) {
-	if (argv == nullptr || argv[i] == nullptr || !IsString(argv[i])) {
-		throw TypeError(std::string(fn) + "(): argument " + std::to_string(i + 1) +
-		                " expects a string.");
-	}
-	return static_cast<String*>(argv[i])->get_value();
-}
-
-bool ArgBool(Object** argv, std::size_t i, const char* fn) {
-	return ArgInt(argv, i, fn) != 0;
-}
+// 注：拆箱辅助（旧 ArgInt/ArgString/ArgBool）已随旧参数框架一并删除；
+// 参数声明与个数校验改用 PycpExtension.hpp 的参数规范表，类型判断由
+// 业务函数自行完成。
 
 } // namespace Pycp

@@ -4,123 +4,166 @@
 #include "PycpGC.hpp"
 #include "PycpList.hpp"
 #include "PycpFixedList.hpp"
+#include "PycpMap.hpp"
 #include "PycpString.hpp"
+#include "PycpExtension.hpp"
 
 #include <unordered_map>
+#include <vector>
 
 namespace Pycp {
 
 namespace {
 
+// =============================================================
+// 魔术方法 thunk 表
+//
+// 旧实现用「native 从 Function::get_name() 反查名字」做运行期分派；容器
+// 形态下 self 已是接收者，故改为「每个魔术方法一个具名 thunk」的静态表：
+// 名字 -> thunk，零运行期字符串分派。
+//
+// 参数个数经参数规范表校验（容器形态，参数名统一为 value / key），
+// 报错形如 `__addition__() missing required argument: 'value'.`。
+// =============================================================
+
+#define PYCP_MAGIC0(fn_name, name_literal, expr)                                \
+	Object* fn_name(Object* self, FixedList* args, Map* kwargs) {               \
+		static const ::Pycp::Extension::ArgTable spec =                         \
+			::Pycp::Extension::CompileArgs(name_literal, {});                   \
+		spec.Bind(args, kwargs);                                                \
+		return (expr);                                                          \
+	}
+
+#define PYCP_MAGIC1(fn_name, name_literal, expr)                                \
+	Object* fn_name(Object* self, FixedList* args, Map* kwargs) {               \
+		static const ::Pycp::Extension::ArgTable spec =                         \
+			::Pycp::Extension::CompileArgs(                                     \
+				name_literal, { ::Pycp::Extension::Arg::Required("value") });   \
+		::Pycp::Extension::ArgResult r = spec.Bind(args, kwargs);               \
+		Object* v0 = r["value"];                                                \
+		return (expr);                                                          \
+	}
+
+#define PYCP_MAGIC2(fn_name, name_literal, expr)                                \
+	Object* fn_name(Object* self, FixedList* args, Map* kwargs) {               \
+		static const ::Pycp::Extension::ArgTable spec =                         \
+			::Pycp::Extension::CompileArgs(                                     \
+				name_literal,                                                   \
+				{ ::Pycp::Extension::Arg::Required("key"),                      \
+				  ::Pycp::Extension::Arg::Required("value") });                 \
+		::Pycp::Extension::ArgResult r = spec.Bind(args, kwargs);               \
+		Object* v0 = r["key"];                                                  \
+		Object* v1 = r["value"];                                                \
+		return (expr);                                                          \
+	}
+
+// ---- 0 参 ----
+PYCP_MAGIC0(_magic_integer,  "__integer__",  self->__integer__())
+PYCP_MAGIC0(_magic_string,   "__string__",   self->__string__())
+PYCP_MAGIC0(_magic_boolean,  "__boolean__",  self->__boolean__())
+PYCP_MAGIC0(_magic_list,     "__list__",     self->__list__())
+PYCP_MAGIC0(_magic_map,      "__map__",      self->__map__())
+PYCP_MAGIC0(_magic_hash,     "__hash__",     self->__hash__())
+PYCP_MAGIC0(_magic_iterator, "__iterator__", self->__iterator__())
+PYCP_MAGIC0(_magic_next,     "__next__",     self->__next__())
+PYCP_MAGIC0(_magic_negation, "__negation__", self->__negation__())
+PYCP_MAGIC0(_magic_inspect,  "__inspect__",  self->__inspect__())
+PYCP_MAGIC0(_magic_delete,   "__delete__",   self->__delete__())
+
+// ---- 1 参（参数名 value）----
+PYCP_MAGIC1(_magic_addition,        "__addition__",        self->__addition__(v0))
+PYCP_MAGIC1(_magic_subtraction,     "__subtraction__",     self->__subtraction__(v0))
+PYCP_MAGIC1(_magic_multiplication,  "__multiplication__",  self->__multiplication__(v0))
+PYCP_MAGIC1(_magic_division,        "__division__",        self->__division__(v0))
+PYCP_MAGIC1(_magic_power,           "__power__",           self->__power__(v0))
+PYCP_MAGIC1(_magic_less_than,       "__less_than__",       self->__less_than__(v0))
+PYCP_MAGIC1(_magic_less_equal,      "__less_equal__",      self->__less_equal__(v0))
+PYCP_MAGIC1(_magic_equal,           "__equal__",           self->__equal__(v0))
+PYCP_MAGIC1(_magic_not_equal,       "__not_equal__",       self->__not_equal__(v0))
+PYCP_MAGIC1(_magic_greater_than,    "__greater_than__",    self->__greater_than__(v0))
+PYCP_MAGIC1(_magic_greater_equal,   "__greater_equal__",   self->__greater_equal__(v0))
+PYCP_MAGIC1(_magic_get_item,        "__get_item__",        self->__get_item__(v0))
+PYCP_MAGIC1(_magic_get_attribute,   "__get_attribute__",   self->__get_attribute__(AsString(v0)))
+PYCP_MAGIC1(_magic_delete_item,     "__delete_item__",     self->__delete_item__(v0))
+PYCP_MAGIC1(_magic_delete_attribute, "__delete_attribute__",
+            (self->__delete_attribute__(AsString(v0)), None::instance))
+
+// ---- 2 参（参数名 key / value）----
+PYCP_MAGIC2(_magic_set_item, "__set_item__", self->__set_item__(v0, v1))
+PYCP_MAGIC2(_magic_set_attribute, "__set_attribute__",
+            (self->__set_attribute__(AsString(v0), v1), None::instance))
+
+#undef PYCP_MAGIC0
+#undef PYCP_MAGIC1
+#undef PYCP_MAGIC2
+
+// 魔术方法名 -> thunk（唯一权威清单）。
+struct MagicThunk {
+	const char*   name;
+	PycpCFunction fn;
+};
+
+const std::vector<MagicThunk>& magic_thunks() {
+	static const std::vector<MagicThunk> table = {
+		{"__integer__",          _magic_integer},
+		{"__string__",           _magic_string},
+		{"__boolean__",          _magic_boolean},
+		{"__list__",             _magic_list},
+		{"__map__",              _magic_map},
+		{"__hash__",             _magic_hash},
+		{"__iterator__",         _magic_iterator},
+		{"__next__",             _magic_next},
+		{"__negation__",         _magic_negation},
+		{"__inspect__",          _magic_inspect},
+		{"__delete__",           _magic_delete},
+		{"__addition__",         _magic_addition},
+		{"__subtraction__",      _magic_subtraction},
+		{"__multiplication__",   _magic_multiplication},
+		{"__division__",         _magic_division},
+		{"__power__",            _magic_power},
+		{"__less_than__",        _magic_less_than},
+		{"__less_equal__",       _magic_less_equal},
+		{"__equal__",            _magic_equal},
+		{"__not_equal__",        _magic_not_equal},
+		{"__greater_than__",     _magic_greater_than},
+		{"__greater_equal__",    _magic_greater_equal},
+		{"__get_item__",         _magic_get_item},
+		{"__get_attribute__",    _magic_get_attribute},
+		{"__delete_attribute__", _magic_delete_attribute},
+		{"__delete_item__",      _magic_delete_item},
+		{"__set_item__",         _magic_set_item},
+		{"__set_attribute__",    _magic_set_attribute},
+	};
+	return table;
+}
+
+const MagicThunk* find_magic_thunk(const std::string& name) {
+	for (const MagicThunk& t : magic_thunks()) {
+		if (name == t.name) return &t;
+	}
+	return nullptr;
+}
+
 // 惰性创建并缓存各魔术方法对应的 Function（GC 常驻，仅创建一次）。
-// key: 魔术方法名；value: Function(name, _magic_fn)。
+// key: 魔术方法名；value: Function(name, thunk)。
 std::unordered_map<std::string, Function*>& magic_cache() {
 	static std::unordered_map<std::string, Function*> cache;
 	return cache;
 }
 
-// 0 参魔术方法：分派到接收者的 C++ 虚方法。argv[0] = 接收者（BoundMethod 绑定）。
-Object* _magic0(Object* receiver, const std::string& m) {
-	if (m == "__integer__")   return receiver->__integer__();
-	if (m == "__string__")    return receiver->__string__();
-	if (m == "__boolean__")   return receiver->__boolean__();
-	if (m == "__list__")      return receiver->__list__();
-	if (m == "__map__")       return receiver->__map__();
-	if (m == "__hash__")      return receiver->__hash__();
-	if (m == "__iterator__")  return receiver->__iterator__();
-	if (m == "__next__")      return receiver->__next__();
-	if (m == "__negation__")  return receiver->__negation__();
-	if (m == "__inspect__")   return receiver->__inspect__();
-	if (m == "__delete__")    return receiver->__delete__();
-	throw AttributeError("unknown magic method '" + m + "'");
-}
-
-// 1 参魔术方法：argv[1] 为参数。比较/算术/下标等。
-Object* _magic1(Object* receiver, const std::string& m, Object* arg) {
-	if (m == "__addition__")       return receiver->__addition__(arg);
-	if (m == "__subtraction__")    return receiver->__subtraction__(arg);
-	if (m == "__multiplication__") return receiver->__multiplication__(arg);
-	if (m == "__division__")       return receiver->__division__(arg);
-	if (m == "__power__")          return receiver->__power__(arg);
-	if (m == "__less_than__")      return receiver->__less_than__(arg);
-	if (m == "__less_equal__")     return receiver->__less_equal__(arg);
-	if (m == "__equal__")          return receiver->__equal__(arg);
-	if (m == "__not_equal__")      return receiver->__not_equal__(arg);
-	if (m == "__greater_than__")   return receiver->__greater_than__(arg);
-	if (m == "__greater_equal__")  return receiver->__greater_equal__(arg);
-	if (m == "__get_item__")       return receiver->__get_item__(arg);
-	if (m == "__get_attribute__")  return receiver->__get_attribute__(AsString(arg));
-	if (m == "__delete_attribute__") return (receiver->__delete_attribute__(AsString(arg)), None::instance);
-	if (m == "__delete_item__")    return receiver->__delete_item__(arg);
-	throw AttributeError("unknown magic method '" + m + "'");
-}
-
-// 2 参魔术方法：argv[1] 为 key, argv[2] 为 value。
-Object* _magic2(Object* receiver, const std::string& m, Object* arg1, Object* arg2) {
-	if (m == "__set_item__")       return receiver->__set_item__(arg1, arg2);
-	if (m == "__set_attribute__")  {
-		receiver->__set_attribute__(AsString(arg1), arg2);
-		return None::instance;
-	}
-	throw AttributeError("unknown magic method '" + m + "'");
-}
-
-bool is_zero_arg_magic(const std::string& m) {
-	return m == "__integer__" || m == "__string__" || m == "__boolean__" ||
-	       m == "__list__" || m == "__iterator__" || m == "__next__" ||
-	       m == "__negation__" || m == "__inspect__" ||
-	       m == "__map__" || m == "__hash__" || m == "__delete__";
-}
-
-bool is_one_arg_magic(const std::string& m) {
-	return m == "__addition__" || m == "__subtraction__" ||
-	       m == "__multiplication__" || m == "__division__" ||
-	       m == "__power__" || m == "__less_than__" ||
-	       m == "__less_equal__" || m == "__equal__" ||
-	       m == "__not_equal__" || m == "__greater_than__" ||
-	       m == "__greater_equal__" || m == "__get_item__" ||
-	       m == "__get_attribute__" || m == "__delete_attribute__" ||
-	       m == "__delete_item__";
-}
-
-bool is_two_arg_magic(const std::string& m) {
-	return m == "__set_item__" || m == "__set_attribute__";
-}
-
-// 统一 native 入口：fn->get_name() 即魔术方法名，argv[0] 为接收者。
-Object* _magic_fn(Object* fn, Object** argv, std::size_t argc) {
-	if (fn == nullptr || argv == nullptr || argc < 1) {
-		throw TypeError("magic method requires a receiver.");
-	}
-	std::string m = static_cast<Function*>(fn)->get_name();
-	Object* receiver = argv[0];
-	if (is_zero_arg_magic(m)) {
-		if (argc != 1) throw TypeError(m + "() takes no arguments.");
-		return _magic0(receiver, m);
-	}
-	if (is_one_arg_magic(m)) {
-		if (argc != 2) throw TypeError(m + "() takes exactly 1 argument.");
-		return _magic1(receiver, m, argv[1]);
-	}
-	if (is_two_arg_magic(m)) {
-		if (argc != 3) throw TypeError(m + "() takes exactly 2 arguments.");
-		return _magic2(receiver, m, argv[1], argv[2]);
-	}
-	throw AttributeError("unknown magic method '" + m + "'");
-}
-
 } // anonymous namespace
 
 bool IsMagicMethodName(const std::string& name) {
-	return is_zero_arg_magic(name) || is_one_arg_magic(name) || is_two_arg_magic(name);
+	return find_magic_thunk(name) != nullptr;
 }
 
 Object* GetMagicMethodFunction(const std::string& name) {
-	if (!IsMagicMethodName(name)) return nullptr;
+	const MagicThunk* t = find_magic_thunk(name);
+	if (t == nullptr) return nullptr;
 	auto& cache = magic_cache();
 	auto it = cache.find(name);
 	if (it != cache.end()) return it->second;
-	Function* f = New<Function>(name.c_str(), _magic_fn);
+	Function* f = New<Function>(t->name, t->fn);
 	cache[name] = f;
 	GC_AddRoot(f); // 常驻缓存，避免被回收
 	return f;

@@ -321,7 +321,7 @@ ABI 调用序列（常量内联为 `g_c[]`，控制流翻译为 `goto`，函数�
   `libPycpExt_classtools.a` 静态扩展库 + 生成器发射的注册/拉入桩
   （`RegisterAotModule`）实现"扩展静态链接并强制被链接器拉入"。
 - 转译生成的 `.gen.cpp` 若被编译为 DLL，其 `PycpModule_<name>` 入口由
-  `PYCP_MODULE_EXPORT`（`PycpExt.h`）在 Windows 下显式导出，DLL 以 `<name>.so/.dll`
+  `PYCP_MODULE_EXPORT`（`PycpExtension.hpp`）在 Windows 下显式导出，DLL 以 `<name>.so/.dll`
   命名并复制到 exe 同级的 `stdlib/`，运行期按模块名加载。
 - 行为上应与解释器逐字节一致（见下文一致性回归）。
 
@@ -557,7 +557,7 @@ build/dist/
 │                            libPycpRuntime.dll + libPycpRuntime.dll.a；
 │                            MSVC：PycpRuntime.dll + PycpRuntime.lib）
 ├── include/                 后端头文件（AOT / 原生扩展编译用）
-│   └── Pycp*.hpp / PycpExt.h
+│   └── Pycp*.hpp（扩展作者入口：PycpExtension.hpp）
 └── BUILD_INFO.txt           产物溯源信息（平台 / 构建类型 / 编译器 / 版本）
 ```
 

@@ -9,6 +9,7 @@
 #include "PycpException.hpp"
 #include "PycpMagic.hpp"
 #include "PycpFixedList.hpp"
+#include "PycpExtension.hpp"   // Extension::CompileArgs / Arg 规范框架
 
 #include <sstream>
 
@@ -17,20 +18,19 @@ namespace Pycp {
 namespace {
 
 // length 方法的原生实现：返回 Integer(键值对个数)。
-Object* _map_length(Object*, Object** argv, std::size_t argc) {
-	Map* m = static_cast<Map*>(argv[0]);
-	if (argc != 1) {
-		throw TypeError("length() expects no arguments.");
-	}
+// 容器形态：接收者经 self 传入，实参已收集为 FixedList；个数由规范表校验。
+Object* _map_length(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs("length", {});
+	spec.Bind(args, kwargs);
+	Map* m = static_cast<Map*>(self);
 	return Integer::FromLong(static_cast<long long>(m->size()));
 }
 
-// keys 方法的原生实现：返回含全部键的 List（视图模式返回成员名）。
-Object* _map_keys(Object*, Object** argv, std::size_t argc) {
-	Map* m = static_cast<Map*>(argv[0]);
-	if (argc != 1) {
-		throw TypeError("keys() expects no arguments.");
-	}
+// keys 方法的原生实现：返回含全部键的 FixedList（视图模式返回成员名）。
+Object* _map_keys(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs("keys", {});
+	spec.Bind(args, kwargs);
+	Map* m = static_cast<Map*>(self);
 	return m->keys();
 }
 

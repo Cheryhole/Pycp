@@ -9,6 +9,7 @@
 #include "PycpABI.hpp"
 #include "PycpMagic.hpp"
 #include "PycpFixedList.hpp"
+#include "PycpExtension.hpp" // 扩展唯一对外头（参数规范框架 / set_*）
 
 #include <sstream>
 #include <cstring>
@@ -368,79 +369,85 @@ Object* File::write(Object* arg) {
 // =============================================================
 
 namespace {
+    // 以下方法均为容器形态：接收者经 self 注入，实参已收集为 FixedList；
+    // 参数个数由规范表统一校验，类型判断（需要时）在业务逻辑内完成。
+
     // write 方法原生实现
-    Object* _file_write(Object* self [[maybe_unused]], Object** argv, std::size_t argc) {
-        File* f = static_cast<File*>(argv[0]);
-        if (argc != 2) {
-            throw TypeError("write() expects exactly 1 argument.");
-        }
-        return f->write(argv[1]);
+    Object* _file_write(Object* self, FixedList* args, Map* kwargs) {
+        static const Extension::ArgTable spec = Extension::CompileArgs(
+            "write", { Extension::Arg::Required("data") });
+        Extension::ArgResult r = spec.Bind(args, kwargs);
+        File* f = static_cast<File*>(self);
+        return f->write(r["data"]);
     }
 
-    // read 方法原生实现
-    Object* _file_read(Object* self [[maybe_unused]], Object** argv, std::size_t argc) {
-        File* f = static_cast<File*>(argv[0]);
-        if (argc == 1) {
+    // read 方法原生实现：size 为可选参数，省略表示读至末尾；给出时须为整数
+    // （Integer 精确类型，Boolean 不接受——与既有语义一致）。
+    Object* _file_read(Object* self, FixedList* args, Map* kwargs) {
+        static const Extension::ArgTable spec = Extension::CompileArgs(
+            "read", { Extension::Arg::Optional("size") });   // 省略 -> None
+        Extension::ArgResult r = spec.Bind(args, kwargs);
+        File* f = static_cast<File*>(self);
+        Object* size = r["size"];
+        if (!r.given("size") || size == nullptr || size == None::instance) {
             return f->read();
-        } else if (argc == 2) {
-            Object* size_arg = argv[1];
-            if (!size_arg->is_type("Integer")) {
-                throw TypeError("read() argument must be integer.");
-            }
-            std::size_t size = static_cast<Integer*>(size_arg)->get_value();
-            return f->read(size);
         }
-        throw TypeError("read() expects 0 or 1 argument.");
+        if (!IsIntegerExact(size)) {
+            throw TypeError("read(): argument 'size' expects an integer, got '" +
+                            size->type_name() + "'.");
+        }
+        int64_t n = static_cast<Integer*>(size)->get_value();
+        if (n < 0) {
+            throw TypeError("read() size must be non-negative.");
+        }
+        return f->read(static_cast<std::size_t>(n));
     }
 
     // readline 方法原生实现
-    Object* _file_readline(Object* self [[maybe_unused]], Object** argv, std::size_t argc) {
-        File* f = static_cast<File*>(argv[0]);
-        if (argc != 1) {
-            throw TypeError("readline() expects no arguments.");
-        }
+    Object* _file_readline(Object* self, FixedList* args, Map* kwargs) {
+        static const Extension::ArgTable spec = Extension::CompileArgs("readline", {});
+        spec.Bind(args, kwargs);
+        File* f = static_cast<File*>(self);
         return f->readline();
     }
 
     // readlines 方法原生实现
-    Object* _file_readlines(Object* self [[maybe_unused]], Object** argv, std::size_t argc) {
-        File* f = static_cast<File*>(argv[0]);
-        if (argc != 1) {
-            throw TypeError("readlines() expects no arguments.");
-        }
+    Object* _file_readlines(Object* self, FixedList* args, Map* kwargs) {
+        static const Extension::ArgTable spec = Extension::CompileArgs("readlines", {});
+        spec.Bind(args, kwargs);
+        File* f = static_cast<File*>(self);
         return f->readlines();
     }
 
     // close 方法原生实现
-    Object* _file_close(Object* self [[maybe_unused]], Object** argv, std::size_t argc) {
-        File* f = static_cast<File*>(argv[0]);
-        if (argc != 1) {
-            throw TypeError("close() expects no arguments.");
-        }
+    Object* _file_close(Object* self, FixedList* args, Map* kwargs) {
+        static const Extension::ArgTable spec = Extension::CompileArgs("close", {});
+        spec.Bind(args, kwargs);
+        File* f = static_cast<File*>(self);
         f->close();
         return None::instance;
     }
 
-    // open 方法原生实现
-    Object* _file_open(Object* self [[maybe_unused]], Object** argv, std::size_t argc) {
-        File* f = static_cast<File*>(argv[0]);
-        if (argc < 2 || argc > 3) {
-            throw TypeError("open() expects 1 or 2 arguments (path [, mode]).");
+    // open 方法原生实现：path 必填且须为 String；mode 可选，省略时默认 "r"。
+    Object* _file_open(Object* self, FixedList* args, Map* kwargs) {
+        static const Extension::ArgTable spec = Extension::CompileArgs(
+            "open", { Extension::Arg::Required("path"),
+                      Extension::Arg::Optional("mode", String::FromCString("r")) });
+        Extension::ArgResult r = spec.Bind(args, kwargs);
+        Object* path = r["path"];
+        if (path == nullptr || !IsString(path)) {
+            throw TypeError("open(): argument 'path' expects a string, got '" +
+                            (path != nullptr ? path->type_name() : std::string("None")) +
+                            "'.");
         }
-        Object* path_obj = argv[1];
-        if (!path_obj->is_type("String")) {
-            throw TypeError("open() path must be string.");
+        Object* mode = r["mode"];
+        if (mode == nullptr || !IsString(mode)) {
+            throw TypeError("open(): argument 'mode' expects a string, got '" +
+                            (mode != nullptr ? mode->type_name() : std::string("None")) +
+                            "'.");
         }
-        std::string path = static_cast<String*>(path_obj)->get_value();
-        std::string mode = "r";
-        if (argc == 3) {
-            Object* mode_obj = argv[2];
-            if (!mode_obj->is_type("String")) {
-                throw TypeError("open() mode must be string.");
-            }
-            mode = static_cast<String*>(mode_obj)->get_value();
-        }
-        f->open(path, mode);
+        File* f = static_cast<File*>(self);
+        f->open(AsString(path), AsString(mode));
         return None::instance;
     }
 } // anonymous namespace
@@ -448,7 +455,7 @@ namespace {
 // File 全部方法的方法表（公开方法 write/read/readline/readlines/close/open +
 // 全部魔术方法）。公开方法指向本文件 anonymous namespace 内的实现；魔术方法
 // native 为 nullptr，注册时经 GetMagicMethodFunction 统一分派。io 的类型类
-// 注册（RegisterTypeObject）与实例 __inspect__ 均以此表为唯一权威来源。
+// 注册（Module::set_type）与实例 __inspect__ 均以此表为唯一权威来源。
 const std::vector<MethodEntry>& File_method_table() {
 	static const std::vector<MethodEntry> table = {
 		{"write",                _file_write},
@@ -503,6 +510,7 @@ Object* File::__get_attribute__(const std::string& attr_name) {
     }
     
     // 3) 方法
+    // 懒注册同样经框架的 thunk（与 File_method_table 共用同一绑定）。
     if (attr_name == "write") {
         if (write_fn_ == nullptr) {
             write_fn_ = New<Function>("write", _file_write);

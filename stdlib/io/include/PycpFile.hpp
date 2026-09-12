@@ -91,7 +91,7 @@ public:
 };
 
 // File 全部方法（公开方法 write/read/readline/readlines/close/open +
-// 全部魔术方法）的唯一权威清单。io 的类型类注册（RegisterTypeObject）
+// 全部魔术方法）的唯一权威清单。io 的类型类注册（Module::set_type）
 // 与实例 __inspect__ 均从它派生。
 const std::vector<MethodEntry>& File_method_table();
 

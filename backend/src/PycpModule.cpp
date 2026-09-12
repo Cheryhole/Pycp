@@ -12,6 +12,98 @@ Module* Module::New(const std::string& name) {
 	return Pycp::New<Module>(name);
 }
 
+// =============================================================
+// 显式绑定 API（替代旧 PYCP_SET_FUNC 宏与手工写命名空间）
+// =============================================================
+namespace {
+
+// 把对象放入命名空间并移交一份引用：命名空间持有 1 份，本地 Owned 引用释放。
+void put_into_namespace(std::unordered_map<std::string, Object*>* ns,
+                        const char* name, Object* obj) {
+	(*ns)[name] = obj;
+	Incref(obj);
+	Decref(obj);
+}
+
+} // anonymous namespace
+
+void Module::set_function(const char* name, PycpCFunction fn, bool with_keywords) {
+	if (name == nullptr || fn == nullptr) {
+		throw TypeError("set_function: name and function must be non-null.");
+	}
+	(void)with_keywords;   // 语言层暂无关键字实参来源，先作为元信息保留。
+	// 注：必须写 Pycp::New —— 类内存在同名静态成员 Module::New，未限定会被
+	// 解析为「Module::New 作为模板」而编译失败。
+	Function* f = Pycp::New<Function>(name, fn);
+	put_into_namespace(&namespace_, name, f);
+}
+
+void Module::set_variable(const char* name, Object* value) {
+	if (name == nullptr || value == nullptr) {
+		throw TypeError("set_variable: name and value must be non-null.");
+	}
+	put_into_namespace(&namespace_, name, value);
+}
+
+void Module::set_constant(const char* name, Object* value) {
+	if (name == nullptr || value == nullptr) {
+		throw TypeError("set_constant: name and value must be non-null.");
+	}
+	put_into_namespace(&namespace_, name, value);
+	mark_binding(name, AccessAttrs{false, true});   // readonly = true
+}
+
+void Module::set_object(const char* name, Object* obj) {
+	if (name == nullptr || obj == nullptr) {
+		throw TypeError("set_object: name and object must be non-null.");
+	}
+	put_into_namespace(&namespace_, name, obj);
+	// 类型对象：同步登记运行时类型类注册表（typeof / __class__ 解析用）。
+	if (Class* cls = dynamic_cast<Class*>(obj)) {
+		RegisterTypeClass(name, cls);
+	}
+}
+
+Class* Module::set_type(const char* name, PycpCFunction ctor,
+                        PycpCFunction initialize, MethodTableFn table) {
+	if (name == nullptr) {
+		throw TypeError("set_type: name must be non-null.");
+	}
+
+	// 1) 创建类型对象（普通 Class 或内置类型类），Owned（refcount=1）。
+	Class* cls = (ctor != nullptr)
+		? static_cast<Class*>(Pycp::New<BuiltinTypeClass>(name, ctor))
+		: static_cast<Class*>(Pycp::New<Class>(name));
+
+	// 2) 放入本模块命名空间（转入命名空间持有）。
+	put_into_namespace(&namespace_, name, cls);
+
+	// 3) 方法表：公开方法包装 Function，魔术方法经统一分派解析。
+	if (table != nullptr) {
+		for (const MethodEntry& e : table()) {
+			Function* fn = (e.native != nullptr)
+				? Pycp::New<Function>(e.name, e.native)
+				: static_cast<Function*>(GetMagicMethodFunction(e.name));
+			if (fn == nullptr) continue;
+			fn->set_owner_class(cls);
+			cls->add_method(e.name, fn);
+			if (e.native != nullptr) Decref(fn);   // 魔术方法来自常驻缓存
+		}
+	}
+
+	// 4) 对象自身的 __initialize__（随对象一次性注册）。
+	if (initialize != nullptr) {
+		Function* init = Pycp::New<Function>("__initialize__", initialize);
+		init->set_owner_class(cls);
+		cls->add_method("__initialize__", init);
+		Decref(init);   // add_method 已 Incref
+	}
+
+	// 5) 登记到运行时类型类注册表。
+	RegisterTypeClass(name, cls);
+	return cls;
+}
+
 // 全局「当前正在执行的模块」：VM / AOT 在执行某模块顶层前设置、后恢复。
 Module* current_module_ = nullptr;
 

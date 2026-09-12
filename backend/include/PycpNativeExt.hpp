@@ -101,18 +101,9 @@ Module* LoadNativeModule(const std::string& name,
 // 统一关闭所有已加载的 dlopen 句柄并清空句柄缓存（进程退出前调用）。
 void NativeExt_Finalize();
 
-// =============================================================
-// 拆箱辅助（供扩展作者使用，类型不符抛 TypeError，附函数名与参数位置）
-// =============================================================
-
-// 取第 i 个参数为 int64_t（须为 Integer）。
-int64_t ArgInt(Object** argv, std::size_t i, const char* fn);
-
-// 取第 i 个参数为字符串（须为 String），返回其值拷贝。
-std::string ArgString(Object** argv, std::size_t i, const char* fn);
-
-// 取第 i 个参数为 bool（Integer 非零为真）。
-bool ArgBool(Object** argv, std::size_t i, const char* fn);
+// 注：拆箱辅助（旧 ArgInt/ArgString/ArgBool）已随旧参数框架一并删除。
+// 参数个数 / 名字由 PycpExtension.hpp 的参数规范表声明，值的类型判断
+// 由业务函数在拿到 Object* 后自行完成（框架不做类型检查）。
 
 } // namespace Pycp
 

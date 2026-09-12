@@ -72,7 +72,8 @@ set(PYCP_HEADERS
     ${PYCP_INCLUDE_DIR}/PycpBytecodeVM.hpp
     ${PYCP_INCLUDE_DIR}/PycpEnvironment.hpp
     ${PYCP_INCLUDE_DIR}/PycpNativeExt.hpp
-    ${PYCP_INCLUDE_DIR}/PycpExt.h
+    ${PYCP_INCLUDE_DIR}/PycpMethodTable.hpp
+    ${PYCP_INCLUDE_DIR}/PycpExtension.hpp
 )
 
 set(PYCP_SOURCES
@@ -91,6 +92,7 @@ set(PYCP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpMap.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpIterator.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpMagic.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpExtension.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpABI.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpBytecode.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpBytecodeVM.cpp

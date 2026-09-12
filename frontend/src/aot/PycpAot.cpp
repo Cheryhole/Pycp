@@ -859,7 +859,8 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	os << "#include \"PycpException.hpp\"\n";
 	// PYCP_MODULE_EXPORT：本模块编译为 DLL 时导出 PycpModule_<name>；
 	// 编译进静态目标（PYCP_STATIC）时展开为空。Windows 下必不可少。
-	os << "#include \"PycpExt.h\"\n";
+	// 扩展唯一对外头：模块导出宏 + 方法表 + set_* / 参数规范框架。
+	os << "#include \"PycpExtension.hpp\"\n";
 	os << "#include <vector>\n";
 	os << "#include <string>\n";
 	os << "#include <unordered_map>\n";

@@ -13,12 +13,15 @@
 
 #include "PycpObject.hpp"
 #include "PycpString.hpp"
+#include "PycpMethodTable.hpp"   // PycpCFunction / MethodEntry / MethodTableFn
 
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 
 namespace Pycp {
+
+class Class;
 
 // 绑定级访问属性（模块顶层符号 / 类成员等的权威来源）：
 //   priv     : 私有（对其他文件 / 类外不可见）
@@ -66,8 +69,44 @@ public:
 	void set_module_name(const std::string& n) { module_name_ = n; }
 
 	// 读取/写入命名空间（供 VM / AOT 填充与查询）。
-	// 注意：直接操作裸指针，引用计数由调用方管理。
+	// 注意：直接操作裸指针，引用计数由调用方管理。扩展作者应优先使用下面
+	// 的 set_* 系列显式绑定 API，而非直接操作命名空间。
 	std::unordered_map<std::string, Object*>* get_namespace() { return &namespace_; }
+
+	// =============================================================
+	// 显式绑定 API（替代旧 PYCP_SET_FUNC 宏与手工写命名空间）
+	//
+	// 全部方法把值放入本模块命名空间；引用计数由本方法负责移交
+	// （命名空间持有一份，调用方无需 Incref / Decref）。
+	// =============================================================
+
+	// 绑定原生函数。
+	//   fn            : 容器形态原生函数（PycpCFunction，见 PycpMethodTable.hpp）
+	//   with_keywords : 该函数是否接受关键字参数（供 VM 判定是否允许以
+	//                   `f(x=1)` 形式调用；当前语言层无关键字实参来源，
+	//                   先作为元信息登记）。参数个数 / 名字 / 默认值由函数
+	//                   内部经 Extension::CompileArgs 的规范表自行声明与校验。
+	void set_function(const char* name, PycpCFunction fn, bool with_keywords = false);
+
+	// 绑定普通变量（可被脚本层重新赋值覆盖）。
+	void set_variable(const char* name, Object* value);
+
+	// 绑定只读常量（脚本层再次赋值抛 AttributeError）。
+	void set_constant(const char* name, Object* value);
+
+	// 通用对象登记：把任意对象放入命名空间；若对象是类型对象（Class），
+	// 同时登记到运行时类型类注册表（typeof / __class__ 解析用）。
+	void set_object(const char* name, Object* obj);
+
+	// 类型对象语义化注册（一次性完整注册）。
+	//   name       : 类型名（= 命名空间键 = 类型类注册键）
+	//   ctor       : 非空 -> BuiltinTypeClass（实例化走 ctor）；
+	//                空   -> 普通 Class（实例化走默认 Instance 创建）
+	//   initialize : 对象自身的 __initialize__（nullptr 表示无）
+	//   table      : 方法表访问器（全部方法的唯一权威来源，可为 nullptr）
+	// 返回创建的类型对象（Borrowed，由命名空间与类型类注册表持有）。
+	Class* set_type(const char* name, PycpCFunction ctor,
+	                PycpCFunction initialize, MethodTableFn table);
 
 	// 绑定级属性登记/查询。
 	//   mark_binding(name, attrs) 覆盖写入该名字的属性；

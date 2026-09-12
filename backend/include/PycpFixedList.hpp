@@ -41,8 +41,10 @@ private:
 
 public:
 	// 静态工厂（均返回 Owned，refcount=1）：
-	//   New(items, n) —— 复制 items[0..n-1] 的元素引用（内部 Incref）
-	//   New(vector)   —— 自 std::vector<Object*> 构造
+	//   New(items, n) —— 接管 items[0..n-1] 的元素引用（内部不做 Incref，
+	//                    调用方须为每个元素转移一个 Owned 引用：Borrowed
+	//                    对象需先 Incref、Owned 对象直接传入）
+	//   New(vector)   —— 同上，自 std::vector<Object*> 接管
 	static FixedList* New(Object** items, std::size_t n);
 	static FixedList* New(const std::vector<Object*>& items);
 

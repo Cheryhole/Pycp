@@ -10,6 +10,7 @@
 #include "PycpIterator.hpp"
 #include "PycpMagic.hpp"
 #include "PycpMap.hpp"
+#include "PycpExtension.hpp"   // Extension::CompileArgs / Arg 规范框架
 
 #include <sstream>
 
@@ -18,21 +19,21 @@ namespace Pycp {
 namespace {
 
 // length 方法的原生实现：返回 Integer(元素个数)。
-Object* _list_length(Object*, Object** argv, std::size_t argc) {
-	List* l = static_cast<List*>(argv[0]);
-	if (argc != 1) {
-		throw TypeError("length() expects no arguments.");
-	}
+// 容器形态：接收者经 self 传入，实参已收集为 FixedList；个数由规范表校验。
+Object* _list_length(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs("length", {});
+	spec.Bind(args, kwargs);
+	List* l = static_cast<List*>(self);
 	return Integer::FromLong(static_cast<long long>(l->size()));
 }
 
 // append 方法的原生实现：在原对象上追加元素，返回 None。
-Object* _list_append(Object*, Object** argv, std::size_t argc) {
-	List* l = static_cast<List*>(argv[0]);
-	if (argc != 2) {
-		throw TypeError("append() expects exactly 1 argument.");
-	}
-	l->append(argv[1]);
+Object* _list_append(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"append", { Extension::Arg::Required("item") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	List* l = static_cast<List*>(self);
+	l->append(r["item"]);
 	return None::instance;
 }
 
@@ -41,7 +42,7 @@ Object* _list_append(Object*, Object** argv, std::size_t argc) {
 // List 全部方法的方法表（公开方法 length/append + 全部魔术方法）。
 // 方法名指向本文件 anonymous namespace 内的实现（公开方法）或由
 // GetMagicMethodFunction 统一分派（魔术方法，native 为 nullptr）。
-// 类型类注册（register_object）与 __inspect__ 均以此表为唯一权威来源。
+// 类型类注册与 __inspect__ 均以此表为唯一权威来源。
 const std::vector<MethodEntry>& List_method_table() {
 	static const std::vector<MethodEntry> table = {
 		{"length",               _list_length},

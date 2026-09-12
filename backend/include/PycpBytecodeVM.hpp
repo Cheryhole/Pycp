@@ -151,7 +151,10 @@ private:
 	BC::Module* module;                         // 定义时所属模块（跨模块调用切换用）；native 模式下为 nullptr
 	std::size_t code_idx;                       // code_objects 索引
 	std::shared_ptr<BC::Environment> captured;  // 定义时环境（闭包）
-	PycpCFunction native_fn_ = nullptr;    // native 模式目标函数指针（AOT 生成的 pycp_fn_N）
+	// native 模式目标函数指针（AOT 生成的 pycp_fn_N，数组形态）。
+	// 生成代码按 argv[i] 线性绑定形参并自行管理引用计数，故保留数组签名；
+	// 「容器 <-> 数组」的还原在 BytecodeFunction::invoke 内完成。
+	PycpCompiledFunction native_fn_ = nullptr;
 
 	// 尾部默认参数值（Owned；顺序与形参声明一致：defaults_[0] 对应第一个
 	// 带默认值的形参，即 code 的 required 槽之后）。无默认值时为空。
@@ -168,12 +171,14 @@ public:
 
 	// native 模式构造（AOT 产物用，不依赖 VM）：
 	// 将 AOT 生成的 pycp_fn_N 作为 invoke 目标，self 即本对象（可经 get_captured 取捕获环境）。
-	BytecodeFunction(const std::string& name, PycpCFunction native_fn,
+	BytecodeFunction(const std::string& name, PycpCompiledFunction native_fn,
 	                 std::shared_ptr<BC::Environment> captured);
 
 	~BytecodeFunction() override;
 
-	Object* invoke(Object** argv, std::size_t argc) override;
+	// 容器形态调用：内部还原为 [self, args...] 数组后交给
+	// 解释器（vm->call）或 AOT 生成的函数体，行为与旧数组形态逐字一致。
+	Object* invoke(Object* self, FixedList* args, Map* kwargs) override;
 
 	// 捕获环境访问器（native 模式下 AOT 生成的 pycp_fn_N 经 self 读取）。
 	const std::shared_ptr<BC::Environment>& get_captured() const { return captured; }

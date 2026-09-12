@@ -1,0 +1,9 @@
+import io
+
+// 先准备文件，再触发类型错误：open 的 path 须为 String
+w = io.File("data.txt", "w")
+w.write("hi\n")
+w.close()
+
+f = io.File("data.txt")
+f.open(1)

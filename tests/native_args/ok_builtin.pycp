@@ -1,0 +1,38 @@
+import io
+import pycp
+
+// 构造器（必填 1 参，个数由框架校验）
+io.print(pycp.String(123))
+io.print(pycp.Integer("42"))
+io.print(pycp.Boolean(1))
+io.print(pycp.List([1, 2]))
+
+// 可选参数构造器：省略与显式两种形态
+io.print(pycp.FixedList())
+io.print(pycp.FixedList([1, 2]))
+io.print(pycp.Map())
+io.print(pycp.Map([["a", 1]]))
+
+// insp / typeof（必填 1 参）
+io.print(pycp.insp([1, 2]))
+io.print(pycp.typeof(1))
+
+// 实例方法（接收者经 self 注入，强类型签名）
+l = [1, 2]
+io.print(l.length())
+l.append(3)
+io.print(l)
+
+fl = pycp.FixedList([7, 8])
+io.print(fl.length())
+
+m = pycp.Map()
+m["k"] = 1
+io.print(m.length())
+io.print(m.keys())
+
+// Object 协议方法（__string__ 由 Object 方法表提供）
+o = pycp.Object()
+io.print(o.__string__())
+
+io.print("NATIVE OK")

@@ -2,21 +2,18 @@
 #define PYCP_METHOD_TABLE_HPP
 
 // =============================================================
-// 方法表（MethodTable）——内置类型「全部方法」的唯一权威来源
+// 原生函数签名与「方法表」最小类型头（内部头，非扩展作者入口）
 //
-// 每个内置类型（List / Map / String / Integer / Boolean / Object / File）
-// 提供一份静态方法表 Xxx_method_table()，列出其全部方法（公开方法 +
-// 魔术方法）。类型类的注册（register_object）与实例的 __inspect__
-// 均从该方法表派生，消除「注册处」与「__inspect__」双份硬编码不一致。
+// 扩展作者唯一需要 include 的是 PycpExtension.hpp；本头只提供三个
+// 互相独立的最小类型：
+//   PycpCFunction  —— 原生函数统一签名（容器形态，见下）
+//   MethodEntry    —— 方法表条目
+//   MethodTableFn  —— 方法表访问器
 //
-// 方法来源约定（MethodEntry.native）：
-//   - 非空：公开方法，直接引用类型 .cpp 内的实现函数（如 _list_length）。
-//   - 空  ：魔术方法，注册时经 GetMagicMethodFunction(name) 取得统一
-//           分派的 Function（类型无关，见 PycpMagic）。
-//
-// 本头文件独立自包含（仅依赖 Object 前向声明与 <vector>），以避免
-// PycpList.hpp / PycpMap.hpp include PycpFunction.hpp 时经
-// PycpFunction.hpp -> PycpABI.hpp -> PycpList.hpp 形成环形包含。
+// 之所以单独成文件：PycpList.hpp / PycpMap.hpp 等类型头需要
+// MethodEntry，而它们经 PycpABI.hpp 参与环形包含
+// （PycpFunction.hpp -> PycpABI.hpp -> PycpList.hpp -> ...）。
+// 本头只依赖 Object 前向声明与 <vector>，可安全地出现在任何一层。
 // =============================================================
 
 #include <cstddef>
@@ -25,14 +22,30 @@
 namespace Pycp {
 
 class Object;
+class FixedList;   // 位置参数容器（tuple 语义）
+class Map;         // 关键字参数字典
 
-// 统一原生函数调用签名（与 PycpFunction.hpp 的 PycpCFunction 一致）。
-// 相同类型的 using 别名允许重复声明，故此处前置定义与其它头文件不冲突。
-using PycpCFunction = Object* (*)(Object* self, Object** argv, std::size_t argc);
+// =============================================================
+// 原生函数统一调用签名（容器形态）
+//
+//   Object* (*)(Object* self, FixedList* args, Map* kwargs)
+//
+// 语义：
+//   self   : 接收者。实例方法 / 魔术方法由 BoundMethod 注入；模块级函数、
+//            自由函数与构造器为 nullptr（未绑定方法调用 `Class.m(obj, ...)`
+//            由 Function::invoke 的数组重载把首个实参提升为 self）。
+//   args   : 位置参数容器（FixedList，只读输入；不可变故可安全共享）。
+//   kwargs : 关键字参数字典（Map，只读输入；当前语言层无关键字实参
+//            来源，恒为 Extension::EmptyKwargs()）。
+//
+// 参数个数 / 名字的校验由 Pycp::Extension 的参数规范表在业务函数内完成
+// （见 PycpExtension.hpp），本层不做任何检查。
+// =============================================================
+using PycpCFunction = Object* (*)(Object* self, FixedList* args, Map* kwargs);
 
 // 单个方法描述。
 struct MethodEntry {
-	const char*        name;    // 方法名
+	const char*   name;    // 方法名
 	PycpCFunction native;  // 原生实现；nullptr 表示魔术方法（统一分派）
 };
 

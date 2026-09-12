@@ -10,6 +10,7 @@
 #include "PycpIterator.hpp"
 #include "PycpMagic.hpp"
 #include "PycpMap.hpp"
+#include "PycpExtension.hpp"   // Extension::CompileArgs / Arg 规范框架
 
 #include <sstream>
 
@@ -18,11 +19,11 @@ namespace Pycp {
 namespace {
 
 // length 方法的原生实现：返回 Integer(元素个数)。
-Object* _fixedlist_length(Object*, Object** argv, std::size_t argc) {
-	FixedList* l = static_cast<FixedList*>(argv[0]);
-	if (argc != 1) {
-		throw TypeError("length() expects no arguments.");
-	}
+// 容器形态：接收者经 self 注入，实参已收集为 FixedList；个数由规范表校验。
+Object* _fixedlist_length(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs("length", {});
+	spec.Bind(args, kwargs);
+	FixedList* l = static_cast<FixedList*>(self);
 	return Integer::FromLong(static_cast<long long>(l->size()));
 }
 

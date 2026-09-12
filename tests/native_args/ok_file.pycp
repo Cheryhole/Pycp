@@ -1,0 +1,40 @@
+import io
+
+// io.File 构造器：path 必填、mode 可选（省略时默认 "r"）
+f = io.File("data.txt", "w")
+f.write("hello\n")
+f.close()
+
+// mode 省略：走默认值 "r"
+g = io.File("data.txt")
+io.print(g.read())
+g.close()
+
+// read(n)：可选 size 参数（给出时读取指定字节数）
+h = io.File("data.txt")
+io.print(h.read(2))
+h.close()
+
+// readline / readlines
+r1 = io.File("data.txt")
+io.print(r1.readline())
+r1.close()
+
+r2 = io.File("data.txt")
+io.print(r2.readlines())
+r2.close()
+
+// open(path)：mode 省略走默认值 "r"
+k = io.File("data.txt")
+k.open("data.txt")
+io.print(k.read())
+k.close()
+
+// open(path, mode)：显式给出 mode
+k2 = io.File("data.txt")
+k2.open("data.txt", "r")
+io.print(k2.read())
+k2.close()
+io.print(k2.closed)
+
+io.print("FILE OK")

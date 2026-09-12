@@ -1,6 +1,7 @@
 #include "PycpBytecodeVM.hpp"
 #include "PycpABI.hpp"
 #include "PycpBoolean.hpp"
+#include "PycpFixedList.hpp"
 #include "PycpMap.hpp"
 
 namespace Pycp::BC {
@@ -943,7 +944,9 @@ Object* VM::execute(CodeObject* co,
 				Object* ret = nullptr;
 				if (callee->is_type("Function")) {
 					Function* fn = static_cast<Function*>(callee);
-					ret = fn->invoke(args.data(), nargs);
+					// 数组形态入口：负责打包容器，并在未绑定方法调用
+					// （Class.method(obj, ...)）时把首个实参提升为接收者。
+					ret = fn->invoke(nullptr, args.data(), nargs);
 				} else if (dynamic_cast<Class*>(callee) != nullptr) {
 					// 实例构造：默认创建 Instance（__init_defaults__ +
 					// __initialize__），内置类型类（BuiltinTypeClass）则直接
@@ -1166,9 +1169,9 @@ BytecodeFunction::BytecodeFunction(BC::VM* vm_, BC::Module* module_,
 }
 
 // native 模式构造：AOT 产物使用，不依赖 VM。native_fn 指向生成的
-// pycp_fn_N（签名恰为 PycpCFunction），invoke 直接调用它。
+// pycp_fn_N（数组形态 PycpCompiledFunction），invoke 还原数组后直接调用它。
 BytecodeFunction::BytecodeFunction(const std::string& name_,
-                                   PycpCFunction native_fn,
+                                   PycpCompiledFunction native_fn,
                                    std::shared_ptr<BC::Environment> captured_)
 	: Function(""), vm(nullptr), module(nullptr), code_idx(0),
 	  captured(std::move(captured_)), native_fn_(native_fn) {
@@ -1245,12 +1248,25 @@ private:
 
 } // anonymous namespace
 
-Object* BytecodeFunction::invoke(Object** argv, std::size_t argc) {
-	// 默认值补齐后的完整实参缓冲区。必须声明在【函数作用域】：
-	// 若声明在下面的 if 块内，出块即析构，而 argv = full.data() 之后仍要
-	// 在块外供 MethodCallContext / vm->call / 原生 stub 使用 —— 那会让
-	// argv 变成悬空指针，读到已释放的堆内存（表现为 self 偶发失效）。
+Object* BytecodeFunction::invoke(Object* self, FixedList* args, Map* kwargs) {
+	(void)kwargs;   // 语言层暂无关键字实参来源：字节码函数体的形参按位置线性绑定。
+
+	// 容器 -> 数组还原：生成的函数体（以及解释器 execute）按
+	// argv[0..] 线性绑定形参。方法调用时 argv[0] 恒为接收者（self），
+	// 与旧实现 BoundMethod 把接收者塞进 argv[0] 的形态逐字一致。
+	//
+	// 完整实参缓冲区必须声明在【函数作用域】：若声明在下面的 if 块内，
+	// 出块即析构，而 argv = full.data() 之后仍要在块外供
+	// MethodCallContext / vm->call / 原生 stub 使用 —— 那会让 argv 变成
+	// 悬空指针，读到已释放的堆内存（表现为 self 偶发失效）。
 	std::vector<Object*> full;
+	const std::size_t given = (args != nullptr) ? args->size() : 0;
+	full.reserve(given + 1);
+	if (self != nullptr) full.push_back(self);
+	for (std::size_t i = 0; i < given; ++i) full.push_back(args->at(i));
+	Object**    argv = full.empty() ? nullptr : full.data();
+	std::size_t argc = full.size();
+
 	// 默认值（少传尾部位置实参触发）补齐：本层是解释器（vm->call/execute）
 	// 与 AOT（native_fn_）的公共调用门，补齐后两侧始终收到完整参数，原有
 	// 参数线性绑定代码无需改动。
@@ -1269,7 +1285,6 @@ Object* BytecodeFunction::invoke(Object** argv, std::size_t argc) {
 			              std::to_string(argc));
 		}
 		// 已提供的实参可能已覆盖 default 段的前缀，缺的是 defaults_ 剩余项。
-		full.assign(argv, argv + argc);
 		const std::size_t have_defaults = argc - required;
 		full.reserve(fn_nparams_);
 		for (std::size_t i = have_defaults; i < defaults_.size(); ++i) {

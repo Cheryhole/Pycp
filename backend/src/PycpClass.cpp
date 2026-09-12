@@ -7,7 +7,8 @@
 #include "PycpFunction.hpp"
 #include "PycpFixedList.hpp"
 #include "PycpMap.hpp"
-#include "PycpModule.hpp"    // Module::get_namespace（RegisterTypeObject 用）
+#include "PycpModule.hpp"
+#include "PycpExtension.hpp"   // Extension::Invoke / EmptyArgs / EmptyKwargs
 
 #include <unordered_set>
 #include <unordered_map>
@@ -88,56 +89,8 @@ Class* LookupObjectClass() {
 	return g_object_class;
 }
 
-// =============================================================
-// 统一类型对象注册（方法表驱动，一次性完整注册）
-// =============================================================
-Class* RegisterTypeObject(Module* mod, const char* name,
-                          PycpCFunction ctor,
-                          PycpCFunction initialize,
-                          MethodTableFn table) {
-	if (mod == nullptr || name == nullptr) {
-		throw TypeError("RegisterTypeObject: module and name must be non-null.");
-	}
-
-	// 1) 创建类型对象（普通 Class 或内置类型类），Owned（refcount=1）。
-	Class* cls = (ctor != nullptr)
-		? static_cast<Class*>(New<BuiltinTypeClass>(name, ctor))
-		: static_cast<Class*>(New<Class>(name));
-
-	// 2) 放入宿主模块命名空间：转入命名空间持有（Incref 后释放本地 Owned）。
-	{
-		auto* ns = mod->get_namespace();
-		(*ns)[name] = cls;
-		Incref(cls);
-		Decref(cls);
-	}
-
-	// 3) 方法表：公开方法包装 Function，魔术方法经统一分派解析。
-	if (table != nullptr) {
-		for (const MethodEntry& e : table()) {
-			Function* fn = (e.native != nullptr)
-				? New<Function>(e.name, e.native)
-				: static_cast<Function*>(GetMagicMethodFunction(e.name));
-			if (fn == nullptr) continue;
-			fn->set_owner_class(cls);
-			cls->add_method(e.name, fn);
-			// 公开方法为新建的 Owned 引用（魔术方法来自常驻缓存，无需释放）。
-			if (e.native != nullptr) Decref(fn);
-		}
-	}
-
-	// 4) 对象自身的 __initialize__（随对象一次性注册）。
-	if (initialize != nullptr) {
-		Function* init = New<Function>("__initialize__", initialize);
-		init->set_owner_class(cls);
-		cls->add_method("__initialize__", init);
-		Decref(init); // add_method 已 Incref
-	}
-
-	// 5) 登记到运行时类型类注册表（typeof/__class__ 解析用）。
-	RegisterTypeClass(name, cls);
-	return cls;
-}
+// 统一类型对象注册（方法表驱动，一次性完整注册）已收敛为
+// Module::set_type（见 PycpModule.cpp）。
 
 // =============================================================
 // 当前 self 上下文（thread_local 栈）
@@ -385,6 +338,18 @@ void Class::foreach_ref(const std::function<void(Object*)>& visit) {
 }
 
 Object* Class::instantiate(Object** argv, std::size_t argc) {
+	// 数组兼容入口：打包位置实参后转调容器形态主入口。
+	const bool no_args = (argv == nullptr || argc == 0);
+	FixedList* args = no_args ? Extension::EmptyArgs() : Extension::MakeArgs(argv, argc);
+	Object* r = instantiate(args, Extension::EmptyKwargs());
+	if (!no_args) Decref(args);
+	return r;
+}
+
+Object* Class::instantiate(FixedList* args, Map* kwargs) {
+	if (args == nullptr) args = Extension::EmptyArgs();
+	if (kwargs == nullptr) kwargs = Extension::EmptyKwargs();
+
 	Instance* inst = Pycp::New<Instance>(this);
 
 	// 1) 应用成员初始值（若类定义了隐式 __init_defaults__）。
@@ -394,8 +359,8 @@ Object* Class::instantiate(Object** argv, std::size_t argc) {
 		++g_in_init_defaults;
 		try {
 			Object* self = inst;
-			Object* dv[1] = { self };
-			Object* r = init_defaults->invoke(dv, 1);
+			Object* r = init_defaults->invoke(self, Extension::EmptyArgs(),
+			                                 Extension::EmptyKwargs());
 			if (r != nullptr) Decref(r);
 		} catch (...) {
 			--g_in_init_defaults;
@@ -407,11 +372,7 @@ Object* Class::instantiate(Object** argv, std::size_t argc) {
 	// 2) 调用 __initialize__（若定义）。
 	Function* init = find_method(Pycp::MAGIC_INITIALIZE);
 	if (init != nullptr) {
-		std::vector<Object*> init_args;
-		init_args.reserve(argc + 1);
-		init_args.push_back(inst);
-		for (std::size_t i = 0; i < argc; ++i) init_args.push_back(argv[i]);
-		Object* r = init->invoke(init_args.data(), init_args.size());
+		Object* r = init->invoke(inst, args, kwargs);
 		if (r != nullptr) Decref(r);
 	}
 
@@ -425,21 +386,15 @@ Object* Class::instantiate(Object** argv, std::size_t argc) {
 BuiltinTypeClass::BuiltinTypeClass(const std::string& name, PycpCFunction ctor)
 	: Class(name), ctor_(ctor) {}
 
-Object* BuiltinTypeClass::instantiate(Object** argv, std::size_t argc) {
+Object* BuiltinTypeClass::instantiate(FixedList* args, Map* kwargs) {
 	if (ctor_ == nullptr) {
 		throw TypeError("builtin type '" + std::string(get_name()) + "' has no constructor.");
 	}
-	// 不在此强制 argc == 1：各类型构造器（ctor_）自行校验参数个数
-	// （如 io.File 支持 1 或 2 个参数 path [, mode]；Pycp.String/Integer/
-	// List 仍各自要求 argc == 1）。这样 BuiltinTypeClass 既能表达单参
-	// 类型构造，也能表达带可选参数的类型构造。
-	if (argv == nullptr) {
-		// 空参构造（如 Pycp.Map()）：提供占位数组，避免 ctor 访问空指针。
-		// 构造器仍按 argc == 0 分支自行处理。
-		static Object* empty[]{nullptr};
-		argv = empty;
-	}
-	return ctor_(nullptr, argv, argc);
+	// 不在此强制参数个数：各类型构造器（ctor_）内部经参数规范表自行校验
+	// （如 io.File 支持 1 或 2 个参数 path [, mode]）。
+	if (args == nullptr) args = Extension::EmptyArgs();
+	if (kwargs == nullptr) kwargs = Extension::EmptyKwargs();
+	return ctor_(nullptr, args, kwargs);
 }
 
 // =============================================================
@@ -484,10 +439,8 @@ Object* Instance::__get_attribute__(const std::string& name) {
 		if (hook != nullptr && internal_access_depth() == 0 &&
 		    (hook->get_owner_class() == nullptr ||
 		     std::string(hook->get_owner_class()->get_name()) != "Object")) {
-			Object* self = this;
 			Object* name_s = String::FromCString(name.c_str());
-			Object* argv[2] = { self, name_s };
-			Object* r = hook->invoke(argv, 2);
+			Object* r = Extension::Invoke(hook, this, { name_s });
 			Decref(name_s);
 			return r; // invoke 返回 Owned，直接转交
 		}
@@ -581,10 +534,8 @@ void Instance::__set_attribute__(const std::string& name, Object* value) {
 		if (hook != nullptr && internal_access_depth() == 0 &&
 		    (hook->get_owner_class() == nullptr ||
 		     std::string(hook->get_owner_class()->get_name()) != "Object")) {
-			Object* self = this;
 			Object* name_s = String::FromCString(name.c_str());
-			Object* argv[3] = { self, name_s, value };
-			Object* r = hook->invoke(argv, 3);
+			Object* r = Extension::Invoke(hook, this, { name_s, value });
 			Decref(name_s);
 			if (r != nullptr) Decref(r);
 			return; // 钩子接管赋值（存储/丢弃由钩子负责）
@@ -618,9 +569,7 @@ Object* Instance::__string__() {
 		if (fn != nullptr &&
 		    (fn->get_owner_class() == nullptr ||
 		     std::string(fn->get_owner_class()->get_name()) != "Object")) {
-			Object* self = this;
-			Object* argv[1] = { self };
-			return fn->invoke(argv, 1);
+			return Extension::Invoke(fn, this, {});
 		}
 	}
 	// 默认表示："<ClassName instance at 0xADDR>"
@@ -636,9 +585,7 @@ Object* Instance::__integer__() {
 	if (fn == nullptr) {
 		throw TypeError("class '" + std::string(cls_->get_name()) + "' does not define '__integer__'");
 	}
-	Object* self = this;
-	Object* argv[1] = { self };
-	return fn->invoke(argv, 1);
+	return Extension::Invoke(fn, this, {});
 }
 
 Object* Instance::dispatch_magic(const std::string& name, Object* other) {
@@ -649,13 +596,10 @@ Object* Instance::dispatch_magic(const std::string& name, Object* other) {
 	if (fn == nullptr) {
 		throw TypeError("class '" + std::string(cls_->get_name()) + "' does not define '" + name + "'");
 	}
-	Object* self = this;
 	if (other == nullptr) {
-		Object* argv[1] = { self };
-		return fn->invoke(argv, 1);
+		return Extension::Invoke(fn, this, {});
 	}
-	Object* argv[2] = { self, other };
-	return fn->invoke(argv, 2);
+	return Extension::Invoke(fn, this, { other });
 }
 
 Object* Instance::__negation__() {
@@ -716,9 +660,7 @@ Object* Instance::__get_item__(Object* key) {
 		throw TypeError("class '" + std::string(cls_->get_name()) +
 		                "' does not define '__get_item__'");
 	}
-	Object* self = this;
-	Object* argv[2] = { self, key };
-	return fn->invoke(argv, 2);
+	return Extension::Invoke(fn, this, { key });
 }
 
 Object* Instance::__set_item__(Object* key, Object* value) {
@@ -731,9 +673,7 @@ Object* Instance::__set_item__(Object* key, Object* value) {
 		throw TypeError("class '" + std::string(cls_->get_name()) +
 		                "' does not define '__set_item__'");
 	}
-	Object* self = this;
-	Object* argv[3] = { self, key, value };
-	return fn->invoke(argv, 3);
+	return Extension::Invoke(fn, this, { key, value });
 }
 
 Object* Instance::__list__() {
@@ -746,9 +686,7 @@ Object* Instance::__list__() {
 		throw TypeError("class '" + std::string(cls_->get_name()) +
 		                "' does not define '__list__'");
 	}
-	Object* self = this;
-	Object* argv[1] = { self };
-	return fn->invoke(argv, 1);
+	return Extension::Invoke(fn, this, {});
 }
 
 std::vector<std::pair<std::string, Object*>> Instance::member_pairs() const {
@@ -800,10 +738,8 @@ void Instance::__delete_attribute__(const std::string& name) {
 		if (hook != nullptr &&
 		    (hook->get_owner_class() == nullptr ||
 		     std::string(hook->get_owner_class()->get_name()) != "Object")) {
-			Object* self = this;
 			Object* name_s = String::FromCString(name.c_str());
-			Object* argv[2] = { self, name_s };
-			Object* r = hook->invoke(argv, 2);
+			Object* r = Extension::Invoke(hook, this, { name_s });
 			Decref(name_s);
 			if (r != nullptr) Decref(r);
 			return;
@@ -825,9 +761,7 @@ Object* Instance::__delete__() {
 		if (fn != nullptr &&
 		    (fn->get_owner_class() == nullptr ||
 		     std::string(fn->get_owner_class()->get_name()) != "Object")) {
-			Object* self = this;
-			Object* argv[1] = { self };
-			return fn->invoke(argv, 1);
+			return Extension::Invoke(fn, this, {});
 		}
 	}
 	return Object::__delete__();
@@ -840,9 +774,7 @@ Object* Instance::__delete_item__(Object* key) {
 		if (fn != nullptr &&
 		    (fn->get_owner_class() == nullptr ||
 		     std::string(fn->get_owner_class()->get_name()) != "Object")) {
-			Object* self = this;
-			Object* argv[2] = { self, key };
-			return fn->invoke(argv, 2);
+			return Extension::Invoke(fn, this, { key });
 		}
 	}
 	return Object::__delete_item__(key);
@@ -877,16 +809,12 @@ BoundMethod::~BoundMethod() {
 	method_ = nullptr;
 }
 
-Object* BoundMethod::invoke(Object** argv, std::size_t argc) {
+Object* BoundMethod::invoke(Object* self, FixedList* args, Map* kwargs) {
+	(void)self;   // 绑定方法：接收者恒为构造时绑定的 instance_
 	if (method_ == nullptr) {
 		throw TypeError("bound method has no underlying method.");
 	}
-	// 构造实参数组：self（实例）+ 用户实参。
-	std::vector<Object*> args;
-	args.reserve(argc + 1);
-	args.push_back(instance_);
-	for (std::size_t i = 0; i < argc; ++i) args.push_back(argv[i]);
-	return method_->invoke(args.data(), args.size());
+	return method_->invoke(instance_, args, kwargs);
 }
 
 void BoundMethod::foreach_ref(const std::function<void(Object*)>& visit) {

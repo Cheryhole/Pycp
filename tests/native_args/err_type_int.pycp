@@ -1,0 +1,9 @@
+import io
+
+// 先准备文件，再触发类型错误：read 的可选 size 须为 Integer
+w = io.File("data.txt", "w")
+w.write("hi\n")
+w.close()
+
+f = io.File("data.txt")
+f.read("x")

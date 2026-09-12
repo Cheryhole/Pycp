@@ -2,6 +2,7 @@
 #include "PycpBytecode.hpp"   // Environment_KeepNamesOfCodeObject 需读 CodeObject::free_names
 #include "PycpClass.hpp"
 #include "PycpFunction.hpp"
+#include "PycpExtension.hpp"  // Extension::Invoke（装饰器调用）
 #include "PycpNativeExt.hpp"
 #include <map>
 #include <unordered_map>
@@ -113,10 +114,9 @@ Object* ApplyDecorator(Object* deco, Object* target,
 	if (!deco->is_type("Function")) {
 		throw TypeError(file, line, "decorator is not callable");
 	}
-	Object* argv[1] = { target };
 	Function* fn = static_cast<Function*>(deco);
 	// 装饰器返回 Owned；调用方负责接管或释放。
-	return fn->invoke(argv, 1);
+	return Extension::Invoke(fn, nullptr, { target });
 }
 
 bool ApplyDecoratorVisibility(Object* deco,
@@ -313,7 +313,9 @@ Object* Call(Object* callable, Object** argv, std::size_t argc){
 		throw TypeError("Object is not callable.");
 	}
 	Function* fn = static_cast<Function*>(callable);
-	return fn->invoke(argv, argc);
+	// 数组兼容入口：打包位置实参后转调容器形态（未绑定方法调用由该重载
+	// 自行把首个实参提升为接收者）。
+	return fn->invoke(nullptr, argv, argc);
 }
 
 BC::Environment* Environment_New(){

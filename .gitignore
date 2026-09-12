@@ -1,5 +1,6 @@
 .vscode/
 .codebuddy/
+.ignored/
 build/
 bin/
 

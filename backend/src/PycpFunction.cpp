@@ -1,4 +1,7 @@
 #include "PycpFunction.hpp"
+#include "PycpFixedList.hpp"   // FixedList：_builtin_print 的可变参数容器
+#include "PycpMap.hpp"         // Map：关键字参数容器
+#include "PycpExtension.hpp"   // Extension::MakeArgs / EmptyArgs / EmptyKwargs
 #include "PycpMagic.hpp"   // BuildNameList / __call__ 等魔术方法名
 
 namespace Pycp {
@@ -12,13 +15,14 @@ static std::string ptr_address(const void* p) {
 
 Function* BuiltinFunction::print = nullptr;
 
-Object* _builtin_print([[maybe_unused]] Object* self, Object** argv, std::size_t argc){
-	// 支持多参数：以空格分隔打印全部实参，末尾换行
-	if (argv != nullptr){
-		for (std::size_t i = 0; i < argc; ++i){
-			if (i > 0) std::cout << " ";
-			std::cout << AsString(argv[i]);
-		}
+// 支持多参数：以空格分隔打印全部实参，末尾换行。
+// 容器形态：全部位置实参已收集为 FixedList，本函数只负责遍历打印。
+Object* _builtin_print([[maybe_unused]] Object* self,
+                       FixedList* args,
+                       [[maybe_unused]] Map* kwargs){
+	for (std::size_t i = 0; i < args->size(); ++i){
+		if (i > 0) std::cout << " ";
+		std::cout << AsString(args->at(i));
 	}
 	std::cout << std::endl;
 	return None::instance;
@@ -58,20 +62,48 @@ Object* Function::__inspect__() {
 	return BuildNameList(names);
 }
 
-Object* Function::invoke(Object** argv, std::size_t argc){
+Object* Function::invoke(Object* self, FixedList* args, Map* kwargs){
 	if (this->native != nullptr){
-		return this->native(this, argv, argc);
+		return this->native(self, args, kwargs);
 	}
 	return None::instance;
 }
 
-// 兼容旧 tree-walking 解释器：单参数形态转调统一入口
+// 数组形态便捷重载：打包位置实参为 FixedList 后转调容器形态入口。
+// 「未绑定方法调用」（Class.method(obj, ...)）：self 缺省时把首个实参提升为
+// 接收者——语义与旧实现中 BoundMethod 之外的手工 argv[0] 约定一致。
+Object* Function::invoke(Object* self, Object** argv, std::size_t argc){
+	const bool no_args = (argv == nullptr || argc == 0);
+	FixedList* args = no_args ? Extension::EmptyArgs()
+	                          : Extension::MakeArgs(argv, argc);
+	FixedList* tail = nullptr;
+
+	if (self == nullptr && owner_class_ != nullptr && args->size() > 0) {
+		self = args->at(0);
+		std::vector<Object*> rest;
+		rest.reserve(args->size() - 1);
+		for (std::size_t i = 1; i < args->size(); ++i) {
+			Incref(args->at(i));   // FixedList 接管引用（不 Incref）
+			rest.push_back(args->at(i));
+		}
+		tail = FixedList::New(rest);
+	}
+
+	Object* result = invoke(self, tail != nullptr ? tail : args,
+	                        Extension::EmptyKwargs());
+	if (tail != nullptr) Decref(tail);
+	if (!no_args) Decref(args);
+	return result;
+}
+
+// 兼容旧 tree-walking 解释器：单参数形态转调统一入口（无实参调用）。
 Object* Function::__call__([[maybe_unused]] Object* args){
-	return this->invoke(nullptr, 0);
+	return this->invoke(nullptr, static_cast<Object**>(nullptr), 0);
 }
 
 void Function::Initialize(){
-	BuiltinFunction::print = New<Function>(BUILTIN_PRINT, _builtin_print);
+	// 内建打印：容器形态原生函数，实参已在调用门收集完毕。
+	BuiltinFunction::print = New<Function>(BUILTIN_PRINT, &_builtin_print);
 	GC_AddRoot(BuiltinFunction::print);
 }
 
