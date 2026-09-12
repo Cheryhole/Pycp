@@ -1,18 +1,18 @@
 #include "pycp_stdlib.hpp"
 #include "PycpModule.hpp"   // runtime 的 Module 完整定义
 #include "PycpFunction.hpp"
-#include "PycpString.hpp"
-#include "PycpInteger.hpp"
+#include "PycpString.hpp"    // String_method_table
+#include "PycpInteger.hpp"   // Integer_method_table（Boolean 复用）
 #include "PycpBoolean.hpp"
-#include "PycpList.hpp"      // List_length_fn / List_append_fn
-#include "PycpMap.hpp"       // Map_length_fn
+#include "PycpList.hpp"      // List_method_table
+#include "PycpMap.hpp"       // Map_method_table
+#include "PycpMethodTable.hpp" // MethodEntry / MethodTableFn（RegisterTypeObject 用）
 #include "PycpNone.hpp"
 #include "PycpGC.hpp"
 #include "PycpException.hpp"
 #include "PycpConfig.hpp"
 #include "PycpABI.hpp"
-#include "PycpClass.hpp"
-#include "PycpMagic.hpp"     // GetMagicMethodFunction
+#include "PycpClass.hpp"     // RegisterTypeObject / RegisterObjectClass
 #include "PycpNativeExt.hpp" // SetArgv/GetArgv：构建 pycp.argv 的宿主注入来源
 #include "PycpExt.h"         // PYCP_EXPORT_MODULE（Windows 下带 dllexport）
 
@@ -199,29 +199,6 @@ Object* _builtin_typeof(Object*, Object** argv, std::size_t argc) {
 	return c;
 }
 
-// 将类对象以指定名字放入模块命名空间（构造 BuiltinTypeClass ->
-// Incref 进 map -> 释放 Owned）。返回 cls 以便调用方 add_method 注册
-// 类型方法，使 Pycp.X.__inspect__() 能枚举到（而非空列表）。
-BuiltinTypeClass* set_type_class(Module* mod, const char* name, PycpNativeFunction ctor) {
-	auto* ns = mod->get_namespace();
-	BuiltinTypeClass* cls = New<BuiltinTypeClass>(name, ctor);
-	(*ns)[name] = cls;
-	Incref(cls);
-	Decref(cls); // namespace 持有
-	return cls;
-}
-
-// 把一组魔术方法名注册进类型类 methods_（复用 PycpMagic 维护的缓存
-// Function，与实例 __get_attribute__ 回退同源）。未识别的魔方法名跳过。
-void add_magic_methods(BuiltinTypeClass* cls, const std::vector<std::string>& names) {
-	for (const auto& n : names) {
-		Object* m = Pycp::GetMagicMethodFunction(n);
-		if (m != nullptr) {
-			cls->add_method(n, static_cast<Function*>(m));
-		}
-	}
-}
-
 // =============================================================
 // private / public：可见性装饰器函数
 //
@@ -317,101 +294,43 @@ Object* _object_string(Object* /*fn*/, Object** argv, std::size_t argc) {
 	return argv[0]->__string__();
 }
 
-// 将普通类对象放入命名空间，并附带默认 __initialize__（用于 Pycp.Object）。
-Class* set_object_class(Module* mod, const char* name) {
-	auto* ns = mod->get_namespace();
-	Class* cls = New<Class>(name);
-	// 默认 __initialize__：空实现，供子类 super().__initialize__(self) 调用。
-	Function* init = New<Function>("__initialize__", _object_init);
-	cls->add_method("__initialize__", init);
-	Decref(init); // add_method 已 Incref
-	// Object 协议方法：__get_attribute__ / __set_attribute__ / __string__。
-	// 作为可被子类 override 的属性访问/赋值钩子与字符串化默认实现。
-	{
-		Function* m1 = New<Function>("__get_attribute__", _object_get_attribute);
-		cls->add_method("__get_attribute__", m1);
-		m1->set_owner_class(cls);
-		Decref(m1);
-		Function* m2 = New<Function>("__set_attribute__", _object_set_attribute);
-		cls->add_method("__set_attribute__", m2);
-		m2->set_owner_class(cls);
-		Decref(m2);
-		Function* m3 = New<Function>("__string__", _object_string);
-		cls->add_method("__string__", m3);
-		m3->set_owner_class(cls);
-		Decref(m3);
-	}
-	(*ns)[name] = cls;
-	Incref(cls);
-	Decref(cls); // namespace 持有
-	return cls;
+// Pycp.Object 的方法表（协议方法：属性访问/赋值钩子、字符串化）。
+// 对象自身的 __initialize__ 经 RegisterTypeObject 的 initialize 参数注册，
+// 与其它方法一并随对象一次性完成。
+const std::vector<MethodEntry>& Object_method_table() {
+	static const std::vector<MethodEntry> table = {
+		{"__get_attribute__", _object_get_attribute},
+		{"__set_attribute__", _object_set_attribute},
+		{"__string__",        _object_string},
+	};
+	return table;
 }
 
 Module* make_pycp_module() {
 	Module* mod = Module::New(MODULE_NAME);
 
-	// 内置类型类：Pycp.String(x) / Pycp.Integer(x)。
-	// 调用时走类实例化路径（BuiltinTypeClass::instantiate），把参数
-	// 传给构造回调，返回内置 String / Integer 对象。
-	// 注册类型方法，使 Pycp.X.__inspect__() 枚举到（与实例 __inspect__ 一致）。
-	BuiltinTypeClass* string_cls = set_type_class(mod, "String", _builtin_string_ctor);
-	BuiltinTypeClass* integer_cls = set_type_class(mod, "Integer", _builtin_integer_ctor);
-	BuiltinTypeClass* list_cls    = set_type_class(mod, "List",   _builtin_list_ctor);
-	BuiltinTypeClass* boolean_cls = set_type_class(mod, "Boolean", _builtin_boolean_ctor);
-	BuiltinTypeClass* map_cls     = set_type_class(mod, "Map",    _builtin_map_ctor);
+	// 内置类型类：一次性完整注册（方法表驱动，含类型类登记）。
+	// 调用时走类实例化路径（BuiltinTypeClass::instantiate），把参数传给
+	// 构造回调并返回内置对象（语义对齐 Python 的 str(x)/int(x)/list(x) 等）。
+	// 方法表为各类型「全部方法」的唯一权威来源，注册与 __inspect__ 同源。
+	RegisterTypeObject(mod, "String",  _builtin_string_ctor,  /*initialize=*/nullptr,
+	                String_method_table);
+	RegisterTypeObject(mod, "Integer", _builtin_integer_ctor, /*initialize=*/nullptr,
+	                Integer_method_table);
+	// Boolean 继承 Integer，复用同一方法表。
+	RegisterTypeObject(mod, "Boolean", _builtin_boolean_ctor, /*initialize=*/nullptr,
+	                Integer_method_table);
+	RegisterTypeObject(mod, "List",    _builtin_list_ctor,    /*initialize=*/nullptr,
+	                List_method_table);
+	RegisterTypeObject(mod, "Map",     _builtin_map_ctor,     /*initialize=*/nullptr,
+	                Map_method_table);
 
-	// 登记到运行时「类型类」注册表：使 String/Integer/... 值对象经
-	// typeof/__class__ 解析到对应类型类（pycp.String 等）。
-	RegisterTypeClass("String", string_cls);
-	RegisterTypeClass("Integer", integer_cls);
-	RegisterTypeClass("Boolean", boolean_cls);
-	RegisterTypeClass("List", list_cls);
-	RegisterTypeClass("Map", map_cls);
-
-	// List 的公开方法（真实实例方法）：length / append。
-	list_cls->add_method("length", New<Function>("length", List_length_fn()));
-	list_cls->add_method("append", New<Function>("append", List_append_fn()));
-	// List 魔术方法。
-	add_magic_methods(list_cls, {
-		"__iterator__", "__list__", "__addition__", "__string__",
-		"__get_item__", "__set_item__",
-	});
-
-	// Map 的公开方法（真实实例方法）：length / keys。
-	map_cls->add_method("length", New<Function>("length", Map_length_fn()));
-	map_cls->add_method("keys",   New<Function>("keys",   Map_keys_fn()));
-	// Map 魔术方法（Map 本身不可哈希，故不注册 __hash__）。
-	add_magic_methods(map_cls, {
-		"__map__", "__boolean__", "__string__",
-		"__get_item__", "__set_item__", "__delete_item__",
-	});
-
-	// String 魔术方法（无真实公开非魔术方法）。
-	add_magic_methods(string_cls, {
-		"__integer__", "__string__", "__addition__", "__multiplication__",
-		"__get_item__", "__list__", "__iterator__",
-	});
-
-	// Integer 魔术方法（算术 / 比较 / 一元）。
-	add_magic_methods(integer_cls, {
-		"__integer__", "__string__", "__negation__", "__addition__",
-		"__subtraction__", "__multiplication__", "__division__", "__power__",
-		"__less_than__", "__less_equal__", "__equal__", "__not_equal__",
-		"__greater_than__", "__greater_equal__",
-	});
-
-	// Boolean 魔术方法（继承 Integer 算术/比较，复用同一集合）。
-	add_magic_methods(boolean_cls, {
-		"__integer__", "__string__", "__negation__", "__addition__",
-		"__subtraction__", "__multiplication__", "__division__", "__power__",
-		"__less_than__", "__less_equal__", "__equal__", "__not_equal__",
-		"__greater_than__", "__greater_equal__",
-	});
-
-	// Pycp.Object 基类：类似 Python 的 object，含默认空 __initialize__
-	// （供子类 super().__initialize__(self) 调用）。不自动继承；
-	// 实例化走默认 instantiate（返回 Instance）。
-	Class* object_cls = set_object_class(mod, "Object");
+	// Pycp.Object 基类：类似 Python 的 object。对象自身的 __initialize__
+	// （空实现）随对象一次性注册，供子类 super().__initialize__(self) 调用；
+	// 协议方法（__get_attribute__ 等）由 Object_method_table 提供。
+	// 不自动继承，实例化走默认 instantiate（返回 Instance）。
+	Class* object_cls = RegisterTypeObject(mod, "Object", /*ctor=*/nullptr,
+	                                    _object_init, Object_method_table);
 	RegisterObjectClass(object_cls); // 类对象的 typeof/__class__ 返回它
 
 	// 可见性装饰器函数：@private / @public（与 classtools 库功能一致）。

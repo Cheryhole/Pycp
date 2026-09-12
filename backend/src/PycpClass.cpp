@@ -4,7 +4,9 @@
 #include "PycpString.hpp"
 #include "PycpConfig.hpp"
 #include "PycpMagic.hpp"
+#include "PycpFunction.hpp"
 #include "PycpMap.hpp"
+#include "PycpModule.hpp"    // Module::get_namespace（RegisterTypeObject 用）
 
 #include <unordered_set>
 #include <unordered_map>
@@ -83,6 +85,57 @@ void RegisterObjectClass(Class* cls) {
 Class* LookupObjectClass() {
 	std::lock_guard<std::mutex> lock(g_type_reg_mutex);
 	return g_object_class;
+}
+
+// =============================================================
+// 统一类型对象注册（方法表驱动，一次性完整注册）
+// =============================================================
+Class* RegisterTypeObject(Module* mod, const char* name,
+                          PycpNativeFunction ctor,
+                          PycpNativeFunction initialize,
+                          MethodTableFn table) {
+	if (mod == nullptr || name == nullptr) {
+		throw TypeError("RegisterTypeObject: module and name must be non-null.");
+	}
+
+	// 1) 创建类型对象（普通 Class 或内置类型类），Owned（refcount=1）。
+	Class* cls = (ctor != nullptr)
+		? static_cast<Class*>(New<BuiltinTypeClass>(name, ctor))
+		: static_cast<Class*>(New<Class>(name));
+
+	// 2) 放入宿主模块命名空间：转入命名空间持有（Incref 后释放本地 Owned）。
+	{
+		auto* ns = mod->get_namespace();
+		(*ns)[name] = cls;
+		Incref(cls);
+		Decref(cls);
+	}
+
+	// 3) 方法表：公开方法包装 Function，魔术方法经统一分派解析。
+	if (table != nullptr) {
+		for (const MethodEntry& e : table()) {
+			Function* fn = (e.native != nullptr)
+				? New<Function>(e.name, e.native)
+				: static_cast<Function*>(GetMagicMethodFunction(e.name));
+			if (fn == nullptr) continue;
+			fn->set_owner_class(cls);
+			cls->add_method(e.name, fn);
+			// 公开方法为新建的 Owned 引用（魔术方法来自常驻缓存，无需释放）。
+			if (e.native != nullptr) Decref(fn);
+		}
+	}
+
+	// 4) 对象自身的 __initialize__（随对象一次性注册）。
+	if (initialize != nullptr) {
+		Function* init = New<Function>("__initialize__", initialize);
+		init->set_owner_class(cls);
+		cls->add_method("__initialize__", init);
+		Decref(init); // add_method 已 Incref
+	}
+
+	// 5) 登记到运行时类型类注册表（typeof/__class__ 解析用）。
+	RegisterTypeClass(name, cls);
+	return cls;
 }
 
 // =============================================================

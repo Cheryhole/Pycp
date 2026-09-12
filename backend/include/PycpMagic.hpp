@@ -38,6 +38,14 @@ bool IsMagicMethodName(const std::string& name);
 // 供各类型的 __inspect__ 使用（返回 Owned Object*，即 List）。
 Object* BuildNameList(const std::vector<std::string>& names);
 
+// 向名称列表 lst（实为 List*）追加 name（若尚未存在），供各类型
+// __inspect__ 去重枚举方法名/属性名，避免重复项。
+void AppendUniqueName(Object* lst, const std::string& name);
+
+// 所有内置类型通用的枚举属性名（非方法，仅供 __inspect__ 枚举，
+// 如 __class__）。各类型 __inspect__ 在方法表之外补充这些名字。
+const std::vector<std::string>& CommonInspectNames();
+
 // 处理 __name__ 属性访问：返回该对象类型名（type_name()）对应的
 // String。供各类型的 __get_attribute__ 在判别 name == "__name__" 时
 // 调用：GetNameAttribute(receiver) 返回 receiver->type_name() 的 String

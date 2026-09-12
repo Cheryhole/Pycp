@@ -133,6 +133,27 @@ Object* BuildNameList(const std::vector<std::string>& names) {
 	return lst;
 }
 
+void AppendUniqueName(Object* lst, const std::string& name) {
+	if (lst == nullptr || !lst->is_type("List")) return;
+	List* l = static_cast<List*>(lst);
+	for (std::size_t i = 0; i < l->size(); ++i) {
+		Object* elem = l->at(i);
+		if (elem != nullptr && elem->is_type("String") &&
+		    static_cast<String*>(elem)->get_value() == name) {
+			return; // 已存在，跳过
+		}
+	}
+	l->append(String::FromCString(name.c_str()));
+}
+
+const std::vector<std::string>& CommonInspectNames() {
+	// 仅含「非方法」的通用属性名；方法名由各类型方法表提供并已枚举。
+	static const std::vector<std::string> names = {
+		"__class__",
+	};
+	return names;
+}
+
 Object* GetNameAttribute(Object* receiver) {
 	// 属性访问 __name__：返回该对象类型名（type_name()）对应的 String。
 	// 返回 Owned 引用（新创建 String），由调用方管理。

@@ -38,9 +38,30 @@ Object* _list_append(Object*, Object** argv, std::size_t argc) {
 
 } // anonymous namespace
 
-// ---- 实例方法函数访问器：暴露给 stdlib/Pycp 注册 List 类型类方法 ----
-PycpNativeFunction List_length_fn() { return _list_length; }
-PycpNativeFunction List_append_fn() { return _list_append; }
+// List 全部方法的方法表（公开方法 length/append + 全部魔术方法）。
+// 方法名指向本文件 anonymous namespace 内的实现（公开方法）或由
+// GetMagicMethodFunction 统一分派（魔术方法，native 为 nullptr）。
+// 类型类注册（register_object）与 __inspect__ 均以此表为唯一权威来源。
+const std::vector<MethodEntry>& List_method_table() {
+	static const std::vector<MethodEntry> table = {
+		{"length",               _list_length},
+		{"append",               _list_append},
+		{"__iterator__",         nullptr},
+		{"__list__",             nullptr},
+		{"__boolean__",          nullptr},
+		{"__addition__",         nullptr},
+		{"__string__",           nullptr},
+		{"__get_item__",         nullptr},
+		{"__set_item__",         nullptr},
+		{"__delete_item__",      nullptr},
+		{"__map__",              nullptr},
+		{"__inspect__",          nullptr},
+		{"__get_attribute__",    nullptr},
+		{"__set_attribute__",    nullptr},
+		{"__delete_attribute__", nullptr},
+	};
+	return table;
+}
 
 List* List::New() {
 	return Pycp::New<List>();
@@ -131,27 +152,14 @@ Object* List::__iterator__() {
 }
 
 Object* List::__inspect__() {
-	// 先收集基类 members_ 中的 key，再添加 list 特有的方法名和魔术方法名。
+	// 先收集基类 members_ 中的 key，再从方法表派生全部方法名，
+	// 最后补充通用属性名（__class__）。方法表是唯一权威来源。
 	List* lst = static_cast<List*>(Object::__inspect__());
-	std::vector<std::string> extra = {
-		"length", "append",
-		"__iterator__", "__list__", "__boolean__", "__addition__", "__string__",
-		"__get_item__", "__set_item__", "__delete_item__",
-		"__get_attribute__", "__set_attribute__", "__delete_attribute__", "__inspect__",
-		"__class__", "__map__",
-	};
-	for (const auto& n : extra) {
-		// 避免重复（若已在 members_ 中则跳过）。
-		bool found = false;
-		for (std::size_t i = 0; i < lst->size(); ++i) {
-			Object* elem = lst->at(i);
-			if (elem != nullptr && elem->is_type("String") &&
-			    static_cast<String*>(elem)->get_value() == n) {
-				found = true;
-				break;
-			}
-		}
-		if (!found) lst->append(String::FromCString(n.c_str()));
+	for (const MethodEntry& e : List_method_table()) {
+		AppendUniqueName(lst, e.name);
+	}
+	for (const std::string& n : CommonInspectNames()) {
+		AppendUniqueName(lst, n);
 	}
 	return lst;
 }

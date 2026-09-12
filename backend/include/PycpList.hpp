@@ -17,17 +17,12 @@
 // =============================================================
 
 #include "PycpObject.hpp"
+#include "PycpMethodTable.hpp"   // MethodEntry / MethodTableFn / PycpNativeFunction
 
 #include <string>
 #include <vector>
 
 namespace Pycp {
-
-// 统一原生函数调用签名（与 PycpFunction.hpp 中的 PycpNativeFunction 一致）。
-// 此处前置定义别名，避免 PycpList.hpp include PycpFunction.hpp 时与
-// PycpFunction.hpp -> PycpABI.hpp -> PycpList.hpp 形成环形包含导致
-// PycpNativeFunction 未定义。
-using PycpNativeFunction = Object* (*)(Object* self, Object** argv, std::size_t argc);
 
 class Function;
 
@@ -72,11 +67,10 @@ public:
 	void foreach_ref(const std::function<void(Object*)>& visit) override;
 };
 
-// List 实例方法的原生实现函数访问器（PycpNativeFunction 签名），供
-// stdlib/Pycp 把 length/append 注册进 List 类型类 BuiltinTypeClass 的
-// methods_，使 Pycp.List.__inspect__() 返回方法名。argv[0] 为 self（List*）。
-PycpNativeFunction List_length_fn();
-PycpNativeFunction List_append_fn();
+// List 全部方法（公开方法 length/append + 全部魔术方法）的唯一权威清单。
+// 类型类注册（register_object）与实例 __inspect__ 均从它派生，消除
+// 「注册处」与「__inspect__」双份维护导致的方法清单不一致。
+const std::vector<MethodEntry>& List_method_table();
 
 } // namespace Pycp
 

@@ -441,13 +441,28 @@ namespace {
     }
 } // anonymous namespace
 
-// ---- 实例方法函数访问器：暴露给 io.cpp 注册 File 类型类方法 ----
-PycpNativeFunction File_write_fn()   { return _file_write; }
-PycpNativeFunction File_read_fn()    { return _file_read; }
-PycpNativeFunction File_readline_fn(){ return _file_readline; }
-PycpNativeFunction File_readlines_fn(){ return _file_readlines; }
-PycpNativeFunction File_close_fn()   { return _file_close; }
-PycpNativeFunction File_open_fn()    { return _file_open; }
+// File 全部方法的方法表（公开方法 write/read/readline/readlines/close/open +
+// 全部魔术方法）。公开方法指向本文件 anonymous namespace 内的实现；魔术方法
+// native 为 nullptr，注册时经 GetMagicMethodFunction 统一分派。io 的类型类
+// 注册（RegisterTypeObject）与实例 __inspect__ 均以此表为唯一权威来源。
+const std::vector<MethodEntry>& File_method_table() {
+	static const std::vector<MethodEntry> table = {
+		{"write",                _file_write},
+		{"read",                 _file_read},
+		{"readline",             _file_readline},
+		{"readlines",            _file_readlines},
+		{"close",                _file_close},
+		{"open",                 _file_open},
+		{"__string__",           nullptr},
+		{"__inspect__",          nullptr},
+		{"__get_attribute__",    nullptr},
+		{"__set_attribute__",    nullptr},
+		{"__delete_attribute__", nullptr},
+		{"__map__",              nullptr},
+		{"__boolean__",          nullptr},
+	};
+	return table;
+}
 
 Object* File::__get_attribute__(const std::string& attr_name) {
     // 0) 只读 __class__：返回 File 类型类对象（Borrowed，注册表持有）。
@@ -534,14 +549,19 @@ Object* File::__get_attribute__(const std::string& attr_name) {
 }
 
 Object* File::__inspect__() {
-	// File 对象的成员名：只读属性 + 公开方法（含魔术方法）。
-	std::vector<std::string> names = {
-		"closed", "name", "mode",
-		"write", "read", "readline", "readlines", "close", "open",
-		"__string__", "__inspect__", "__get_attribute__", "__set_attribute__",
-		"__delete_attribute__", "__class__", "__map__", "__boolean__"
-	};
-	return BuildNameList(names);
+	// 只读属性（closed/name/mode）+ 方法表全部方法名 + 通用属性名（__class__）。
+	List* lst = Pycp::New<List>();
+	const char* attrs[] = {"closed", "name", "mode"};
+	for (const char* a : attrs) {
+		AppendUniqueName(lst, a);
+	}
+	for (const MethodEntry& e : File_method_table()) {
+		AppendUniqueName(lst, e.name);
+	}
+	for (const std::string& n : CommonInspectNames()) {
+		AppendUniqueName(lst, n);
+	}
+	return lst;
 }
 
 Object* File::__string__() {

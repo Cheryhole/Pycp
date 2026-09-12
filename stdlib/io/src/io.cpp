@@ -1,8 +1,7 @@
 #include "io.hpp"
 #include "PycpFile.hpp"
 #include "PycpModule.hpp"   // runtime 的 Module 完整定义
-#include "PycpClass.hpp"    // BuiltinTypeClass / Class::add_method
-#include "PycpMagic.hpp"    // GetMagicMethodFunction
+#include "PycpClass.hpp"    // RegisterTypeObject（类型对象统一注册）
 #include "PycpFunction.hpp"
 #include "PycpString.hpp"
 #include "PycpInteger.hpp"
@@ -131,32 +130,11 @@ Module* make_io_module() {
 	// 注册为 BuiltinTypeClass（而非普通 Function），使 io.File 显示为
 	// "<class "File">" 且 io.File.__inspect__() 返回其方法名（write/read/
 	// readline/readlines/close/open），而非空结果。
-	{
-		BuiltinTypeClass* file_cls = New<BuiltinTypeClass>("File", _builtin_file_ctor);
-		// 把实例方法注册进类型类 methods_，使 __inspect__() 能枚举到。
-		// 这些 Function 经由 File 实例的 __get_attribute__ 被懒创建并绑定，
-		// 此处仅用于类级成员枚举与类方法调用（如 io.File.open 静态风格）。
-		file_cls->add_method("write",     New<Function>("write",     File_write_fn()));
-		file_cls->add_method("read",      New<Function>("read",      File_read_fn()));
-		file_cls->add_method("readline",  New<Function>("readline",  File_readline_fn()));
-		file_cls->add_method("readlines", New<Function>("readlines", File_readlines_fn()));
-		file_cls->add_method("close",     New<Function>("close",     File_close_fn()));
-		file_cls->add_method("open",      New<Function>("open",      File_open_fn()));
-		// 注册 io.File 类级支持的魔术方法，使其 __inspect__ 能枚举
-		// （与 pycp 内置类型 add_magic_methods 一致）。
-		file_cls->add_method("__string__",         static_cast<Function*>(GetMagicMethodFunction("__string__")));
-		file_cls->add_method("__inspect__",        static_cast<Function*>(GetMagicMethodFunction("__inspect__")));
-		file_cls->add_method("__get_attribute__",  static_cast<Function*>(GetMagicMethodFunction("__get_attribute__")));
-		file_cls->add_method("__set_attribute__",  static_cast<Function*>(GetMagicMethodFunction("__set_attribute__")));
-		file_cls->add_method("__delete_attribute__", static_cast<Function*>(GetMagicMethodFunction("__delete_attribute__")));
-		file_cls->add_method("__map__",            static_cast<Function*>(GetMagicMethodFunction("__map__")));
-		file_cls->add_method("__boolean__",        static_cast<Function*>(GetMagicMethodFunction("__boolean__")));
-		// 登记 File 到运行时类型类注册表：File 对象经 typeof/__class__ 解析到 io.File。
-		RegisterTypeClass("File", file_cls);
-		(*ns)["File"] = file_cls;
-		Incref(file_cls);
-		Decref(file_cls); // namespace 持有
-	}
+	// File 类型类：一次性完整注册（方法表驱动，含类型类登记）。
+	// io.File(path [, mode]) 打开文件并返回 File 对象；方法表使
+	// io.File.__inspect__() 与 File 实例 __inspect__() 同源一致。
+	RegisterTypeObject(mod, "File", _builtin_file_ctor, /*initialize=*/nullptr,
+	                   File_method_table);
 
 	return mod;
 }

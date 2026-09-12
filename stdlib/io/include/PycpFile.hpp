@@ -3,6 +3,7 @@
 
 #include "PycpObject.hpp"
 #include "PycpFunction.hpp"
+#include "PycpMethodTable.hpp"   // MethodEntry / MethodTableFn
 
 #include <fstream>
 #include <string>
@@ -89,16 +90,10 @@ public:
     void foreach_ref(const std::function<void(Object*)>& visit) override;
 };
 
-// File 实例方法的原生实现函数（PycpNativeFunction 签名）。
-// 从 PycpFile.cpp 暴露，供 io.cpp 把 write/read/readline/readlines/close/
-// open 注册进 File 类型类（BuiltinTypeClass）的 methods_，使 io.File.__inspect__()
-// 返回方法名而不是空结果。argv[0] 为 self（File*）。
-PycpNativeFunction File_write_fn();
-PycpNativeFunction File_read_fn();
-PycpNativeFunction File_readline_fn();
-PycpNativeFunction File_readlines_fn();
-PycpNativeFunction File_close_fn();
-PycpNativeFunction File_open_fn();
+// File 全部方法（公开方法 write/read/readline/readlines/close/open +
+// 全部魔术方法）的唯一权威清单。io 的类型类注册（RegisterTypeObject）
+// 与实例 __inspect__ 均从它派生。
+const std::vector<MethodEntry>& File_method_table();
 
 } // namespace Pycp
 

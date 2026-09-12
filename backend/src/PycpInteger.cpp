@@ -4,6 +4,7 @@
 #include "PycpBoolean.hpp"
 #include "PycpException.hpp"
 #include "PycpGC.hpp"
+#include "PycpMagic.hpp"   // AppendUniqueName / CommonInspectNames
 
 #include <cmath>
 #include <stdexcept>
@@ -180,28 +181,44 @@ Object* Integer::__greater_equal__(Object* other){
 		? instances[1] : instances[0];
 }
 
-Object* Integer::__inspect__() {
-	// 先收集基类 members_ 中的 key，再添加 integer 特有的魔术方法名。
-	List* lst = static_cast<List*>(Object::__inspect__());
-	std::vector<std::string> extra = {
-		"__integer__", "__string__", "__boolean__", "__negation__", "__addition__",
-		"__subtraction__", "__multiplication__", "__division__", "__power__",
-		"__less_than__", "__less_equal__", "__equal__", "__not_equal__",
-		"__greater_than__", "__greater_equal__",
-		"__get_attribute__", "__set_attribute__", "__delete_attribute__", "__inspect__",
-		"__class__", "__map__", "__hash__",
+// Integer 全部方法的方法表（一元/算术/比较等魔术方法，native 为 nullptr）。
+// Boolean 继承 Integer，复用本表。
+const std::vector<MethodEntry>& Integer_method_table() {
+	static const std::vector<MethodEntry> table = {
+		{"__integer__",          nullptr},
+		{"__string__",           nullptr},
+		{"__boolean__",          nullptr},
+		{"__negation__",         nullptr},
+		{"__addition__",         nullptr},
+		{"__subtraction__",      nullptr},
+		{"__multiplication__",   nullptr},
+		{"__division__",         nullptr},
+		{"__power__",            nullptr},
+		{"__less_than__",        nullptr},
+		{"__less_equal__",       nullptr},
+		{"__equal__",            nullptr},
+		{"__not_equal__",        nullptr},
+		{"__greater_than__",     nullptr},
+		{"__greater_equal__",    nullptr},
+		{"__map__",              nullptr},
+		{"__hash__",             nullptr},
+		{"__get_attribute__",    nullptr},
+		{"__set_attribute__",    nullptr},
+		{"__delete_attribute__", nullptr},
+		{"__inspect__",          nullptr},
 	};
-	for (const auto& n : extra) {
-		bool found = false;
-		for (std::size_t i = 0; i < lst->size(); ++i) {
-			Object* elem = lst->at(i);
-			if (elem != nullptr && elem->is_type("String") &&
-			    static_cast<String*>(elem)->get_value() == n) {
-				found = true;
-				break;
-			}
-		}
-		if (!found) lst->append(String::FromCString(n.c_str()));
+	return table;
+}
+
+Object* Integer::__inspect__() {
+	// 先收集基类 members_ 中的 key，再从方法表派生全部方法名，
+	// 最后补充通用属性名（__class__）。方法表是唯一权威来源。
+	List* lst = static_cast<List*>(Object::__inspect__());
+	for (const MethodEntry& e : Integer_method_table()) {
+		AppendUniqueName(lst, e.name);
+	}
+	for (const std::string& n : CommonInspectNames()) {
+		AppendUniqueName(lst, n);
 	}
 	return lst;
 }

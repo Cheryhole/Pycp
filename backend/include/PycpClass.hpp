@@ -21,12 +21,15 @@
 #include "PycpObject.hpp"
 #include "PycpFunction.hpp"
 #include "PycpList.hpp"
+#include "PycpMethodTable.hpp"   // MethodEntry / MethodTableFn / PycpNativeFunction
 
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace Pycp {
+
+class Module;   // RegisterTypeObject 的宿主模块参数（仅以指针使用）
 
 // =============================================================
 // 运行时「类型类」注册表（typeof / __class__ 用）
@@ -41,6 +44,26 @@ PYCP_API Class* LookupTypeClass(const std::string& type_name);  // Borrowed
 // pycp.Object 类全局指针（typeof 对类对象 / 类自身的 __class__ 返回它）。
 PYCP_API void RegisterObjectClass(Class* cls);
 PYCP_API Class* LookupObjectClass();                            // Borrowed
+
+// =============================================================
+// 统一类型对象注册（方法表驱动，一次性完整注册）
+//
+// 把「创建类型对象 + 放入模块命名空间 + 逐条注册方法 + 注册对象自身
+// __initialize__ + 登记类型类注册表」收敛为单次调用；方法清单以传入的
+// 方法表为唯一权威来源。供 pycp / io 等原生扩展共用（ABI 层）。
+//
+//   mod        : 宿主模块（必须非空；类型对象放入其命名空间）。
+//   name       : 类型名（= 命名空间键 = 类型类注册键）。
+//   ctor       : 非空 → BuiltinTypeClass（实例化走 ctor）；
+//                空   → 普通 Class（实例化走默认 Instance 创建）。
+//   initialize : 对象自身的 __initialize__（nullptr 表示无）。
+//   table      : 方法表访问器（全部方法的唯一权威来源，可为 nullptr）。
+// 返回创建的类型对象（Borrowed，由命名空间与类型类注册表持有）。
+// =============================================================
+PYCP_API Class* RegisterTypeObject(Module* mod, const char* name,
+                                   PycpNativeFunction ctor,
+                                   PycpNativeFunction initialize,
+                                   MethodTableFn table);
 
 class PYCP_API Class : public Object {
 private:

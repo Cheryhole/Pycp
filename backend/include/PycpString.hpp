@@ -2,6 +2,7 @@
 #define PYCP_STRING_HPP
 
 #include "PycpObject.hpp"
+#include "PycpMethodTable.hpp"   // MethodEntry / MethodTableFn
 #include <string>
 
 namespace Pycp{
@@ -40,6 +41,10 @@ class PYCP_API String : public Object{
 };
 
 std::string AsString(Object*);
+
+// String 全部方法（全部魔术方法）的唯一权威清单。
+// 类型类注册（register_object）与实例 __inspect__ 均从它派生。
+const std::vector<MethodEntry>& String_method_table();
 
 } // namespace Pycp
 

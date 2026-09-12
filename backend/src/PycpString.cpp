@@ -5,6 +5,7 @@
 #include "PycpGC.hpp"
 #include "PycpList.hpp"
 #include "PycpIterator.hpp"
+#include "PycpMagic.hpp"   // AppendUniqueName / CommonInspectNames
 
 #include <iostream>
 #include <functional>
@@ -123,27 +124,37 @@ Object* String::__iterator__() {
 	return Pycp::New<StringIterator>(this);
 }
 
-Object* String::__inspect__() {
-	// 先收集基类 members_ 中的 key，再添加 string 特有的魔术方法名。
-	List* lst = static_cast<List*>(Object::__inspect__());
-	std::vector<std::string> extra = {
-		"__integer__", "__string__", "__boolean__", "__addition__", "__multiplication__",
-		"__equal__",
-		"__get_item__", "__list__", "__iterator__",
-		"__get_attribute__", "__set_attribute__", "__delete_attribute__", "__inspect__",
-		"__class__", "__map__", "__hash__",
+// String 全部方法的方法表（全部为魔术方法，native 为 nullptr）。
+const std::vector<MethodEntry>& String_method_table() {
+	static const std::vector<MethodEntry> table = {
+		{"__integer__",          nullptr},
+		{"__string__",           nullptr},
+		{"__boolean__",          nullptr},
+		{"__addition__",         nullptr},
+		{"__multiplication__",   nullptr},
+		{"__equal__",            nullptr},
+		{"__get_item__",         nullptr},
+		{"__list__",             nullptr},
+		{"__iterator__",         nullptr},
+		{"__map__",              nullptr},
+		{"__hash__",             nullptr},
+		{"__get_attribute__",    nullptr},
+		{"__set_attribute__",    nullptr},
+		{"__delete_attribute__", nullptr},
+		{"__inspect__",          nullptr},
 	};
-	for (const auto& n : extra) {
-		bool found = false;
-		for (std::size_t i = 0; i < lst->size(); ++i) {
-			Object* elem = lst->at(i);
-			if (elem != nullptr && elem->is_type("String") &&
-			    static_cast<String*>(elem)->get_value() == n) {
-				found = true;
-				break;
-			}
-		}
-		if (!found) lst->append(String::FromCString(n.c_str()));
+	return table;
+}
+
+Object* String::__inspect__() {
+	// 先收集基类 members_ 中的 key，再从方法表派生全部方法名，
+	// 最后补充通用属性名（__class__）。方法表是唯一权威来源。
+	List* lst = static_cast<List*>(Object::__inspect__());
+	for (const MethodEntry& e : String_method_table()) {
+		AppendUniqueName(lst, e.name);
+	}
+	for (const std::string& n : CommonInspectNames()) {
+		AppendUniqueName(lst, n);
 	}
 	return lst;
 }

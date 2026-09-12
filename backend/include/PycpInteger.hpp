@@ -4,6 +4,7 @@
 #define PYCP_INTEGER_INSTANCES 100
 
 #include "PycpObject.hpp"
+#include "PycpMethodTable.hpp"   // MethodEntry / MethodTableFn
 #include <cstdint>
 #include <string>
 
@@ -51,6 +52,10 @@ class PYCP_API Integer : public Object{
 		// default constructed for commonly used integers, count from 0, [0] -> 0, [1] -> 1, [2] -> 2, ...
 		static Integer* instances[PYCP_INTEGER_INSTANCES];
 };
+
+// Integer 全部方法（一元/算术/比较等魔术方法）的唯一权威清单。
+// Boolean 继承 Integer，复用同一方法表。
+const std::vector<MethodEntry>& Integer_method_table();
 
 } // namespace Pycp
 
