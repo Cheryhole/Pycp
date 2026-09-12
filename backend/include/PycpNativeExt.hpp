@@ -10,7 +10,7 @@
 //   extern "C" Pycp::Module* PycpModule_<name>();
 //
 // 返回一个已构建好的 Module（Owned，refcount=1），其命名空间
-// 内可放置 Function（复用 PycpNativeFunction 签名）等对象。
+// 内可放置 Function（复用 PycpCFunction 签名）等对象。
 //
 // 加载链：VM::load_module 经 Pycp::ImportModule 统一编排，在 registry_
 // （.pycp 依赖）之前完成「进程内符号 / stdlib / cwd / 脚本目录」的查找。

@@ -8,6 +8,7 @@ namespace Pycp {
 
 ListIterator::ListIterator(List* source)
 	: Object("ListIterator"), source_(source), index_(0) {
+	set_type_info(PycpTypeId::ListIterator, PycpTypeFlag::Iterable);
 	if (source_ != nullptr) Incref(source_);
 }
 
@@ -59,6 +60,7 @@ void ListIterator::foreach_ref(const std::function<void(Object*)>& visit) {
 
 StringIterator::StringIterator(String* source)
 	: Object("StringIterator"), source_(source), index_(0) {
+	set_type_info(PycpTypeId::StringIterator, PycpTypeFlag::Iterable);
 	if (source_ != nullptr) Incref(source_);
 }
 

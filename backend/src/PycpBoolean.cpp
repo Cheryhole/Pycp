@@ -45,12 +45,14 @@ void Boolean::Finalize(){
 Boolean::Boolean(int64_t v) : Integer(v){
 	// 覆盖继承来的类型名 "Integer" → "Boolean"（type_name() 非虚，依赖成员）。
 	set_type_name("Boolean");
+	set_type_info(PycpTypeId::Boolean, PycpTypeFlag::IntegerSubclass | PycpTypeFlag::Hashable);
 }
 
 Boolean::Boolean(Object* obj) : Integer(compute_bool_value(obj)){
 	// 按 truthiness 初始化（空串/0/空列表/None → 0，其余 → 1），
 	// 对齐 __boolean__ 协议与 if 隐式 Boolean 转换。
 	set_type_name("Boolean");
+	set_type_info(PycpTypeId::Boolean, PycpTypeFlag::IntegerSubclass | PycpTypeFlag::Hashable);
 }
 
 Object* Boolean::__boolean__(){

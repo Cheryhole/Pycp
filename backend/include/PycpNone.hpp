@@ -27,6 +27,13 @@ class PYCP_API None : public Object{
 		void foreach_ref(const std::function<void(Object*)>& visit) override;
 };
 
+// 类型萃取特化：None（可哈希）。
+template <> struct TypeTraits<None> {
+	static constexpr PycpTypeId   id            = PycpTypeId::None;
+	static constexpr PycpTypeFlag flags         = PycpTypeFlag::Hashable;
+	static constexpr PycpTypeFlag subclass_flag = PycpTypeFlag::None;
+};
+
 } // namespace Pycp
 
 #endif // PYCP_NONE_HPP

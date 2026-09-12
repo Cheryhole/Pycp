@@ -37,6 +37,67 @@ inline bool operator!=(GCFlag a, GCFlag b){
 	return static_cast<uint32_t>(a) != static_cast<uint32_t>(b);
 }
 
+// =============================================================
+// 类型标识与类型标志位（对齐 CPython 的类型系统思路，C++17 实现）
+//
+//   PycpTypeId   : 精确类型标识（编译期枚举，O(1) 整数比较）。因
+//                  Class / Instance / Module 的 type_name 是动态名
+//                  （类名 / 模块名），独立 type_id 是区分它们的必要手段。
+//   PycpTypeFlag : 位标志（对应 CPython 的 tp_flags），表达子类型族
+//                  与能力（如 IntegerSubclass 覆盖 Integer 与 Boolean）。
+// =============================================================
+enum class PycpTypeId : uint32_t{
+	Unknown = 0,
+	None,
+	Integer,
+	Boolean,
+	String,
+	List,
+	Map,
+	File,
+	Function,
+	Class,
+	Instance,
+	Module,
+	ListIterator,
+	StringIterator,
+};
+
+enum class PycpTypeFlag : uint32_t{
+	None             = 0,
+	IntegerSubclass  = 1u << 0,  // int 族：Integer 及 Boolean（bool 是 int 子类）
+	StringSubclass   = 1u << 1,  // str 族
+	SequenceSubclass = 1u << 2,  // List 族
+	MappingSubclass  = 1u << 3,  // Map 族
+	Callable         = 1u << 4,  // 可调用（Function / Class）
+	Hashable         = 1u << 5,  // 可哈希（None / Integer / Boolean / String）
+	Iterable         = 1u << 6,  // 可迭代（List / String / 迭代器）
+	Mutable          = 1u << 7,  // 可变（List / Map / File）
+};
+
+constexpr PycpTypeFlag operator|(PycpTypeFlag a, PycpTypeFlag b){
+	return static_cast<PycpTypeFlag>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+}
+constexpr PycpTypeFlag operator&(PycpTypeFlag a, PycpTypeFlag b){
+	return static_cast<PycpTypeFlag>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
+}
+constexpr bool has_flag(PycpTypeFlag value, PycpTypeFlag flag){
+	return (static_cast<uint32_t>(value) & static_cast<uint32_t>(flag)) != 0;
+}
+
+// 编译期类型萃取：绑定 C++ 类型 <=> { id, flags, subclass_flag }。
+// 主模板为未知类型；各内置类型在其头文件提供特化。
+//   id            : 精确类型标识（IsExact<T> 用）。
+//   flags         : 该类型自身携带的能力/族标志（HasFlag 语义）。
+//   subclass_flag : 用于「T 及其子类」检查的族标志；None 表示无子类，
+//                   「T 及其子类」退化为精确检查（IsInstance<T> 用）。
+template <typename T>
+struct TypeTraits{
+	static constexpr PycpTypeId   id            = PycpTypeId::Unknown;
+	static constexpr PycpTypeFlag flags         = PycpTypeFlag::None;
+	static constexpr PycpTypeFlag subclass_flag = PycpTypeFlag::None;
+};
+
 // 所有运行时对象的基类。
 // 内存生命周期统一由 PycpGC 管理：
 //   - refcount : 引用计数（RC 为主回收依据）
@@ -50,6 +111,11 @@ class PYCP_API Object{
 		GCFlag gc_flags;
 		// 类型名（替代旧 Type 枚举，字符串判型）。
 		std::string type_name_;
+		// 类型标识（精确类型，替代字符串判型；Class/Instance/Module 的
+		// type_name 是动态名，故独立 type_id 是区分它们的必要手段）。
+		PycpTypeId type_id_ = PycpTypeId::Unknown;
+		// 类型标志位（子类型族/能力，对应 CPython 的 tp_flags）。
+		PycpTypeFlag type_flags_ = PycpTypeFlag::None;
 
 		// 可见性标记：true 表示私有（private），false 表示公开（public）。
 		// 作为所有对象的通用属性，供 public/private 装饰器（C++ ABI 底层）设置：
@@ -78,6 +144,11 @@ class PYCP_API Object{
 		// 原样保留大小写（如 class a{} 的类与实例类型名均为 "a"）。
 		const std::string& type_name() const { return type_name_; }
 
+		// 精确类型标识（编译期枚举，O(1)）。
+		PycpTypeId type_id() const { return type_id_; }
+		// 类型标志位（子类型族/能力）。
+		PycpTypeFlag type_flags() const { return type_flags_; }
+
 		// 类型判定便捷方法。
 		bool is_type(const std::string& name) const { return type_name_ == name; }
 
@@ -85,6 +156,13 @@ class PYCP_API Object{
 		// 例如 Boolean 继承 Integer 后需将 "Integer" 改为 "Boolean"）。
 		// 注意 type_name() 非虚，类型判定依赖该成员，故此 setter 必要。
 		void set_type_name(const std::string& name) { type_name_ = name; }
+
+		// 设置类型信息（子类构造函数用）：精确类型 id 与类型标志位 flags。
+		// type_name 仅用于显示与 __name__，不参与类型判断。
+		void set_type_info(PycpTypeId id, PycpTypeFlag flags) {
+			type_id_ = id;
+			type_flags_ = flags;
+		}
 
 		// 可见性查询/设置（默认 public，即 private_ == false）。
 		bool is_private() const { return private_; }
@@ -193,6 +271,72 @@ class PYCP_API Object{
 	virtual void foreach_ref(const std::function<void(Object*)>& visit);
 
 		};
+
+// =============================================================
+// 类型判断接口（语义对齐 CPython，C++17 实现，无宏）
+//
+//   TypeOf(ob)          ~ Py_TYPE            获取类型标识
+//   IsType(ob, id)      ~ Py_IS_TYPE         精确类型比较
+//   HasFlag(ob, flag)   ~ PyType_HasFeature  类型标志位检查
+//   IsInteger(ob)       ~ PyLong_Check       子类检查（含 Boolean）
+//   IsIntegerExact(ob)  ~ PyLong_CheckExact  精确检查（不含 Boolean）
+//   IsExact<T>(ob)      ~ 模板化精确检查
+//   IsInstance<T>(ob)   ~ 模板化子类/族检查
+//
+// 迁移指引（旧写法 → 新写法，行为等价）：
+//   obj->is_type("Integer")                → IsIntegerExact(obj)
+//   dynamic_cast<Integer*>(obj) != nullptr → IsInteger(obj)   // 含 Boolean（is-a）
+//   obj->is_type("String")                 → IsString(obj)
+//   obj->type_name() == "X"                → IsType(obj, PycpTypeId::X)
+// =============================================================
+
+// 获取对象类型标识（对应 Py_TYPE；nullptr 返回 Unknown）。
+inline PycpTypeId TypeOf(const Object* ob){
+	return (ob != nullptr) ? ob->type_id() : PycpTypeId::Unknown;
+}
+
+// 精确类型比较（对应 Py_IS_TYPE）。
+inline bool IsType(const Object* ob, PycpTypeId id){
+	return (ob != nullptr) && ob->type_id() == id;
+}
+
+// 类型标志位检查（对应 PyType_HasFeature）。
+inline bool HasFlag(const Object* ob, PycpTypeFlag flag){
+	return (ob != nullptr) && has_flag(ob->type_flags(), flag);
+}
+
+// Integer 子类检查（对应 PyLong_Check：含 Boolean）。
+inline bool IsInteger(const Object* ob){
+	return HasFlag(ob, PycpTypeFlag::IntegerSubclass);
+}
+
+// Integer 精确检查（对应 PyLong_CheckExact：不含 Boolean）。
+inline bool IsIntegerExact(const Object* ob){
+	return IsType(ob, PycpTypeId::Integer);
+}
+
+// String 子类检查（当前 String 无子类，等价精确）。
+inline bool IsString(const Object* ob){
+	return HasFlag(ob, PycpTypeFlag::StringSubclass);
+}
+
+// 编译期精确检查：ob 的精确类型是否为 T（对应 PyLong_CheckExact 泛化）。
+template <typename T>
+inline bool IsExact(const Object* ob){
+	return IsType(ob, TypeTraits<T>::id);
+}
+
+// 编译期子类/族检查：ob 是否为 T 或 T 的子类（对应 PyLong_Check 泛化）。
+//   若 T 有子类族标志（如 Integer 的 IntegerSubclass），按标志判断；
+//   否则（无子类的类型）退化为精确检查。
+template <typename T>
+inline bool IsInstance(const Object* ob){
+	if constexpr (TypeTraits<T>::subclass_flag != PycpTypeFlag::None){
+		return HasFlag(ob, TypeTraits<T>::subclass_flag);
+	} else {
+		return IsExact<T>(ob);
+	}
+}
 
 class Integer;
 class String;

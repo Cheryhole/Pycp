@@ -117,6 +117,13 @@ PYCP_API extern Module* current_module_;
 // current_module_ 为空时回退 "__main__"。返回 Owned。
 PYCP_API Object* GetCurrentModuleName();
 
+// 类型萃取特化：Module。
+template <> struct TypeTraits<Module> {
+	static constexpr PycpTypeId   id            = PycpTypeId::Module;
+	static constexpr PycpTypeFlag flags         = PycpTypeFlag::None;
+	static constexpr PycpTypeFlag subclass_flag = PycpTypeFlag::None;
+};
+
 } // namespace Pycp
 
 #endif // PYCP_MODULE_HPP

@@ -32,8 +32,15 @@ class PYCP_API Boolean : public Integer {
 
 		// __integer__ 继承 Integer（返回自身值 0/1）。
 		// __addition__ / __equal__ 等算术与比较继承 Integer（返回 Integer）。
-};
+		};
 
-} // namespace Pycp
+		// 类型萃取特化：Boolean（int 子类，无自身子类；携带 IntegerSubclass 标志）。
+		template <> struct TypeTraits<Boolean> {
+		static constexpr PycpTypeId   id            = PycpTypeId::Boolean;
+		static constexpr PycpTypeFlag flags         = PycpTypeFlag::IntegerSubclass | PycpTypeFlag::Hashable;
+		static constexpr PycpTypeFlag subclass_flag = PycpTypeFlag::None;
+		};
+
+		} // namespace Pycp
 
 #endif // PYCP_BOOLEAN_HPP

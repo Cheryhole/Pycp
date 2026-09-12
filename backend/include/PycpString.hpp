@@ -46,6 +46,13 @@ std::string AsString(Object*);
 // 类型类注册（register_object）与实例 __inspect__ 均从它派生。
 const std::vector<MethodEntry>& String_method_table();
 
+// 类型萃取特化：String（str 族，无子类）。
+template <> struct TypeTraits<String> {
+	static constexpr PycpTypeId   id            = PycpTypeId::String;
+	static constexpr PycpTypeFlag flags         = PycpTypeFlag::StringSubclass | PycpTypeFlag::Hashable | PycpTypeFlag::Iterable;
+	static constexpr PycpTypeFlag subclass_flag = PycpTypeFlag::None;
+};
+
 } // namespace Pycp
 
 #endif // PYCP_STRING_HPP

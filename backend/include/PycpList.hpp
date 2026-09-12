@@ -17,7 +17,7 @@
 // =============================================================
 
 #include "PycpObject.hpp"
-#include "PycpMethodTable.hpp"   // MethodEntry / MethodTableFn / PycpNativeFunction
+#include "PycpMethodTable.hpp"   // MethodEntry / MethodTableFn / PycpCFunction
 
 #include <string>
 #include <vector>
@@ -71,6 +71,13 @@ public:
 // 类型类注册（register_object）与实例 __inspect__ 均从它派生，消除
 // 「注册处」与「__inspect__」双份维护导致的方法清单不一致。
 const std::vector<MethodEntry>& List_method_table();
+
+// 类型萃取特化：List（序列族，可迭代且可变）。
+template <> struct TypeTraits<List> {
+	static constexpr PycpTypeId   id            = PycpTypeId::List;
+	static constexpr PycpTypeFlag flags         = PycpTypeFlag::SequenceSubclass | PycpTypeFlag::Iterable | PycpTypeFlag::Mutable;
+	static constexpr PycpTypeFlag subclass_flag = PycpTypeFlag::None;
+};
 
 } // namespace Pycp
 

@@ -26,7 +26,9 @@ Class* Module::get_type_class() {
 }
 
 Module::Module(const std::string& name)
-	: Object(name), name_(name), module_name_(name) {}
+	: Object(name), name_(name), module_name_(name) {
+	set_type_info(PycpTypeId::Module, PycpTypeFlag::None);
+}
 
 Module::~Module() {
 	// 命名空间内对象的引用计数由模块执行环境负责管理；

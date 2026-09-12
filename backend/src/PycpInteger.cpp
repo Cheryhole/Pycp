@@ -16,10 +16,12 @@ Integer* Integer::instances[PYCP_INTEGER_INSTANCES] = {0};
 Integer::Integer() : Integer(INT64_C(0)){}
 
 Integer::Integer(int64_t value) : Object("Integer"){
+	set_type_info(PycpTypeId::Integer, PycpTypeFlag::IntegerSubclass | PycpTypeFlag::Hashable);
 	this->_value = value;
 }
 
 Integer::Integer(const std::string& value) : Object("Integer"){
+	set_type_info(PycpTypeId::Integer, PycpTypeFlag::IntegerSubclass | PycpTypeFlag::Hashable);
 	try{
 		this->_value = std::stoll(value);  // 使用 64 位解析，避免 stoi 截断
 	} catch (const std::invalid_argument&){
@@ -32,6 +34,7 @@ Integer::Integer(const std::string& value) : Object("Integer"){
 Integer::Integer(Integer* value) : Integer(value->get_value()){}
 
 Integer::Integer(Object* obj) : Object("Integer"){
+	set_type_info(PycpTypeId::Integer, PycpTypeFlag::IntegerSubclass | PycpTypeFlag::Hashable);
 	if (obj == nullptr){
 		throw TypeError("Cannot construct Integer from null object.");
 	}

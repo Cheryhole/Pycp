@@ -15,12 +15,14 @@ namespace Pycp {
 String::String() : String(""){}
 
 String::String(const std::string& value) : Object("String"){
+	set_type_info(PycpTypeId::String, PycpTypeFlag::StringSubclass | PycpTypeFlag::Hashable | PycpTypeFlag::Iterable);
 	this->_value = value;
 }
 
 String::String(String* value) : String(value->get_value()){}
 
 String::String(Object* obj) : Object("String"){
+	set_type_info(PycpTypeId::String, PycpTypeFlag::StringSubclass | PycpTypeFlag::Hashable | PycpTypeFlag::Iterable);
 	if (obj == nullptr){
 		throw TypeError("Cannot construct String from null object.");
 	}

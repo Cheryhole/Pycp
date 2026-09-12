@@ -26,14 +26,14 @@ namespace Pycp {
 
 class Object;
 
-// 统一原生函数调用签名（与 PycpFunction.hpp 的 PycpNativeFunction 一致）。
+// 统一原生函数调用签名（与 PycpFunction.hpp 的 PycpCFunction 一致）。
 // 相同类型的 using 别名允许重复声明，故此处前置定义与其它头文件不冲突。
-using PycpNativeFunction = Object* (*)(Object* self, Object** argv, std::size_t argc);
+using PycpCFunction = Object* (*)(Object* self, Object** argv, std::size_t argc);
 
 // 单个方法描述。
 struct MethodEntry {
 	const char*        name;    // 方法名
-	PycpNativeFunction native;  // 原生实现；nullptr 表示魔术方法（统一分派）
+	PycpCFunction native;  // 原生实现；nullptr 表示魔术方法（统一分派）
 };
 
 // 方法表访问器类型：返回该对象全部方法的唯一权威清单。

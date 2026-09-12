@@ -336,7 +336,7 @@ void NativeExt_Finalize() {
 // =============================================================
 
 int64_t ArgInt(Object** argv, std::size_t i, const char* fn) {
-	if (argv == nullptr || argv[i] == nullptr || !argv[i]->is_type("Integer")) {
+	if (argv == nullptr || argv[i] == nullptr || !IsIntegerExact(argv[i])) {
 		throw TypeError(std::string(fn) + "(): argument " + std::to_string(i + 1) +
 		                " expects an integer.");
 	}
@@ -344,7 +344,7 @@ int64_t ArgInt(Object** argv, std::size_t i, const char* fn) {
 }
 
 std::string ArgString(Object** argv, std::size_t i, const char* fn) {
-	if (argv == nullptr || argv[i] == nullptr || !argv[i]->is_type("String")) {
+	if (argv == nullptr || argv[i] == nullptr || !IsString(argv[i])) {
 		throw TypeError(std::string(fn) + "(): argument " + std::to_string(i + 1) +
 		                " expects a string.");
 	}

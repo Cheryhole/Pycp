@@ -26,7 +26,7 @@ enum class FunctionKind{
 
 // 统一调用签名：self + argv/argc（见路线图第 5 步）
 //   不再使用单一的 Object* args，避免信息不足
-using PycpNativeFunction = Object* (*)(Object* self, Object** argv, std::size_t argc);
+using PycpCFunction = Object* (*)(Object* self, Object** argv, std::size_t argc);
 
 Object* _builtin_print(Object* self, Object** argv, std::size_t argc);
 struct BuiltinFunction;
@@ -42,12 +42,12 @@ class PYCP_API Function : public Object{
 		Class* owner_class_ = nullptr;
 
 		// Native 函数入口（无状态 C 函数指针，避免 C++ lambda [＆] 悬空捕获）
-		PycpNativeFunction native;
+		PycpCFunction native;
 
 	public:
 		Function();
 		Function(const char* name);
-		Function(const char* name, PycpNativeFunction func);
+		Function(const char* name, PycpCFunction func);
 
 		const char* get_name() const override { return name.c_str(); }
 
@@ -72,6 +72,13 @@ class PYCP_API Function : public Object{
 
 struct BuiltinFunction{
 	static Function* print;
+};
+
+// 类型萃取特化：Function（可调用）。
+template <> struct TypeTraits<Function> {
+	static constexpr PycpTypeId   id            = PycpTypeId::Function;
+	static constexpr PycpTypeFlag flags         = PycpTypeFlag::Callable;
+	static constexpr PycpTypeFlag subclass_flag = PycpTypeFlag::None;
 };
 
 } // namespace Pycp

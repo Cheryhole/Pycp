@@ -30,7 +30,7 @@
 #include "PycpInteger.hpp"
 #include "PycpString.hpp"
 #include "PycpList.hpp"
-#include "PycpMethodTable.hpp"   // MethodEntry / MethodTableFn / PycpNativeFunction
+#include "PycpMethodTable.hpp"   // MethodEntry / MethodTableFn / PycpCFunction
 
 #include <functional>
 #include <unordered_map>
@@ -114,6 +114,13 @@ public:
 // Map 全部方法（公开方法 length/keys + 全部魔术方法）的唯一权威清单。
 // 类型类注册（register_object）与实例 __inspect__ 均从它派生。
 const std::vector<MethodEntry>& Map_method_table();
+
+// 类型萃取特化：Map（映射族，可变；不可哈希）。
+template <> struct TypeTraits<Map> {
+	static constexpr PycpTypeId   id            = PycpTypeId::Map;
+	static constexpr PycpTypeFlag flags         = PycpTypeFlag::MappingSubclass | PycpTypeFlag::Mutable;
+	static constexpr PycpTypeFlag subclass_flag = PycpTypeFlag::None;
+};
 
 } // namespace Pycp
 

@@ -26,6 +26,7 @@ void None::Finalize(){
 }
 
 None::None() : Object("None"){
+	set_type_info(PycpTypeId::None, PycpTypeFlag::Hashable);
 	none_str_ = New<String>("None");
 	Incref(none_str_);  // 子引用持有
 }

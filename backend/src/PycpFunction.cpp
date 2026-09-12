@@ -27,10 +27,14 @@ Object* _builtin_print([[maybe_unused]] Object* self, Object** argv, std::size_t
 Function::Function() : Function("", nullptr){}
 
 Function::Function(const char* name)
-		: Object("Function"), kind(FunctionKind::Native), name(name), native(nullptr){}
+		: Object("Function"), kind(FunctionKind::Native), name(name), native(nullptr){
+	set_type_info(PycpTypeId::Function, PycpTypeFlag::Callable);
+}
 
-Function::Function(const char* name, PycpNativeFunction func)
-		: Object("Function"), kind(FunctionKind::Native), name(name), native(func){}
+Function::Function(const char* name, PycpCFunction func)
+		: Object("Function"), kind(FunctionKind::Native), name(name), native(func){
+	set_type_info(PycpTypeId::Function, PycpTypeFlag::Callable);
+}
 
 Object* Function::__string__(){
 	// 匿名函数沿用与普通函数完全相同的格式，仅名字位置显示 @anonymous：

@@ -91,8 +91,8 @@ Class* LookupObjectClass() {
 // 统一类型对象注册（方法表驱动，一次性完整注册）
 // =============================================================
 Class* RegisterTypeObject(Module* mod, const char* name,
-                          PycpNativeFunction ctor,
-                          PycpNativeFunction initialize,
+                          PycpCFunction ctor,
+                          PycpCFunction initialize,
                           MethodTableFn table) {
 	if (mod == nullptr || name == nullptr) {
 		throw TypeError("RegisterTypeObject: module and name must be non-null.");
@@ -184,7 +184,9 @@ Instance* Instance::New(Class* cls) {
 }
 
 Class::Class(const std::string& name)
-	: Object(name), name_(name), parent_(nullptr) {}
+	: Object(name), name_(name), parent_(nullptr) {
+	set_type_info(PycpTypeId::Class, PycpTypeFlag::Callable);
+}
 
 Class::~Class() {
 	for (auto& kv : methods_) {
@@ -447,7 +449,7 @@ Object* Class::instantiate(Object** argv, std::size_t argc) {
 // BuiltinTypeClass
 // =============================================================
 
-BuiltinTypeClass::BuiltinTypeClass(const std::string& name, PycpNativeFunction ctor)
+BuiltinTypeClass::BuiltinTypeClass(const std::string& name, PycpCFunction ctor)
 	: Class(name), ctor_(ctor) {}
 
 Object* BuiltinTypeClass::instantiate(Object** argv, std::size_t argc) {
@@ -473,6 +475,7 @@ Object* BuiltinTypeClass::instantiate(Object** argv, std::size_t argc) {
 
 Instance::Instance(Class* cls)
 	: Object(cls != nullptr ? cls->get_name() : "@anonymous"), cls_(cls) {
+	set_type_info(PycpTypeId::Instance, PycpTypeFlag::None);
 	if (cls_ != nullptr) Incref(cls_);
 }
 

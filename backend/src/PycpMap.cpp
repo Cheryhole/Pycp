@@ -68,7 +68,9 @@ Map* Map::NewView(Object* owner) {
 	return m;
 }
 
-Map::Map() : Object("Map") {}
+Map::Map() : Object("Map") {
+	set_type_info(PycpTypeId::Map, PycpTypeFlag::MappingSubclass | PycpTypeFlag::Mutable);
+}
 
 Map::~Map() {
 	if (length_fn_ != nullptr) Decref(length_fn_);

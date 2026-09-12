@@ -132,6 +132,7 @@ File::File(const std::string& path, const std::string& mode)
       readline_fn_(nullptr),
       close_fn_(nullptr),
       readlines_fn_(nullptr) {
+    set_type_info(PycpTypeId::File, PycpTypeFlag::Mutable);
     open(path, mode);
 }
 
@@ -151,6 +152,7 @@ File::File(const std::string& path, const std::string& mode, const std::string& 
       readline_fn_(nullptr),
       close_fn_(nullptr),
       readlines_fn_(nullptr) {
+    set_type_info(PycpTypeId::File, PycpTypeFlag::Mutable);
     open(path, mode);
 }
 
@@ -170,6 +172,7 @@ File::File(const std::string& name, std::istream* in, std::ostream* out)
       readline_fn_(nullptr),
       close_fn_(nullptr),
       readlines_fn_(nullptr) {
+    set_type_info(PycpTypeId::File, PycpTypeFlag::Mutable);
     // 特殊流（stdin/stdout/stderr）始终打开，不能真正关闭
     // close() 只标记状态，不关闭底层流
 }

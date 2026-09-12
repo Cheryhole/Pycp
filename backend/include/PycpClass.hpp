@@ -21,7 +21,7 @@
 #include "PycpObject.hpp"
 #include "PycpFunction.hpp"
 #include "PycpList.hpp"
-#include "PycpMethodTable.hpp"   // MethodEntry / MethodTableFn / PycpNativeFunction
+#include "PycpMethodTable.hpp"   // MethodEntry / MethodTableFn / PycpCFunction
 
 #include <string>
 #include <unordered_map>
@@ -61,8 +61,8 @@ PYCP_API Class* LookupObjectClass();                            // Borrowed
 // 返回创建的类型对象（Borrowed，由命名空间与类型类注册表持有）。
 // =============================================================
 PYCP_API Class* RegisterTypeObject(Module* mod, const char* name,
-                                   PycpNativeFunction ctor,
-                                   PycpNativeFunction initialize,
+                                   PycpCFunction ctor,
+                                   PycpCFunction initialize,
                                    MethodTableFn table);
 
 class PYCP_API Class : public Object {
@@ -160,10 +160,10 @@ public:
 class PYCP_API BuiltinTypeClass : public Class {
 private:
 	// 原生构造回调：接收 argv/argc，返回 Owned 内置对象。
-	PycpNativeFunction ctor_;
+	PycpCFunction ctor_;
 
 public:
-	BuiltinTypeClass(const std::string& name, PycpNativeFunction ctor);
+	BuiltinTypeClass(const std::string& name, PycpCFunction ctor);
 
 	// 校验参数个数后调用构造回调，返回内置对象。
 	Object* instantiate(Object** argv, std::size_t argc) override;
@@ -295,6 +295,18 @@ public:
 
 	// GC 子引用遍历：枚举绑定接收者（instance_）与底层方法（method_）。
 	void foreach_ref(const std::function<void(Object*)>& visit) override;
+};
+
+// 类型萃取特化：Class（可调用）/ Instance。
+template <> struct TypeTraits<Class> {
+	static constexpr PycpTypeId   id            = PycpTypeId::Class;
+	static constexpr PycpTypeFlag flags         = PycpTypeFlag::Callable;
+	static constexpr PycpTypeFlag subclass_flag = PycpTypeFlag::None;
+};
+template <> struct TypeTraits<Instance> {
+	static constexpr PycpTypeId   id            = PycpTypeId::Instance;
+	static constexpr PycpTypeFlag flags         = PycpTypeFlag::None;
+	static constexpr PycpTypeFlag subclass_flag = PycpTypeFlag::None;
 };
 
 } // namespace Pycp

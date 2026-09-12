@@ -1166,9 +1166,9 @@ BytecodeFunction::BytecodeFunction(BC::VM* vm_, BC::Module* module_,
 }
 
 // native 模式构造：AOT 产物使用，不依赖 VM。native_fn 指向生成的
-// pycp_fn_N（签名恰为 PycpNativeFunction），invoke 直接调用它。
+// pycp_fn_N（签名恰为 PycpCFunction），invoke 直接调用它。
 BytecodeFunction::BytecodeFunction(const std::string& name_,
-                                   PycpNativeFunction native_fn,
+                                   PycpCFunction native_fn,
                                    std::shared_ptr<BC::Environment> captured_)
 	: Function(""), vm(nullptr), module(nullptr), code_idx(0),
 	  captured(std::move(captured_)), native_fn_(native_fn) {

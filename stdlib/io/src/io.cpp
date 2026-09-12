@@ -55,7 +55,7 @@ Object* _builtin_input(Object*, Object** argv, std::size_t argc) {
 }
 
 // 将原生函数以指定名字放入模块命名空间。
-void set_func(Module* mod, const char* name, PycpNativeFunction fn) {
+void set_func(Module* mod, const char* name, PycpCFunction fn) {
 	auto* ns = mod->get_namespace();
 	Function* f = New<Function>(name, fn);
 	(*ns)[name] = f;

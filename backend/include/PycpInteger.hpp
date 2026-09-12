@@ -57,6 +57,13 @@ class PYCP_API Integer : public Object{
 // Boolean 继承 Integer，复用同一方法表。
 const std::vector<MethodEntry>& Integer_method_table();
 
+// 类型萃取特化：Integer（int 族，Boolean 是其子类）。
+template <> struct TypeTraits<Integer> {
+	static constexpr PycpTypeId   id            = PycpTypeId::Integer;
+	static constexpr PycpTypeFlag flags         = PycpTypeFlag::IntegerSubclass | PycpTypeFlag::Hashable;
+	static constexpr PycpTypeFlag subclass_flag = PycpTypeFlag::IntegerSubclass;
+};
+
 } // namespace Pycp
 
 // 对象相等判定辅助：调用 a->__equal__(b)，读取返回的 Integer 0/1 后释放该

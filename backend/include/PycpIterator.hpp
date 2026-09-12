@@ -66,6 +66,18 @@ class PYCP_API StringIterator : public Object {
 		void foreach_ref(const std::function<void(Object*)>& visit) override;
 };
 
+// 类型萃取特化：ListIterator / StringIterator（可迭代）。
+template <> struct TypeTraits<ListIterator> {
+	static constexpr PycpTypeId   id            = PycpTypeId::ListIterator;
+	static constexpr PycpTypeFlag flags         = PycpTypeFlag::Iterable;
+	static constexpr PycpTypeFlag subclass_flag = PycpTypeFlag::None;
+};
+template <> struct TypeTraits<StringIterator> {
+	static constexpr PycpTypeId   id            = PycpTypeId::StringIterator;
+	static constexpr PycpTypeFlag flags         = PycpTypeFlag::Iterable;
+	static constexpr PycpTypeFlag subclass_flag = PycpTypeFlag::None;
+};
+
 } // namespace Pycp
 
 #endif // PYCP_ITERATOR_HPP

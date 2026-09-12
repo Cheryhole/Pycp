@@ -67,9 +67,12 @@ List* List::New() {
 	return Pycp::New<List>();
 }
 
-List::List() : Object("List") {}
+List::List() : Object("List") {
+	set_type_info(PycpTypeId::List, PycpTypeFlag::SequenceSubclass | PycpTypeFlag::Iterable | PycpTypeFlag::Mutable);
+}
 
 List::List(std::vector<Object*> items) : Object("List") {
+	set_type_info(PycpTypeId::List, PycpTypeFlag::SequenceSubclass | PycpTypeFlag::Iterable | PycpTypeFlag::Mutable);
 	items_.reserve(items.size());
 	for (Object* o : items) {
 		if (o != nullptr) {

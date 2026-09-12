@@ -12,7 +12,7 @@
 // （符号名 = "PycpModule_" + 模块名，运行时按导入名 dlsym 查找，与
 // AOT 子模块符号命名统一，如 myext 库导出 PycpModule_myext。）
 // 该函数返回一个已构建好的 Module（Owned，refcount=1），其
-// 命名空间内放置导出的函数（Function，复用 PycpNativeFunction 签名）。
+// 命名空间内放置导出的函数（Function，复用 PycpCFunction 签名）。
 //
 // 写法示例（myext.cpp）：
 //

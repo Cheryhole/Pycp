@@ -95,6 +95,13 @@ public:
 // 与实例 __inspect__ 均从它派生。
 const std::vector<MethodEntry>& File_method_table();
 
+// 类型萃取特化：File（可变）。
+template <> struct TypeTraits<File> {
+	static constexpr PycpTypeId   id            = PycpTypeId::File;
+	static constexpr PycpTypeFlag flags         = PycpTypeFlag::Mutable;
+	static constexpr PycpTypeFlag subclass_flag = PycpTypeFlag::None;
+};
+
 } // namespace Pycp
 
 #endif // PYCP_FILE_HPP
