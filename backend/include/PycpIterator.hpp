@@ -3,6 +3,7 @@
 
 #include "PycpObject.hpp"
 #include "PycpList.hpp"
+#include "PycpFixedList.hpp"
 #include "PycpString.hpp"
 #include "PycpGC.hpp"
 #include "PycpException.hpp"
@@ -13,6 +14,7 @@ namespace Pycp {
 
 class List;
 class String;
+class FixedList;
 
 // =============================================================
 // List 迭代器（ListIterator）
@@ -66,7 +68,32 @@ class PYCP_API StringIterator : public Object {
 		void foreach_ref(const std::function<void(Object*)>& visit) override;
 };
 
-// 类型萃取特化：ListIterator / StringIterator（可迭代）。
+// =============================================================
+// FixedList 迭代器（FixedListIterator）
+//
+// 独立继承 Object。持有 FixedList 源引用（Incref）与游标 index，
+// __next__ 依次返回元素，越界抛 StopIteration。一次性语义同 ListIterator。
+// =============================================================
+class PYCP_API FixedListIterator : public Object {
+	private:
+		FixedList* source_;   // 被迭代的 FixedList（Incref 持有）
+		std::size_t index_;   // 当前游标
+
+	public:
+		explicit FixedListIterator(FixedList* source);
+		~FixedListIterator() override;
+
+		const char* get_name() const override { return "FixedListIterator"; }
+
+		Object* __next__() override;
+		Object* __iterator__() override { Incref(this); return this; }
+		Object* __inspect__() override;
+
+		// GC 子引用：遍历持有的 source。
+		void foreach_ref(const std::function<void(Object*)>& visit) override;
+};
+
+// 类型萃取特化：ListIterator / StringIterator / FixedListIterator（可迭代）。
 template <> struct TypeTraits<ListIterator> {
 	static constexpr PycpTypeId   id            = PycpTypeId::ListIterator;
 	static constexpr PycpTypeFlag flags         = PycpTypeFlag::Iterable;
@@ -74,6 +101,11 @@ template <> struct TypeTraits<ListIterator> {
 };
 template <> struct TypeTraits<StringIterator> {
 	static constexpr PycpTypeId   id            = PycpTypeId::StringIterator;
+	static constexpr PycpTypeFlag flags         = PycpTypeFlag::Iterable;
+	static constexpr PycpTypeFlag subclass_flag = PycpTypeFlag::None;
+};
+template <> struct TypeTraits<FixedListIterator> {
+	static constexpr PycpTypeId   id            = PycpTypeId::FixedListIterator;
 	static constexpr PycpTypeFlag flags         = PycpTypeFlag::Iterable;
 	static constexpr PycpTypeFlag subclass_flag = PycpTypeFlag::None;
 };

@@ -1,6 +1,7 @@
 #include "PycpModule.hpp"
 #include "PycpException.hpp"
 #include "PycpList.hpp"
+#include "PycpFixedList.hpp"
 #include "PycpMagic.hpp"
 #include "PycpClass.hpp"
 #include "PycpGC.hpp"
@@ -125,47 +126,23 @@ void Module::__set_attribute__(const std::string& name, Object* value) {
 }
 
 Object* Module::__inspect__() {
-	// 先收集成员字典 members_ 中的 key，再补充命名空间中可被外部访问
-	// 的公开名称（与 __get_attribute__ 的可见性保持一致：private 符号
-	// 对模块外部不可见，故不列入成员列表）。
-	List* lst = static_cast<List*>(Object::__inspect__());
-	std::vector<std::string> exported;
+	// 成员字典 members_ 名 + 命名空间中可被外部访问的公开名称 +
+	// 模块支持的魔术方法（定型为 FixedList）。
+	std::vector<Object*> names;
+	for (const auto& kv : members_) CollectUniqueName(names, kv.first);
 	for (const auto& kv : namespace_) {
 		if (kv.second == nullptr) continue;
 		// 与 __get_attribute__ 过滤一致：仅以绑定级属性判定。
 		if (binding_attrs(kv.first).priv) continue;
-		exported.push_back(kv.first);
-	}
-	for (const auto& n : exported) {
-		// 避免与 members_ 中的 key 重复。
-		bool found = false;
-		for (std::size_t i = 0; i < lst->size(); ++i) {
-			Object* elem = lst->at(i);
-			if (elem != nullptr && elem->is_type("String") &&
-			    static_cast<String*>(elem)->get_value() == n) {
-				found = true;
-				break;
-			}
-		}
-		if (!found) lst->append(String::FromCString(n.c_str()));
+		CollectUniqueName(names, kv.first);
 	}
 	// Module 豁免 __get_attribute__/__set_attribute__/__delete_attribute__，
-	// 仅暴露其真实支持的魔术方法（命名空间若已含同名则不重复添加）。
-	auto append_unique = [&lst](const char* n) {
-		for (std::size_t i = 0; i < lst->size(); ++i) {
-			Object* elem = lst->at(i);
-			if (elem != nullptr && elem->is_type("String") &&
-			    static_cast<String*>(elem)->get_value() == n) {
-				return;
-			}
-		}
-		lst->append(String::FromCString(n));
-	};
-	append_unique("__string__");
-	append_unique("__inspect__");
-	append_unique("__name__");
-	append_unique("__class__");
-	return lst;
+	// 仅暴露其真实支持的魔术方法。
+	CollectUniqueName(names, "__string__");
+	CollectUniqueName(names, "__inspect__");
+	CollectUniqueName(names, "__name__");
+	CollectUniqueName(names, "__class__");
+	return FixedList::New(names);
 }
 
 Object* Module::__string__(){

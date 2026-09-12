@@ -3,6 +3,7 @@
 #include "PycpException.hpp"
 #include "PycpGC.hpp"
 #include "PycpList.hpp"
+#include "PycpFixedList.hpp"
 #include "PycpString.hpp"
 
 #include <unordered_map>
@@ -126,24 +127,13 @@ Object* GetMagicMethodFunction(const std::string& name) {
 }
 
 Object* BuildNameList(const std::vector<std::string>& names) {
-	List* lst = Pycp::New<List>();
+	// 返回 FixedList（不可变名称列表）。
+	std::vector<Object*> objs;
+	objs.reserve(names.size());
 	for (const std::string& n : names) {
-		lst->append(String::FromCString(n.c_str()));
+		objs.push_back(String::FromCString(n.c_str()));
 	}
-	return lst;
-}
-
-void AppendUniqueName(Object* lst, const std::string& name) {
-	if (lst == nullptr || !lst->is_type("List")) return;
-	List* l = static_cast<List*>(lst);
-	for (std::size_t i = 0; i < l->size(); ++i) {
-		Object* elem = l->at(i);
-		if (elem != nullptr && elem->is_type("String") &&
-		    static_cast<String*>(elem)->get_value() == name) {
-			return; // 已存在，跳过
-		}
-	}
-	l->append(String::FromCString(name.c_str()));
+	return FixedList::New(objs);
 }
 
 const std::vector<std::string>& CommonInspectNames() {
@@ -152,6 +142,16 @@ const std::vector<std::string>& CommonInspectNames() {
 		"__class__",
 	};
 	return names;
+}
+
+void CollectUniqueName(std::vector<Object*>& out, const std::string& name) {
+	for (Object* o : out) {
+		if (o != nullptr && IsType(o, PycpTypeId::String) &&
+		    static_cast<String*>(o)->get_value() == name) {
+			return; // 已存在，跳过
+		}
+	}
+	out.push_back(String::FromCString(name.c_str()));
 }
 
 Object* GetNameAttribute(Object* receiver) {

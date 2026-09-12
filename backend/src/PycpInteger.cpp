@@ -4,7 +4,8 @@
 #include "PycpBoolean.hpp"
 #include "PycpException.hpp"
 #include "PycpGC.hpp"
-#include "PycpMagic.hpp"   // AppendUniqueName / CommonInspectNames
+#include "PycpMagic.hpp"   // CollectUniqueName / CommonInspectNames
+#include "PycpFixedList.hpp"
 
 #include <cmath>
 #include <stdexcept>
@@ -214,16 +215,12 @@ const std::vector<MethodEntry>& Integer_method_table() {
 }
 
 Object* Integer::__inspect__() {
-	// 先收集基类 members_ 中的 key，再从方法表派生全部方法名，
-	// 最后补充通用属性名（__class__）。方法表是唯一权威来源。
-	List* lst = static_cast<List*>(Object::__inspect__());
-	for (const MethodEntry& e : Integer_method_table()) {
-		AppendUniqueName(lst, e.name);
-	}
-	for (const std::string& n : CommonInspectNames()) {
-		AppendUniqueName(lst, n);
-	}
-	return lst;
+	// 收集基类 members_ 名 + 方法表方法名 + 通用属性名，定型为 FixedList。
+	std::vector<Object*> names;
+	for (const auto& kv : members_) CollectUniqueName(names, kv.first);
+	for (const MethodEntry& e : Integer_method_table()) CollectUniqueName(names, e.name);
+	for (const std::string& n : CommonInspectNames()) CollectUniqueName(names, n);
+	return FixedList::New(names);
 }
 
 void Integer::Initialize(){

@@ -5,6 +5,7 @@
 #include "PycpConfig.hpp"
 #include "PycpMagic.hpp"
 #include "PycpFunction.hpp"
+#include "PycpFixedList.hpp"
 #include "PycpMap.hpp"
 #include "PycpModule.hpp"    // Module::get_namespace（RegisterTypeObject 用）
 
@@ -340,52 +341,24 @@ Object* Class::__string__() {
 }
 
 Object* Class::__inspect__() {
-	// 返回类的字段声明名 + 方法名 + 通用成员。
-	List* lst = static_cast<List*>(Object::__inspect__());
+	// 返回类的字段声明名 + 方法名 + 通用成员（定型为 FixedList）。
+	std::vector<Object*> names;
+	for (const auto& kv : members_) CollectUniqueName(names, kv.first);
 	// 类字段声明（如 mem1/mem2/mem3），过滤 private。
 	for (const auto& n : get_member_names()) {
 		if (member_is_private(n)) continue;
-		bool found = false;
-		for (std::size_t i = 0; i < lst->size(); ++i) {
-			Object* elem = lst->at(i);
-			if (elem != nullptr && elem->is_type("String") &&
-			    static_cast<String*>(elem)->get_value() == n) {
-				found = true;
-				break;
-			}
-		}
-		if (!found) lst->append(String::FromCString(n.c_str()));
+		CollectUniqueName(names, n);
 	}
 	// 类方法名（如 a/__initialize__），过滤 private 与 internal 的
 	// __init_defaults__（内部字段初始化方法，不暴露到 pycp 代码）。
 	for (const auto& n : method_names()) {
 		if (method_is_private(n)) continue;
 		if (n == "__init_defaults__") continue;
-		bool found = false;
-		for (std::size_t i = 0; i < lst->size(); ++i) {
-			Object* elem = lst->at(i);
-			if (elem != nullptr && elem->is_type("String") &&
-			    static_cast<String*>(elem)->get_value() == n) {
-				found = true;
-				break;
-			}
-		}
-		if (!found) lst->append(String::FromCString(n.c_str()));
+		CollectUniqueName(names, n);
 	}
 	// 类对象的类型属性 __class__（只读，dir 可见）。
-	{
-		bool found = false;
-		for (std::size_t i = 0; i < lst->size(); ++i) {
-			Object* elem = lst->at(i);
-			if (elem != nullptr && elem->is_type("String") &&
-			    static_cast<String*>(elem)->get_value() == "__class__") {
-				found = true;
-				break;
-			}
-		}
-		if (!found) lst->append(String::FromCString("__class__"));
-	}
-	return lst;
+	CollectUniqueName(names, "__class__");
+	return FixedList::New(names);
 }
 
 std::vector<std::pair<std::string, Object*>> Class::member_pairs() const {
@@ -566,10 +539,10 @@ Object* Instance::get_bound_method(const std::string& name) {
 }
 
 Object* Instance::__inspect__() {
-	// 字段名 + 类方法名 + 通用成员。
-	List* lst = static_cast<List*>(Object::__inspect__());
-	std::vector<std::string> extra;
-	for (const auto& kv : fields_) extra.push_back(kv.first);
+	// 字段名 + 类方法名 + 通用成员（定型为 FixedList）。
+	std::vector<Object*> names;
+	for (const auto& kv : members_) CollectUniqueName(names, kv.first);
+	for (const auto& kv : fields_) CollectUniqueName(names, kv.first);
 	if (cls_ != nullptr) {
 		for (const auto& m : cls_->method_names()) {
 			// 过滤 private 方法（与 Class::__inspect__ 一致），
@@ -577,35 +550,12 @@ Object* Instance::__inspect__() {
 			if (cls_->method_is_private(m)) continue;
 			// 过滤 internal 的 __init_defaults__，不暴露到 pycp 代码。
 			if (m == "__init_defaults__") continue;
-			extra.push_back(m);
+			CollectUniqueName(names, m);
 		}
-	}
-	for (const auto& n : extra) {
-		bool found = false;
-		for (std::size_t i = 0; i < lst->size(); ++i) {
-			Object* elem = lst->at(i);
-			if (elem != nullptr && elem->is_type("String") &&
-			    static_cast<String*>(elem)->get_value() == n) {
-				found = true;
-				break;
-			}
-		}
-		if (!found) lst->append(String::FromCString(n.c_str()));
 	}
 	// 实例的类型属性 __class__（只读，dir 可见）。
-	{
-		bool found = false;
-		for (std::size_t i = 0; i < lst->size(); ++i) {
-			Object* elem = lst->at(i);
-			if (elem != nullptr && elem->is_type("String") &&
-			    static_cast<String*>(elem)->get_value() == "__class__") {
-				found = true;
-				break;
-			}
-		}
-		if (!found) lst->append(String::FromCString("__class__"));
-	}
-	return lst;
+	CollectUniqueName(names, "__class__");
+	return FixedList::New(names);
 }
 
 void Instance::__set_attribute__(const std::string& name, Object* value) {

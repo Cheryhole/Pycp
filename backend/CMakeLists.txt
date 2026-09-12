@@ -58,6 +58,7 @@ set(PYCP_HEADERS
     ${PYCP_INCLUDE_DIR}/PycpBoolean.hpp
     ${PYCP_INCLUDE_DIR}/PycpString.hpp
     ${PYCP_INCLUDE_DIR}/PycpList.hpp
+    ${PYCP_INCLUDE_DIR}/PycpFixedList.hpp
     ${PYCP_INCLUDE_DIR}/PycpMap.hpp
     ${PYCP_INCLUDE_DIR}/PycpIterator.hpp
     ${PYCP_INCLUDE_DIR}/PycpMagic.hpp
@@ -86,6 +87,7 @@ set(PYCP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpModule.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpClass.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpList.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpFixedList.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpMap.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpIterator.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpMagic.cpp

@@ -8,6 +8,7 @@
 #include "PycpGC.hpp"
 #include "PycpException.hpp"
 #include "PycpMagic.hpp"
+#include "PycpFixedList.hpp"
 
 #include <sstream>
 
@@ -164,22 +165,24 @@ Object* Map::__map__() {
 	return Map::NewView(this);
 }
 
-List* Map::keys() const {
-	List* out = List::New();
+FixedList* Map::keys() const {
+	// 返回不可变键快照（FixedList）：普通模式为 items_ 全部键，
+	// 视图模式为 owner 的成员名（与 member_pairs() 同源、同序）。
+	// 元素引用转移给结果（自有键先 Incref；FromCString 返回的 Owned 直接传入）。
+	std::vector<Object*> keys;
 	if (is_view_ && owner_ != nullptr) {
-		// 视图：键为 owner 的成员名（与 __string__ / size() 同源、同序）。
 		for (const auto& kv : owner_->member_pairs()) {
-			// append 内部 Incref，故临时 String 用完需 Decref。
-			Object* s = String::FromCString(kv.first.c_str());
-			out->append(s);
-			Decref(s);
+			keys.push_back(String::FromCString(kv.first.c_str()));
 		}
 	} else {
 		for (const auto& kv : items_) {
-			if (kv.first != nullptr) out->append(kv.first);
+			if (kv.first != nullptr) {
+				Incref(kv.first);
+				keys.push_back(kv.first);
+			}
 		}
 	}
-	return out;
+	return FixedList::New(keys);
 }
 
 Map* Map::copy_shallow() const {
@@ -327,16 +330,12 @@ Object* Map::__get_attribute__(const std::string& name) {
 }
 
 Object* Map::__inspect__() {
-	// 先收集基类 members_ 中的 key，再从方法表派生全部方法名，
-	// 最后补充通用属性名（__class__）。方法表是唯一权威来源。
-	List* lst = static_cast<List*>(Object::__inspect__());
-	for (const MethodEntry& e : Map_method_table()) {
-		AppendUniqueName(lst, e.name);
-	}
-	for (const std::string& n : CommonInspectNames()) {
-		AppendUniqueName(lst, n);
-	}
-	return lst;
+	// 收集基类 members_ 名 + 方法表方法名 + 通用属性名，定型为 FixedList。
+	std::vector<Object*> names;
+	for (const auto& kv : members_) CollectUniqueName(names, kv.first);
+	for (const MethodEntry& e : Map_method_table()) CollectUniqueName(names, e.name);
+	for (const std::string& n : CommonInspectNames()) CollectUniqueName(names, n);
+	return FixedList::New(names);
 }
 
 void Map::foreach_ref(const std::function<void(Object*)>& visit) {

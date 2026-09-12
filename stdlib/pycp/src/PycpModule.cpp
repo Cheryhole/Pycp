@@ -5,6 +5,7 @@
 #include "PycpInteger.hpp"   // Integer_method_table（Boolean 复用）
 #include "PycpBoolean.hpp"
 #include "PycpList.hpp"      // List_method_table
+#include "PycpFixedList.hpp" // FixedList_method_table / FixedList
 #include "PycpMap.hpp"       // Map_method_table
 #include "PycpMethodTable.hpp" // MethodEntry / MethodTableFn（RegisterTypeObject 用）
 #include "PycpNone.hpp"
@@ -61,6 +62,65 @@ Object* _builtin_list_ctor(Object*, Object** argv, std::size_t argc) {
 	return r;
 }
 
+// FixedList([x])：FixedList 类型构造器（对应 Python tuple(x)）。
+//   0 参：空 FixedList。
+//   1 参：转换 —— FixedList/List 浅拷贝为独立 FixedList；其他可迭代对象经
+//          __iterator__ 逐个取出材料化；不可迭代抛 TypeError。
+Object* _builtin_fixedlist_ctor(Object*, Object** argv, std::size_t argc) {
+	if (argc == 0) {
+		return FixedList::New(std::vector<Object*>{});
+	}
+	if (argc != 1) throw TypeError("FixedList() expects 0 or 1 argument.");
+	Object* src = argv[0];
+	if (src == nullptr) throw TypeError("FixedList() argument is null.");
+
+	bool is_fixed = IsType(src, PycpTypeId::FixedList);
+	bool is_list  = IsType(src, PycpTypeId::List);
+	// FixedList / List：浅拷贝为独立 FixedList（元素引用转移，先 Incref）。
+	if (is_fixed || is_list) {
+		std::size_t n = is_fixed ? static_cast<FixedList*>(src)->size()
+		                         : static_cast<List*>(src)->size();
+		std::vector<Object*> items;
+		items.reserve(n);
+		for (std::size_t i = 0; i < n; ++i) {
+			Object* e = is_fixed ? static_cast<FixedList*>(src)->at(i)
+			                     : static_cast<List*>(src)->at(i);
+			if (e != nullptr) {
+				Incref(e);
+				items.push_back(e);
+			}
+		}
+		return FixedList::New(items);
+	}
+
+	// 其他可迭代对象：经 __iterator__ / __next__ 逐个取出材料化。
+	Object* it = nullptr;
+	try {
+		it = src->__iterator__();   // Owned（新迭代器）
+	} catch (const TypeError&) {
+		throw TypeError("cannot convert '" + src->type_name() + "' to FixedList.");
+	}
+	std::vector<Object*> items;
+	try {
+		for (;;) {
+			Object* item = nullptr;
+			try {
+				item = it->__next__();   // Owned；耗尽抛 StopIteration
+			} catch (const StopIteration&) {
+				break;
+			}
+			items.push_back(item);
+		}
+	} catch (...) {
+		// 非 StopIteration 异常：释放已收集元素与迭代器后原样抛出。
+		Decref(it);
+		for (Object* o : items) Decref(o);
+		throw;
+	}
+	Decref(it);
+	return FixedList::New(items);   // 接管 items（Owned）
+}
+
 // Map(x) 的 keys 协议（对齐 Python dict(mapping)）：
 // 对象同时提供 keys()（返回键 List）与 __get_item__(k) 时，遍历 keys()
 // 的每个键、经下标取值后写入新 Map；自定义类定义这两个方法同样生效。
@@ -82,9 +142,12 @@ static Object* _map_from_keys_protocol(Object* src) {
 	// keys 无参：BoundMethod 自动注入 self，argv 传 nullptr 安全。
 	Object* kl = Call(keys_fn, nullptr, 0); // Owned
 	Decref(keys_fn);
-	if (kl == nullptr || !kl->is_type("List")) {
+	// keys() 可返回 List 或 FixedList（均为键快照序列）。
+	bool keys_is_list  = IsType(kl, PycpTypeId::List);
+	bool keys_is_fixed = IsType(kl, PycpTypeId::FixedList);
+	if (kl == nullptr || (!keys_is_list && !keys_is_fixed)) {
 		if (kl != nullptr) Decref(kl);
-		throw TypeError("Map() argument keys() must return a List.");
+		throw TypeError("Map() argument keys() must return a List or FixedList.");
 	}
 	// __get_item__ 探测（实际取值走 GetItem，与 x[k] 语义一致）。
 	Object* getitem = nullptr;
@@ -99,11 +162,19 @@ static Object* _map_from_keys_protocol(Object* src) {
 		Decref(kl);
 		throw TypeError("Map() argument must support keys() and __get_item__().");
 	}
-	List* lst = static_cast<List*>(kl);
+	// 统一按「长度 + 下标」访问（List / FixedList 接口一致，仅容器类型不同）。
+	auto key_count = [&]() -> std::size_t {
+		return keys_is_list ? static_cast<List*>(kl)->size()
+		                    : static_cast<FixedList*>(kl)->size();
+	};
+	auto key_at = [&](std::size_t i) -> Object* {
+		return keys_is_list ? static_cast<List*>(kl)->at(i)
+		                    : static_cast<FixedList*>(kl)->at(i);
+	};
 	Map* m = Map::New();
 	try {
-		for (std::size_t i = 0; i < lst->size(); ++i) {
-			Object* k = lst->at(i);
+		for (std::size_t i = 0; i < key_count(); ++i) {
+			Object* k = key_at(i);
 			if (k == nullptr) {
 				throw TypeError("Map() got a null key from keys().");
 			}
@@ -322,6 +393,8 @@ Module* make_pycp_module() {
 	                Integer_method_table);
 	RegisterTypeObject(mod, "List",    _builtin_list_ctor,    /*initialize=*/nullptr,
 	                List_method_table);
+	RegisterTypeObject(mod, "FixedList", _builtin_fixedlist_ctor, /*initialize=*/nullptr,
+	                FixedList_method_table);
 	RegisterTypeObject(mod, "Map",     _builtin_map_ctor,     /*initialize=*/nullptr,
 	                Map_method_table);
 

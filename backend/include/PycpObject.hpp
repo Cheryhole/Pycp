@@ -53,6 +53,7 @@ enum class PycpTypeId : uint32_t{
 	Boolean,
 	String,
 	List,
+	FixedList,
 	Map,
 	File,
 	Function,
@@ -61,6 +62,7 @@ enum class PycpTypeId : uint32_t{
 	Module,
 	ListIterator,
 	StringIterator,
+	FixedListIterator,
 };
 
 enum class PycpTypeFlag : uint32_t{

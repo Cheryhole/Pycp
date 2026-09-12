@@ -30,6 +30,7 @@
 #include "PycpInteger.hpp"
 #include "PycpString.hpp"
 #include "PycpList.hpp"
+#include "PycpFixedList.hpp"
 #include "PycpMethodTable.hpp"   // MethodEntry / MethodTableFn / PycpCFunction
 
 #include <functional>
@@ -87,10 +88,10 @@ public:
 	// 元素个数（视图模式返回 owner 合并成员数）。
 	std::size_t size() const;
 
-	// 键列表（返回 Owned List，refcount=1）：
+	// 键列表（返回 Owned FixedList，refcount=1；不可变快照）：
 	//   - 普通 Map：items_ 的全部键（顺序为哈希表序）
 	//   - 视图模式：owner_ 的成员名（String），顺序与 member_pairs() 一致
-	List* keys() const;
+	FixedList* keys() const;
 
 	// 浅拷贝（返回 Owned Map，refcount=1）：
 	//   - 普通 Map：复制 items_ 的键值对（键/值各自 Incref）

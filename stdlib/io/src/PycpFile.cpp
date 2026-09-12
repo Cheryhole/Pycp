@@ -8,6 +8,7 @@
 #include "PycpList.hpp"
 #include "PycpABI.hpp"
 #include "PycpMagic.hpp"
+#include "PycpFixedList.hpp"
 
 #include <sstream>
 #include <cstring>
@@ -553,18 +554,12 @@ Object* File::__get_attribute__(const std::string& attr_name) {
 
 Object* File::__inspect__() {
 	// 只读属性（closed/name/mode）+ 方法表全部方法名 + 通用属性名（__class__）。
-	List* lst = Pycp::New<List>();
+	std::vector<Object*> names;
 	const char* attrs[] = {"closed", "name", "mode"};
-	for (const char* a : attrs) {
-		AppendUniqueName(lst, a);
-	}
-	for (const MethodEntry& e : File_method_table()) {
-		AppendUniqueName(lst, e.name);
-	}
-	for (const std::string& n : CommonInspectNames()) {
-		AppendUniqueName(lst, n);
-	}
-	return lst;
+	for (const char* a : attrs) CollectUniqueName(names, a);
+	for (const MethodEntry& e : File_method_table()) CollectUniqueName(names, e.name);
+	for (const std::string& n : CommonInspectNames()) CollectUniqueName(names, n);
+	return FixedList::New(names);
 }
 
 Object* File::__string__() {

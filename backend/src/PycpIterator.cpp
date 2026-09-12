@@ -29,25 +29,17 @@ Object* ListIterator::__next__() {
 }
 
 Object* ListIterator::__inspect__() {
-	List* lst = static_cast<List*>(Object::__inspect__());
-	std::vector<std::string> extra = {
-		"__next__", "__iterator__",
-		"__get_attribute__", "__set_attribute__", "__delete_attribute__", "__inspect__",
-		"__class__",
-	};
-	for (const auto& n : extra) {
-		bool found = false;
-		for (std::size_t i = 0; i < lst->size(); ++i) {
-			Object* elem = lst->at(i);
-			if (elem != nullptr && elem->is_type("String") &&
-			    static_cast<String*>(elem)->get_value() == n) {
-				found = true;
-				break;
-			}
-		}
-		if (!found) lst->append(String::FromCString(n.c_str()));
-	}
-	return lst;
+	// 定型为 FixedList。
+	std::vector<Object*> names;
+	for (const auto& kv : members_) CollectUniqueName(names, kv.first);
+	CollectUniqueName(names, "__next__");
+	CollectUniqueName(names, "__iterator__");
+	CollectUniqueName(names, "__get_attribute__");
+	CollectUniqueName(names, "__set_attribute__");
+	CollectUniqueName(names, "__delete_attribute__");
+	CollectUniqueName(names, "__inspect__");
+	for (const std::string& n : CommonInspectNames()) CollectUniqueName(names, n);
+	return FixedList::New(names);
 }
 
 void ListIterator::foreach_ref(const std::function<void(Object*)>& visit) {
@@ -80,27 +72,58 @@ Object* StringIterator::__next__() {
 }
 
 Object* StringIterator::__inspect__() {
-	List* lst = static_cast<List*>(Object::__inspect__());
-	std::vector<std::string> extra = {
-		"__next__",
-		"__get_attribute__", "__set_attribute__", "__inspect__", "__class__",
-	};
-	for (const auto& n : extra) {
-		bool found = false;
-		for (std::size_t i = 0; i < lst->size(); ++i) {
-			Object* elem = lst->at(i);
-			if (elem != nullptr && elem->is_type("String") &&
-			    static_cast<String*>(elem)->get_value() == n) {
-				found = true;
-				break;
-			}
-		}
-		if (!found) lst->append(String::FromCString(n.c_str()));
-	}
-	return lst;
+	// 定型为 FixedList。
+	std::vector<Object*> names;
+	for (const auto& kv : members_) CollectUniqueName(names, kv.first);
+	CollectUniqueName(names, "__next__");
+	CollectUniqueName(names, "__get_attribute__");
+	CollectUniqueName(names, "__set_attribute__");
+	CollectUniqueName(names, "__inspect__");
+	for (const std::string& n : CommonInspectNames()) CollectUniqueName(names, n);
+	return FixedList::New(names);
 }
 
 void StringIterator::foreach_ref(const std::function<void(Object*)>& visit) {
+	if (source_ != nullptr) visit(source_);
+}
+
+// =============================================================
+// FixedListIterator
+// =============================================================
+
+FixedListIterator::FixedListIterator(FixedList* source)
+	: Object("FixedListIterator"), source_(source), index_(0) {
+	set_type_info(PycpTypeId::FixedListIterator, PycpTypeFlag::Iterable);
+	if (source_ != nullptr) Incref(source_);
+}
+
+FixedListIterator::~FixedListIterator() {
+	if (source_ != nullptr) Decref(source_);
+	source_ = nullptr;
+}
+
+Object* FixedListIterator::__next__() {
+	if (source_ == nullptr) throw StopIteration();
+	std::size_t n = source_->size();
+	if (index_ >= n) throw StopIteration();
+	// at() 返回 Borrowed；转为 Owned 返回。
+	Object* elem = source_->at(index_);
+	++index_;
+	Incref(elem);
+	return elem;
+}
+
+Object* FixedListIterator::__inspect__() {
+	// 返回 FixedList（方法名列表）。
+	std::vector<Object*> names;
+	for (const auto& kv : members_) CollectUniqueName(names, kv.first);
+	CollectUniqueName(names, "__next__");
+	CollectUniqueName(names, "__iterator__");
+	for (const std::string& n : CommonInspectNames()) CollectUniqueName(names, n);
+	return FixedList::New(names);
+}
+
+void FixedListIterator::foreach_ref(const std::function<void(Object*)>& visit) {
 	if (source_ != nullptr) visit(source_);
 }
 

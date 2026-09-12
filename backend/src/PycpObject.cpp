@@ -1,6 +1,7 @@
 #include "PycpObject.hpp"
 #include "PycpString.hpp"
 #include "PycpList.hpp"
+#include "PycpFixedList.hpp"
 #include "PycpBoolean.hpp"
 #include "PycpMap.hpp"
 #include "PycpClass.hpp"
@@ -190,7 +191,7 @@ std::vector<std::pair<std::string, Object*>> Object::member_pairs() const {
 	// 收集方法名：__inspect__() 为虚调用，子类已正确枚举各自方法名。
 	Object* mlist = const_cast<Object*>(this)->__inspect__();
 	if (mlist != nullptr) {
-		List* lst = static_cast<List*>(mlist);
+		FixedList* lst = static_cast<FixedList*>(mlist);
 		for (std::size_t i = 0; i < lst->size(); ++i) {
 			Object* name_obj = lst->at(i);
 			if (name_obj == nullptr) continue;
@@ -240,11 +241,10 @@ Object* Object::__next__(){
 
 Object* Object::__inspect__(){
   // 默认返回成员字典中所有 key 的名称列表（含已设置的成员，可能含方法）。
-  List* lst = Pycp::New<List>();
-  for (const auto& kv : members_) {
-    lst->append(String::FromCString(kv.first.c_str()));
-  }
-  return lst;
+  // 返回 FixedList（不可变）。
+  std::vector<Object*> names;
+  for (const auto& kv : members_) CollectUniqueName(names, kv.first);
+  return FixedList::New(names);
 }
 
 void Object::foreach_ref([[maybe_unused]] const std::function<void(Object*)>& visit){
