@@ -1035,13 +1035,17 @@ Object* VM::execute(CodeObject* co,
 					throw VMError(cur_file(), cur_line(), "import index out of range.");
 				const std::string& modname = module_->imports[idx];
 				Pycp::Module* modobj = load_module(modname);
-				// load_module 返回的模块对象自身持有 1 份引用（创建时 New）。
-				// 此处 push 会再 Incref 一次（栈引用约定），但若直接 push 会导致
-				// 引用计数翻倍（模块对象多出一份无主引用）。因此 push 后立刻
-				// Decref 一次，使栈上的引用与 load_module 返回的引用合为同一份，
-				// 避免后续 STORE_VAR / 析构时引用计数无法归零导致重复释放。
+				// push 按栈引用约定对模块对象 Incref（值级真实引用）。
+				// 注意：此处【不能】在 push 后再 Decref 抵消——load_module
+				// 返回的模块仅由 module_cache_ 持有一份引用（New 的初始引用
+				// 已被 cache 的 Incref 接管），栈上必须保留一份真实引用，
+				// 后续 STORE_VAR / POP_TOP 才能正确配对抵消。
+				// 若在此处抵消，则 `from mod import x` 的字节码
+				// （LOAD_MODULE / DUP_TOP / LOAD_ATTR / POP_TOP）会对模块
+				// 净减 1 份引用（DUP_TOP 增 1、LOAD_ATTR 与 POP_TOP 各减 1），
+				// 使模块引用计数跌破 cache 持有的一份，导致析构时入口命名空间
+				// Decref 把模块释放，而 module_cache_ 仍持有悬空指针 → 双重释放。
 				push(modobj);
-				if (modobj != nullptr) Decref(modobj);
 				break;
 			}
 

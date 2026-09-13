@@ -161,6 +161,15 @@ bool ValidateSdkRoot(const std::string& root, SdkInfo* out) {
 			break;
 		}
 	}
+	// 精确小数依赖（mpdecimal）静态库：必须与静态运行时一同链入，否则
+	// libPycpRuntime.a 内的 PycpDecimal.cpp.obj 引用的 mpd_* 符号无法解析。
+	for (const char* a_name : {"libmpdec.a", "mpdec.lib"}) {
+		const std::string a = join(info.lib_dir, a_name);
+		if (is_file(a)) {
+			info.static_mpdec = a;
+			break;
+		}
+	}
 	scan_static_extensions(info.lib_dir, &info);
 	info.has_static = !info.static_runtime.empty() &&
 	                  !info.stdlib_static_libs.empty();

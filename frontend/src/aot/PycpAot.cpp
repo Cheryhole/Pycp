@@ -311,12 +311,13 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 				// ImportModule 返回常驻 Borrowed 对象，此处 Incref 平衡后续
 				// 栈弹出时的 Decref。
 				int lineno = (pc < co.linenos.size()) ? co.linenos[pc] : -1;
-				os << "    { Pycp::Module* m = Pycp::ImportModule("
-				   << cpp_string_literal(dep) << ");\n";
+				os << "    { std::string imp_diag;\n";
+				os << "      Pycp::Module* m = Pycp::ImportModule("
+				   << cpp_string_literal(dep) << ", nullptr, &imp_diag);\n";
 				os << "      if (m == nullptr) throw Pycp::ImportError("
 				   << cpp_string_literal(module.source_path) << ", " << lineno
 				   << ", \"No module named '\" + std::string("
-				   << cpp_string_literal(dep) << ") + \"'\");\n";
+				   << cpp_string_literal(dep) << ") + \"'.\" + imp_diag);\n";
 				os << "      Pycp::Incref(m); st.push_back(m); }\n";
 				break;
 			}
@@ -374,10 +375,17 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 				// 弹值 + 对象；SetAttr -> __set_attribute__ 内部按需 Incref 存入，
 				// 此处释放 value 从栈 pop 带来的引用（与 VM STORE_ATTR 一致，
 				// 避免字段持有后栈引用泄漏）。
+				int lineno = (pc < co.linenos.size()) ? co.linenos[pc] : -1;
 				os << "    { Pycp::Object* value = st.back(); st.pop_back();\n";
 				os << "      Pycp::Object* obj = st.back(); st.pop_back();\n";
-				os << "      Pycp::SetAttr(obj, " << cpp_string_literal(attr)
-				   << ", value);\n";
+				os << "      try { Pycp::SetAttr(obj, " << cpp_string_literal(attr)
+				   << ", value); }\n";
+				os << "      catch (const Pycp::Exception& e) {\n";
+				os << "        if (e.file.empty()) throw Pycp::Exception("
+				   << cpp_string_literal(module.source_path) << ", " << lineno
+				   << ", e.what());\n";
+				os << "        throw;\n";
+				os << "      }\n";
 				os << "      Pycp::Decref(value);\n";
 				os << "      Pycp::Decref(obj); }\n";
 				break;
@@ -1093,6 +1101,7 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	// 命名空间（裸名经 pycp.__name__ 回退）；其余模块命名空间注入 __name__ = 模块名。
 	if (is_entry) {
 		os << "        mod->set_module_name(\"__main__\");\n";
+		os << "        (*g_mod_ns)[\"__name__\"] = Pycp::String::FromCString(\"__main__\");\n";
 	} else {
 		os << "        (*g_mod_ns)[\"__name__\"] = Pycp::String::FromCString("
 		   << cpp_string_literal(modname) << ");\n";

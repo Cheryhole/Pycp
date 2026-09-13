@@ -52,6 +52,10 @@ struct SdkInfo {
 	std::vector<std::string> builtin_modules;    // {"io", "pycp", "classtools"}
 	std::vector<std::string> stdlib_static_libs; // libPycpExt_*.a 绝对路径
 	std::string              static_runtime;     // libPycpRuntime.a / PycpRuntime.lib 绝对路径
+	std::string              static_mpdec;       // libmpdec.a / mpdec.lib 绝对路径
+	                                           // （精确小数依赖；静态链接时必须与
+	                                        //  静态运行时同列，否则 PycpDecimal 的
+	                                        //  mpd_* 符号 undefined reference）
 
 	// 三者齐全为 true，表示本 SDK 支持 --static。
 	bool has_static = false;

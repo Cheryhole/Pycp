@@ -284,6 +284,11 @@ std::string CMakeGenerator::Generate(const ProjectSpec& spec) const {
 		os << "    # 静态运行时（绝对路径，避免 MinGW 选中同目录的 DLL 导入库\n";
 		os << "    # libPycpRuntime.dll.a）\n";
 		os << "    \"" << cmake_path(sdk.static_runtime) << "\"\n";
+		// 精确小数依赖（mpdecimal）：必须排在静态运行时之后，由链接器按
+		// 从左到右解析、从 libPycpRuntime.a 拉取 PycpDecimal 后在此解析 mpd_*。
+		if (!sdk.static_mpdec.empty()) {
+			os << "    \"" << cmake_path(sdk.static_mpdec) << "\"\n";
+		}
 	}
 	os << ")\n\n";
 
