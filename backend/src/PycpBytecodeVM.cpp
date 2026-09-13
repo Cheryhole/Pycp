@@ -74,13 +74,19 @@ VM::VM(Module* module, std::map<std::string, Module*>* registry,
 				case ConstKind::STRING:
 					module_->runtime_consts.push_back(String::FromCString(c.str_value.c_str()));
 					break;
+				case ConstKind::FLOAT:
+					module_->runtime_consts.push_back(New<Float>(c.float_value));
+					break;
+				case ConstKind::DECIMAL:
+					module_->runtime_consts.push_back(New<Decimal>(c.str_value));
+					break;
 				case ConstKind::NONE:
 					module_->runtime_consts.push_back(None::instance);
 					Incref(None::instance);
 					break;
 				default:
 					throw VMError("unknown constant kind.");
-				}
+			}
 				GC_AddRoot(module_->runtime_consts.back());
 				}
 				}
@@ -223,6 +229,12 @@ Object* VM::exec_module(Module* m) {
 				case ConstKind::STRING:
 					m->runtime_consts.push_back(String::FromCString(c.str_value.c_str()));
 					break;
+				case ConstKind::FLOAT:
+					m->runtime_consts.push_back(New<Float>(c.float_value));
+					break;
+				case ConstKind::DECIMAL:
+					m->runtime_consts.push_back(New<Decimal>(c.str_value));
+					break;
 				case ConstKind::NONE:
 					m->runtime_consts.push_back(None::instance);
 					Incref(None::instance);
@@ -352,6 +364,12 @@ Pycp::Module* VM::load_from_bc_module(const std::string& name, Module* bc) {
 						break;
 					case ConstKind::STRING:
 						bc->runtime_consts.push_back(String::FromCString(c.str_value.c_str()));
+						break;
+					case ConstKind::FLOAT:
+						bc->runtime_consts.push_back(New<Float>(c.float_value));
+						break;
+					case ConstKind::DECIMAL:
+						bc->runtime_consts.push_back(New<Decimal>(c.str_value));
 						break;
 					case ConstKind::NONE:
 						bc->runtime_consts.push_back(None::instance);

@@ -159,6 +159,20 @@ std::vector<uint8_t> Serialize(const Module& module) {
 				WriteULEB128(seg, c.str_value.size());
 				put_bytes(seg, reinterpret_cast<const uint8_t*>(c.str_value.data()),
 				          c.str_value.size());
+			} else if (c.kind == ConstKind::FLOAT) {
+				// 8 字节 IEEE 754 bit pattern，小端逐字节写入
+				uint64_t bits = 0;
+				static_assert(sizeof(bits) == sizeof(c.float_value),
+				              "double must be 64-bit");
+				std::memcpy(&bits, &c.float_value, sizeof(bits));
+				for (int b = 0; b < 8; ++b) {
+					seg.push_back(static_cast<uint8_t>((bits >> (8 * b)) & 0xFF));
+				}
+			} else if (c.kind == ConstKind::DECIMAL) {
+				// 文本形式（科学计数法），长度前缀 + 字节串（同 STRING）
+				WriteULEB128(seg, c.str_value.size());
+				put_bytes(seg, reinterpret_cast<const uint8_t*>(c.str_value.data()),
+				          c.str_value.size());
 			}
 			// NONE 无附加数据
 		}
@@ -432,6 +446,19 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 				if (off + len > size) throw BytecodeError("string constant truncated.");
 				c.str_value.assign(reinterpret_cast<const char*>(data + off), len);
 				off += len;
+			} else if (c.kind == ConstKind::FLOAT) {
+				if (off + 8 > size) throw BytecodeError("float constant truncated.");
+				uint64_t bits = 0;
+				for (int b = 0; b < 8; ++b) {
+					bits |= static_cast<uint64_t>(data[off + b]) << (8 * b);
+				}
+				off += 8;
+				std::memcpy(&c.float_value, &bits, sizeof(c.float_value));
+			} else if (c.kind == ConstKind::DECIMAL) {
+				uint64_t len = ReadULEB128(data, size, off);
+				if (off + len > size) throw BytecodeError("decimal constant truncated.");
+				c.str_value.assign(reinterpret_cast<const char*>(data + off), len);
+				off += len;
 			}
 			// NONE 无附加
 			module.const_pool.push_back(std::move(c));
@@ -644,6 +671,17 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 				break;
 			case ConstKind::STRING:
 				module.runtime_consts.push_back(String::FromCString(c.str_value.c_str()));
+				break;
+			case ConstKind::FLOAT:
+				module.runtime_consts.push_back(New<Float>(c.float_value));
+				break;
+			case ConstKind::DECIMAL:
+				try {
+					module.runtime_consts.push_back(New<Decimal>(c.str_value));
+				} catch (const Pycp::Exception&) {
+					throw BytecodeError("invalid decimal constant: \"" +
+					                    c.str_value + "\"");
+				}
 				break;
 			case ConstKind::NONE:
 				module.runtime_consts.push_back(None::instance);

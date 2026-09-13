@@ -45,7 +45,9 @@ enum class NodeType : uint16_t {
 	BREAK_STATEMENT = 29,
 	FOREACH_STATEMENT = 30,
 	DELETE_STATEMENT = 31,
-	MAP_LITERAL = 32
+	MAP_LITERAL = 32,
+	FLOAT_LITERAL = 33,
+	DECIMAL_LITERAL = 34
 };
 
 enum class UnaryOp : uint16_t {
@@ -310,6 +312,33 @@ struct IntegerLiteral : Literal {
 	~IntegerLiteral() override;
 
 	NodeType get_type() const override { return NodeType::INTEGER_LITERAL; }
+	std::string to_string() const override;
+};
+
+// ============================================================
+// FloatLiteral 节点（1.23 / 0.34 等小数字面量，含 f/F 后缀形式）
+// ============================================================
+struct FloatLiteral : Literal {
+	std::string* value;
+
+	explicit FloatLiteral(std::string* v, int line = -1);
+	~FloatLiteral() override;
+
+	NodeType get_type() const override { return NodeType::FLOAT_LITERAL; }
+	std::string to_string() const override;
+};
+
+// ============================================================
+// DecimalLiteral 节点（d/D 后缀字面量：0.1d / 2d 等，value 保留
+// 剥离后缀的原文文本，供 Decimal 按字符串精确构造）
+// ============================================================
+struct DecimalLiteral : Literal {
+	std::string* value;
+
+	explicit DecimalLiteral(std::string* v, int line = -1);
+	~DecimalLiteral() override;
+
+	NodeType get_type() const override { return NodeType::DECIMAL_LITERAL; }
 	std::string to_string() const override;
 };
 

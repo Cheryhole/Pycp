@@ -2,6 +2,8 @@
 #include "PycpBytecode.hpp"   // Environment_KeepNamesOfCodeObject 需读 CodeObject::free_names
 #include "PycpClass.hpp"
 #include "PycpFunction.hpp"
+#include "PycpFloat.hpp"
+#include "PycpDecimal.hpp"
 #include "PycpExtension.hpp"  // Extension::Invoke（装饰器调用）
 #include "PycpNativeExt.hpp"
 #include <map>
@@ -261,17 +263,23 @@ Object* Compare(Object* lhs, Object* rhs, int op){
 	if (lhs == nullptr || rhs == nullptr)
 		throw TypeError("Cannot compare null object.");
 
-	// 仅同类型的 Integer / String 可参与真正的值比较；
-	// 其余组合（含 None、跨类型）与 VM COMPARE_OP 语义一致：
-	//   EQ → 0（false）、NE → 1（true）、其余抛 TypeError。
-	// Boolean 继承 Integer，与 Integer 互通比较（True==1 / False==0）。
+	// 数值族（Integer/Boolean/Float/Decimal）可跨类型参与真正的值比较
+	//（提升规则见各类型魔术方法）；其余组合（含 None、跨类型）与 VM
+	// COMPARE_OP 语义一致：EQ → 0（false）、NE → 1（true）、其余抛
+	// TypeError。Boolean 继承 Integer，与 Integer 互通比较（True==1 / False==0）。
 	bool both_int_like =
 		(dynamic_cast<Integer*>(lhs) != nullptr) &&
 		(dynamic_cast<Integer*>(rhs) != nullptr);
+	auto is_numeric = [](Object* o){
+		return dynamic_cast<Integer*>(o) != nullptr ||
+		       dynamic_cast<Float*>(o) != nullptr ||
+		       dynamic_cast<Decimal*>(o) != nullptr;
+	};
 	bool comparable =
 		((lhs->type_name() == rhs->type_name()) &&
 		 (lhs->is_type("Integer") || lhs->is_type("String"))) ||
-		both_int_like;
+		both_int_like ||
+		(is_numeric(lhs) && is_numeric(rhs));
 
 	if (comparable) {
 		switch (op) {

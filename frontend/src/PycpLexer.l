@@ -104,9 +104,50 @@ in       { brk_expr_ctx = 1; return KW_IN; }
 }
 
 [0-9]+ { // integer
-	Pycplval.text = new std::string(Pycptext); 
+	Pycplval.text = new std::string(Pycptext);
 	brk_expr_ctx = 0;
 	return LT_INTEGER;
+}
+
+0[xX][0-9a-fA-F]+ { // hexadecimal integer（0x/0X 前缀）
+	// 统一转成十进制文本后交给既有 LT_INTEGER 通路（AST/代码生成零改动）。
+	try {
+		Pycplval.text = new std::string(
+			std::to_string(std::stoll(Pycptext, nullptr, 16)));
+	} catch (const std::out_of_range&) {
+		std::cerr << "File \"" << g_current_source_path
+		          << "\", line " << Pycplineno << "\n"
+		          << "Hexadecimal integer literal out of range: "
+		          << Pycptext << std::endl;
+		g_lexer_error = true;
+		return 0;
+	}
+	brk_expr_ctx = 0;
+	return LT_INTEGER;
+}
+
+[0-9]+\.[0-9]+ { // float literal（1.23 / 0.34 等；flex 最长匹配优先，
+                 // 不影响 obj.attr 成员访问与 0x 十六进制规则）
+	Pycplval.text = new std::string(Pycptext);
+	brk_expr_ctx = 0;
+	return LT_FLOAT;
+}
+
+[0-9]+\.[0-9]+[fFdD] { // 小数字面量 + f/F（Float）或 d/D（Decimal）后缀
+	// 剥离后缀后按类型分发：
+	//   f/F -> LT_FLOAT（如 "0.1f" -> "0.1"）
+	//   d/D -> LT_DECIMAL（如 "0.1d" -> "0.1"，保留原文以精确构造 Decimal）
+	char suffix = Pycptext[Pycpleng - 1];
+	Pycplval.text = new std::string(Pycptext, Pycpleng - 1);
+	brk_expr_ctx = 0;
+	return (suffix == 'f' || suffix == 'F') ? LT_FLOAT : LT_DECIMAL;
+}
+
+[0-9]+[fFdD] { // 整数形式 + 后缀：1f -> Float(1.0)，2d -> Decimal("2")
+	char suffix = Pycptext[Pycpleng - 1];
+	Pycplval.text = new std::string(Pycptext, Pycpleng - 1);
+	brk_expr_ctx = 0;
+	return (suffix == 'f' || suffix == 'F') ? LT_FLOAT : LT_DECIMAL;
 }
 <*>"//"[ \t]*"__pycp_pp#"[^\n]*\n	{ /* line directive: // __pycp_pp# <lineno> "<file>"; consume whole line, set Pycplineno after '\n' auto-increment. <*> so it works after '}' (EXPECT_ELIF) etc. */
 	const char* p = Pycptext + 2;   /* 跳过 "//" */

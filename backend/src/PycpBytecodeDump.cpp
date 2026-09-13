@@ -8,6 +8,8 @@
 
 #include "PycpBytecodeDump.hpp"
 
+#include <cstdio>
+
 namespace Pycp::BC {
 
 namespace {
@@ -72,6 +74,12 @@ std::string const_text(const Constant& c) {
 	switch (c.kind) {
 		case ConstKind::INTEGER: return std::to_string(c.int_value);
 		case ConstKind::STRING:  return "\"" + c.str_value + "\"";
+		case ConstKind::FLOAT: {
+			char buf[64];
+			std::snprintf(buf, sizeof(buf), "%g", c.float_value);
+			return buf;
+		}
+		case ConstKind::DECIMAL: return "Decimal(\"" + c.str_value + "\")";
 		case ConstKind::NONE:    return "None";
 		default:                 return "<unknown>";
 	}

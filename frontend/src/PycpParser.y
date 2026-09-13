@@ -186,7 +186,7 @@ static Pycp::Ast::FunctionExpression* make_func_expr(
 }
 
 %token NEWLINE
-%token <text> LT_INTEGER LT_STRING IDENTIFIER
+%token <text> LT_INTEGER LT_FLOAT LT_DECIMAL LT_STRING IDENTIFIER
 %token KW_FUNC KW_RETURN KW_IF KW_ELIF KW_ELSE KW_NONE KW_IMPORT KW_AS KW_CLASS KW_TRUE KW_FALSE
 %token KW_FROM KW_INHERITS KW_REPEAT KW_TO KW_BREAK KW_BY KW_DELETE
 %token KW_FOR KW_IN
@@ -1159,6 +1159,14 @@ power_expression: primary_expression
 
 primary_expression: LT_INTEGER {
 			$$ = new IntegerLiteral($1, @$.first_line);
+		}
+		| LT_FLOAT {
+			$$ = new FloatLiteral($1, @$.first_line);
+		}
+		| LT_DECIMAL {
+			// d/D 后缀字面量：以原文文本精确构造 Decimal（保留尾零等
+			// 十进制语义，如 0.10d -> Decimal("0.10")）。
+			$$ = new DecimalLiteral($1, @$.first_line);
 		}
 		| LT_STRING {
 			$$ = new StringLiteral($1, @$.first_line);

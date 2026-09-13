@@ -131,6 +131,8 @@ enum class ConstKind : uint8_t {
 	INTEGER = 1,
 	STRING  = 2,
 	NONE    = 3,
+	FLOAT   = 4,   // 8 字节 IEEE 754 double（bit pattern 原样存储）
+	DECIMAL = 5,   // 精确小数：以科学计数法文本存储（与 STRING 同法）
 };
 
 // 常量池条目（编译期/反序列化后统一用 Object* 表示）
@@ -139,7 +141,8 @@ enum class ConstKind : uint8_t {
 struct Constant {
 	ConstKind kind;
 	int64_t int_value;         // kind == INTEGER
-	std::string str_value;     // kind == STRING
+	double float_value = 0.0;  // kind == FLOAT
+	std::string str_value;     // kind == STRING / DECIMAL（DECIMAL 存文本形式）
 };
 
 // =============================================================

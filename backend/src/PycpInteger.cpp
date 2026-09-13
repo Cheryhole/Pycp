@@ -2,6 +2,8 @@
 #include "PycpString.hpp"
 #include "PycpList.hpp"
 #include "PycpBoolean.hpp"
+#include "PycpFloat.hpp"
+#include "PycpDecimal.hpp"
 #include "PycpException.hpp"
 #include "PycpGC.hpp"
 #include "PycpMagic.hpp"   // CollectUniqueName / CommonInspectNames
@@ -13,6 +15,40 @@
 namespace Pycp {
 
 Integer* Integer::instances[PYCP_INTEGER_INSTANCES] = {0};
+
+// ------------------------------------------------------------
+// 混合运算提升辅助（用户确认的规则）：
+//   Integer op Float   -> Float（double 运算）
+//   Integer op Decimal -> Decimal（精确运算）
+// 左操作数为 Integer 时，把左值提升为对应类型后转调其实现：
+//   - Float：直接按 double 计算；
+//   - Decimal：构造临时 Decimal（精确承载 int64）后转调其魔术方法，
+//     异常路径上同样释放临时对象。
+// ------------------------------------------------------------
+
+// Integer op Decimal 的统一转调入口。
+static Object* int_op_decimal(int64_t lhs, Object* other,
+                              Object* (Decimal::* op)(Object*)){
+	Decimal* tmp = static_cast<Decimal*>(New<Decimal>(lhs));
+	try {
+		Object* r = (tmp->*op)(other);
+		Decref(tmp);
+		return r;
+	} catch (...) {
+		Decref(tmp);
+		throw;
+	}
+}
+
+// 右操作数是否为 Float（用于算术提升分支）。
+static Float* as_float(Object* other){
+	return (other != nullptr) ? dynamic_cast<Float*>(other) : nullptr;
+}
+
+// 右操作数是否为 Decimal（用于算术提升分支）。
+static Decimal* as_decimal(Object* other){
+	return (other != nullptr) ? dynamic_cast<Decimal*>(other) : nullptr;
+}
 
 Integer::Integer() : Integer(INT64_C(0)){}
 
@@ -57,6 +93,10 @@ Object* Integer::__integer__(){
 	return this;
 }
 
+Object* Integer::__float__(){
+	return New<Float>(static_cast<double>(this->_value));
+}
+
 Object* Integer::__string__(){
 	return New<String>(std::to_string(this->_value));
 }
@@ -82,7 +122,16 @@ Object* Integer::__negation__(){
 }
 
 Object* Integer::__addition__(Object* other){
-	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
+	if (other == nullptr) throw TypeError("Unsupported to add.");
+	// 数值提升：Integer op Float -> Float。
+	if (Float* f = as_float(other)){
+		return New<Float>(static_cast<double>(this->_value) + f->get_value());
+	}
+	// 数值提升：Integer op Decimal -> Decimal（精确）。
+	if (Decimal* d = as_decimal(other)){
+		return int_op_decimal(this->_value, d, &Decimal::__addition__);
+	}
+	if (dynamic_cast<Integer*>(other) == nullptr){
 		throw TypeError("Unsupported to add.");
 	}
 	Integer* i = static_cast<Integer*>(other);
@@ -90,7 +139,14 @@ Object* Integer::__addition__(Object* other){
 }
 
 Object* Integer::__subtraction__(Object* other){
-	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
+	if (other == nullptr) throw TypeError("Unsupported to subtract.");
+	if (Float* f = as_float(other)){
+		return New<Float>(static_cast<double>(this->_value) - f->get_value());
+	}
+	if (Decimal* d = as_decimal(other)){
+		return int_op_decimal(this->_value, d, &Decimal::__subtraction__);
+	}
+	if (dynamic_cast<Integer*>(other) == nullptr){
 		throw TypeError("Unsupported to subtract.");
 	}
 	Integer* i = static_cast<Integer*>(other);
@@ -100,6 +156,12 @@ Object* Integer::__subtraction__(Object* other){
 Object* Integer::__multiplication__(Object* other){
 	if (other == nullptr) throw TypeError("Unsupported to multiply.");
 
+	if (Float* f = as_float(other)){
+		return New<Float>(static_cast<double>(this->_value) * f->get_value());
+	}
+	if (Decimal* d = as_decimal(other)){
+		return int_op_decimal(this->_value, d, &Decimal::__multiplication__);
+	}
 	if (dynamic_cast<Integer*>(other) != nullptr){
 		Integer* i = static_cast<Integer*>(other);
 		return New<Integer>(this->_value * i->_value);
@@ -118,7 +180,18 @@ Object* Integer::__multiplication__(Object* other){
 }
 
 Object* Integer::__division__(Object* other){
-	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
+	if (other == nullptr) throw TypeError("Unsupported to divide.");
+	if (Float* f = as_float(other)){
+		if (f->get_value() == 0.0){
+			throw ValueError("Division by zero.");
+		}
+		return New<Float>(static_cast<double>(this->_value) / f->get_value());
+	}
+	if (Decimal* d = as_decimal(other)){
+		// 除零检查在 Decimal::__division__ 内部完成。
+		return int_op_decimal(this->_value, d, &Decimal::__division__);
+	}
+	if (dynamic_cast<Integer*>(other) == nullptr){
 		throw TypeError("Unsupported to divide.");
 	}
 	Integer* i = static_cast<Integer*>(other);
@@ -129,7 +202,17 @@ Object* Integer::__division__(Object* other){
 }
 
 Object* Integer::__power__(Object* other){
-	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
+	if (other == nullptr) throw TypeError("Unsupported to power.");
+	if (Float* f = as_float(other)){
+		if (this->_value == 0 && f->get_value() < 0.0){
+			throw ValueError("Division by zero.");
+		}
+		return New<Float>(std::pow(static_cast<double>(this->_value), f->get_value()));
+	}
+	if (Decimal* d = as_decimal(other)){
+		return int_op_decimal(this->_value, d, &Decimal::__power__);
+	}
+	if (dynamic_cast<Integer*>(other) == nullptr){
 		throw TypeError("Unsupported to power.");
 	}
 	Integer* i = static_cast<Integer*>(other);
@@ -140,10 +223,19 @@ Object* Integer::__power__(Object* other){
 		std::pow(static_cast<double>(this->_value), static_cast<double>(i->_value))));
 }
 
-// 比较运算符：仅支持同类型 Integer。返回小整数池 Integer 0/1（PERMANENT，
-// 由 ABI Compare 返回给 VM，栈持有引用但无需额外 Decref——池对象常驻）。
+// 比较运算符：支持数值族（Integer/Boolean/Float/Decimal）。返回小整数池
+// Integer 0/1（PERMANENT，由 ABI Compare 返回给 VM，栈持有引用但无需
+// 额外 Decref——池对象常驻）。
 Object* Integer::__less_than__(Object* other){
-	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
+	if (other == nullptr) throw TypeError("Unsupported to compare.");
+	if (Float* f = as_float(other)){
+		return static_cast<double>(this->_value) < f->get_value()
+			? instances[1] : instances[0];
+	}
+	if (Decimal* d = as_decimal(other)){
+		return int_op_decimal(this->_value, d, &Decimal::__less_than__);
+	}
+	if (dynamic_cast<Integer*>(other) == nullptr){
 		throw TypeError("Unsupported to compare.");
 	}
 	return this->_value < static_cast<Integer*>(other)->_value
@@ -151,7 +243,15 @@ Object* Integer::__less_than__(Object* other){
 }
 
 Object* Integer::__less_equal__(Object* other){
-	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
+	if (other == nullptr) throw TypeError("Unsupported to compare.");
+	if (Float* f = as_float(other)){
+		return static_cast<double>(this->_value) <= f->get_value()
+			? instances[1] : instances[0];
+	}
+	if (Decimal* d = as_decimal(other)){
+		return int_op_decimal(this->_value, d, &Decimal::__less_equal__);
+	}
+	if (dynamic_cast<Integer*>(other) == nullptr){
 		throw TypeError("Unsupported to compare.");
 	}
 	return this->_value <= static_cast<Integer*>(other)->_value
@@ -159,8 +259,22 @@ Object* Integer::__less_equal__(Object* other){
 }
 
 Object* Integer::__equal__(Object* other){
-	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
+	if (other == nullptr){
 		// 不同类型直接判不等（对齐 Python: 42 == "x" -> False）。
+		return Boolean::False();
+	}
+	if (Float* f = as_float(other)){
+		return static_cast<double>(this->_value) == f->get_value()
+			? Boolean::True() : Boolean::False();
+	}
+	if (Decimal* d = as_decimal(other)){
+		// __equal__ 永不抛错，临时对象无需 try/catch。
+		Decimal* tmp = static_cast<Decimal*>(New<Decimal>(this->_value));
+		Object* r = tmp->__equal__(d);
+		Decref(tmp);
+		return r;
+	}
+	if (dynamic_cast<Integer*>(other) == nullptr){
 		return Boolean::False();
 	}
 	return this->_value == static_cast<Integer*>(other)->_value
@@ -168,7 +282,15 @@ Object* Integer::__equal__(Object* other){
 }
 
 Object* Integer::__not_equal__(Object* other){
-	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
+	if (other == nullptr) throw TypeError("Unsupported to compare.");
+	if (Float* f = as_float(other)){
+		return static_cast<double>(this->_value) != f->get_value()
+			? instances[1] : instances[0];
+	}
+	if (Decimal* d = as_decimal(other)){
+		return int_op_decimal(this->_value, d, &Decimal::__not_equal__);
+	}
+	if (dynamic_cast<Integer*>(other) == nullptr){
 		throw TypeError("Unsupported to compare.");
 	}
 	return this->_value != static_cast<Integer*>(other)->_value
@@ -176,7 +298,15 @@ Object* Integer::__not_equal__(Object* other){
 }
 
 Object* Integer::__greater_than__(Object* other){
-	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
+	if (other == nullptr) throw TypeError("Unsupported to compare.");
+	if (Float* f = as_float(other)){
+		return static_cast<double>(this->_value) > f->get_value()
+			? instances[1] : instances[0];
+	}
+	if (Decimal* d = as_decimal(other)){
+		return int_op_decimal(this->_value, d, &Decimal::__greater_than__);
+	}
+	if (dynamic_cast<Integer*>(other) == nullptr){
 		throw TypeError("Unsupported to compare.");
 	}
 	return this->_value > static_cast<Integer*>(other)->_value
@@ -184,7 +314,15 @@ Object* Integer::__greater_than__(Object* other){
 }
 
 Object* Integer::__greater_equal__(Object* other){
-	if (other == nullptr || dynamic_cast<Integer*>(other) == nullptr){
+	if (other == nullptr) throw TypeError("Unsupported to compare.");
+	if (Float* f = as_float(other)){
+		return static_cast<double>(this->_value) >= f->get_value()
+			? instances[1] : instances[0];
+	}
+	if (Decimal* d = as_decimal(other)){
+		return int_op_decimal(this->_value, d, &Decimal::__greater_equal__);
+	}
+	if (dynamic_cast<Integer*>(other) == nullptr){
 		throw TypeError("Unsupported to compare.");
 	}
 	return this->_value >= static_cast<Integer*>(other)->_value

@@ -4,6 +4,8 @@
 #include "PycpString.hpp"    // String_method_table
 #include "PycpInteger.hpp"   // Integer_method_table（Boolean 复用）
 #include "PycpBoolean.hpp"
+#include "PycpFloat.hpp"     // Float_method_table
+#include "PycpDecimal.hpp"   // Decimal_method_table
 #include "PycpList.hpp"      // List_method_table
 #include "PycpFixedList.hpp" // FixedList_method_table / FixedList
 #include "PycpMap.hpp"       // Map_method_table
@@ -85,6 +87,39 @@ Object* _builtin_boolean_ctor(Object*, FixedList* args, Map* kwargs) {
 	Object* src = r["value"];
 	if (src == nullptr) throw TypeError("Boolean() argument is null.");
 	return New<Boolean>(src);
+}
+
+// Float([x])：Float 类型构造器。语义对齐 Python 的 float(x)。
+//   0 参：浮点 0.0（对应 float()）。
+//   1 参：复用 Float(Object*) 构造 —— Float 传入返回自身；Integer/String
+//         传入解析为 double（非法抛 ValueError）；其他对象调 __float__。
+Object* _builtin_float_ctor(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"Float", { Extension::Arg::Optional("value") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	if (!r.given("value")) {
+		return New<Float>(0.0);
+	}
+	Object* src = r["value"];
+	if (src == nullptr) throw TypeError("Float() argument is null.");
+	return New<Float>(src);
+}
+
+// Decimal([x])：Decimal 类型构造器。语义对齐 Python 的 decimal.Decimal(x)。
+//   0 参：整数 0（对应 Decimal()）。
+//   1 参：Decimal 传入返回副本；String 传入按十进制文本精确解析（"1.23"、
+//         科学计数法等，非法抛 ValueError）；Integer/Float/其他对象经
+//         __string__ 取文本形式再解析。
+Object* _builtin_decimal_ctor(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"Decimal", { Extension::Arg::Optional("value") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	if (!r.given("value")) {
+		return New<Decimal>(INT64_C(0));
+	}
+	Object* src = r["value"];
+	if (src == nullptr) throw TypeError("Decimal() argument is null.");
+	return New<Decimal>(src);
 }
 
 // List([x])：List 类型构造器。语义对齐 Python 的 list(x)。
@@ -452,6 +487,12 @@ Module* make_pycp_module() {
 	// Boolean 继承 Integer，复用同一方法表。
 	mod->set_type("Boolean", _builtin_boolean_ctor, /*initialize=*/nullptr,
 	              Integer_method_table);
+	// 浮点类型（IEEE 754 double，8 字节）。
+	mod->set_type("Float", _builtin_float_ctor, /*initialize=*/nullptr,
+	              Float_method_table);
+	// 精确小数类型（mpdecimal 实现，默认精度 28 位有效数字）。
+	mod->set_type("Decimal", _builtin_decimal_ctor, /*initialize=*/nullptr,
+	              Decimal_method_table);
 	mod->set_type("List", _builtin_list_ctor, /*initialize=*/nullptr,
 	              List_method_table);
 	// 可选参数 source 省略 -> None（空 FixedList / 空 Map）。

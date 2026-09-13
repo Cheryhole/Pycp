@@ -28,6 +28,8 @@
 #include "PycpGC.hpp"
 #include "PycpEnvironment.hpp"
 #include "PycpInteger.hpp"
+#include "PycpFloat.hpp"
+#include "PycpDecimal.hpp"
 #include "PycpString.hpp"
 #include "PycpManager.hpp"
 #include "PycpModule.hpp"

@@ -274,6 +274,38 @@ std::string IntegerLiteral::to_string() const {
 }
 
 // ============================================================
+// FloatLiteral 实现
+// ============================================================
+FloatLiteral::FloatLiteral(std::string* v, int line)
+	: value(v) {
+	lineno = line;
+}
+
+FloatLiteral::~FloatLiteral() {
+	delete value;
+}
+
+std::string FloatLiteral::to_string() const {
+	return "<Float: " + *value + ">";
+}
+
+// ============================================================
+// DecimalLiteral 实现
+// ============================================================
+DecimalLiteral::DecimalLiteral(std::string* v, int line)
+	: value(v) {
+	lineno = line;
+}
+
+DecimalLiteral::~DecimalLiteral() {
+	delete value;
+}
+
+std::string DecimalLiteral::to_string() const {
+	return "<Decimal: " + *value + ">";
+}
+
+// ============================================================
 // StringLiteral 实现
 // ============================================================
 StringLiteral::StringLiteral(std::string* v, int line)

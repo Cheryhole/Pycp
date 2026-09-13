@@ -2,7 +2,9 @@
 #include "aot/PycpProjectSpec.hpp" // ModuleKind（桩按形态过滤）
 #include "PycpConfig.hpp"
 
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -988,6 +990,22 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 				break;
 			case Pycp::BC::ConstKind::STRING:
 				os << "    g_c[" << i << "] = Pycp::String::FromCString("
+				   << cpp_string_literal(c.str_value) << ");\n";
+				break;
+			case Pycp::BC::ConstKind::FLOAT: {
+				// 以 64 位位模式重建 double（避免精度/文本往返损失）
+				uint64_t bits = 0;
+				std::memcpy(&bits, &c.float_value, sizeof(bits));
+				os << "    {\n"
+				   << "        double d; uint64_t bits = " << bits
+				   << "ULL;\n"
+				   << "        std::memcpy(&d, &bits, sizeof(d));\n"
+				   << "        g_c[" << i << "] = Pycp::Float::FromDouble(d);\n"
+				   << "    }\n";
+				break;
+			}
+			case Pycp::BC::ConstKind::DECIMAL:
+				os << "    g_c[" << i << "] = Pycp::Decimal::FromString("
 				   << cpp_string_literal(c.str_value) << ");\n";
 				break;
 			case Pycp::BC::ConstKind::NONE:

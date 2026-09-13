@@ -43,6 +43,21 @@ option(BUILD_PYTHON_BINDING "Build PycpRuntime4Python.pyd" OFF)
 option(BUILD_TEST "Build test executable" ON)
 
 # =====================================================================
+# 第三方库：mpdecimal（libmpdec，CPython decimal 模块底层实现）
+# ---------------------------------------------------------------------
+# PycpDecimal（精确小数）依赖。以源码形式 vendor 在 third_party/mpdecimal，
+# 编译为 mpdec 静态库。MSVC 走 CONFIG_64 + ANSI（纯 C，无 MASM 依赖）。
+# =====================================================================
+set(PYCP_MPDECIMAL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/mpdecimal)
+if(EXISTS ${PYCP_MPDECIMAL_DIR}/CMakeLists.txt)
+    add_subdirectory(${PYCP_MPDECIMAL_DIR} ${CMAKE_CURRENT_BINARY_DIR}/mpdecimal)
+else()
+    message(FATAL_ERROR
+        "未找到 third_party/mpdecimal（PycpDecimal 依赖的 mpdecimal 源码）。"
+        "请确认仓库完整（third_party/mpdecimal/libmpdec/*.c 应存在）。")
+endif()
+
+# =====================================================================
 # 源文件 / 头文件（严格分离）
 # =====================================================================
 set(PYCP_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -56,6 +71,8 @@ set(PYCP_HEADERS
     ${PYCP_INCLUDE_DIR}/PycpNone.hpp
     ${PYCP_INCLUDE_DIR}/PycpInteger.hpp
     ${PYCP_INCLUDE_DIR}/PycpBoolean.hpp
+    ${PYCP_INCLUDE_DIR}/PycpFloat.hpp
+    ${PYCP_INCLUDE_DIR}/PycpDecimal.hpp
     ${PYCP_INCLUDE_DIR}/PycpString.hpp
     ${PYCP_INCLUDE_DIR}/PycpList.hpp
     ${PYCP_INCLUDE_DIR}/PycpFixedList.hpp
@@ -81,6 +98,8 @@ set(PYCP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpNone.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpInteger.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpBoolean.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpFloat.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpDecimal.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpString.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpFunction.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpGC.cpp
@@ -116,9 +135,14 @@ if(BUILD_RUNTIME_STATIC)
     add_library(PycpRuntime_obj_static OBJECT ${PYCP_SOURCES} ${PYCP_HEADERS})
     target_include_directories(PycpRuntime_obj_static PUBLIC ${PYCP_INCLUDE_DIR})
     target_compile_definitions(PycpRuntime_obj_static PUBLIC PYCP_STATIC)
+    target_link_libraries(PycpRuntime_obj_static PUBLIC mpdec)
 
     add_library(PycpRuntime_static STATIC $<TARGET_OBJECTS:PycpRuntime_obj_static>)
     target_include_directories(PycpRuntime_static PUBLIC ${PYCP_INCLUDE_DIR})
+    # mpdecimal（PycpDecimal 依赖）必须直接链接到本库：OBJECT 库的链接接口
+    # 不会经 $<TARGET_OBJECTS> 聚合传递，消费方（pycp / AOT 静态链接 /
+    # stdlib 静态扩展）需经此处 PUBLIC 接口获得 mpdec。
+    target_link_libraries(PycpRuntime_static PUBLIC mpdec)
     set_target_properties(PycpRuntime_static PROPERTIES
         OUTPUT_NAME "PycpRuntime"
         ARCHIVE_OUTPUT_DIRECTORY ${OUTPUT_DIR}
@@ -140,9 +164,12 @@ if(BUILD_RUNTIME_SHARED)
     add_library(PycpRuntime_obj_shared OBJECT ${PYCP_SOURCES} ${PYCP_HEADERS})
     target_include_directories(PycpRuntime_obj_shared PUBLIC ${PYCP_INCLUDE_DIR})
     target_compile_definitions(PycpRuntime_obj_shared PRIVATE PYCP_BUILD_DLL)
+    target_link_libraries(PycpRuntime_obj_shared PUBLIC mpdec)
 
     add_library(PycpRuntime_shared SHARED $<TARGET_OBJECTS:PycpRuntime_obj_shared>)
     target_include_directories(PycpRuntime_shared PUBLIC ${PYCP_INCLUDE_DIR})
+    # 同静态库：mpdec 直接并入运行时 DLL，stdlib 扩展 DLL 无需单独链接。
+    target_link_libraries(PycpRuntime_shared PUBLIC mpdec)
     set_target_properties(PycpRuntime_shared PROPERTIES
         OUTPUT_NAME "PycpRuntime"
         LIBRARY_OUTPUT_DIRECTORY ${OUTPUT_DIR}

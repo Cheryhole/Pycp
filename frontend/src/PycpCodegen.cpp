@@ -53,6 +53,22 @@ public:
 		module.const_pool.push_back(std::move(c));
 		return module.const_pool.size() - 1;
 	}
+	std::size_t intern_float(double v) {
+		for (std::size_t i = 0; i < module.const_pool.size(); ++i)
+			if (module.const_pool[i].kind == ConstKind::FLOAT &&
+			    module.const_pool[i].float_value == v) return i;
+		Constant c; c.kind = ConstKind::FLOAT; c.float_value = v;
+		module.const_pool.push_back(std::move(c));
+		return module.const_pool.size() - 1;
+	}
+	std::size_t intern_decimal(const std::string& s) {
+		for (std::size_t i = 0; i < module.const_pool.size(); ++i)
+			if (module.const_pool[i].kind == ConstKind::DECIMAL &&
+			    module.const_pool[i].str_value == s) return i;
+		Constant c; c.kind = ConstKind::DECIMAL; c.str_value = s;
+		module.const_pool.push_back(std::move(c));
+		return module.const_pool.size() - 1;
+	}
 
 	// 登记被导入模块名，返回其在 module.imports 中的索引（LOAD_MODULE 操作数）。
 	// 同时记录 import 语句行号（当前 current_lineno），供 ImportError 报错位置。
@@ -341,6 +357,20 @@ static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 		case NodeType::INTEGER_LITERAL: {
 			IntegerLiteral* lit = static_cast<IntegerLiteral*>(e);
 			em.emit(Op::LOAD_CONST, static_cast<int32_t>(em.intern_int(std::stoll(*lit->value))));
+			break;
+		}
+		case NodeType::FLOAT_LITERAL: {
+			FloatLiteral* lit = static_cast<FloatLiteral*>(e);
+			// 小数字面量 -> PycpFloat（double，8 字节）
+			em.emit(Op::LOAD_CONST,
+			        static_cast<int32_t>(em.intern_float(std::stod(*lit->value))));
+			break;
+		}
+		case NodeType::DECIMAL_LITERAL: {
+			DecimalLiteral* lit = static_cast<DecimalLiteral*>(e);
+			// d/D 后缀字面量 -> PycpDecimal（原文文本经常量池 DECIMAL 通道）
+			em.emit(Op::LOAD_CONST,
+			        static_cast<int32_t>(em.intern_decimal(*lit->value)));
 			break;
 		}
 		case NodeType::STRING_LITERAL: {

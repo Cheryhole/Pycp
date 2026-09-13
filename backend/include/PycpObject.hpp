@@ -51,6 +51,8 @@ enum class PycpTypeId : uint32_t{
 	None,
 	Integer,
 	Boolean,
+	Float,
+	Decimal,
 	String,
 	List,
 	FixedList,
@@ -196,6 +198,9 @@ class PYCP_API Object{
 		virtual Class* get_type_class();
 
 		virtual Object* __integer__();
+		// 浮点转换（Pycp.Float(obj)）：默认抛 TypeError；Integer/Decimal/
+		// Float override 返回提升后的 Float。
+		virtual Object* __float__();
 		virtual Object* __string__();
 		// 原始字符串形式（对应 Python 的 __repr__）：供容器渲染元素与键值时
 		// 调用，使「是否加引号 / 如何转义」由元素自身决定（字符串带引号并

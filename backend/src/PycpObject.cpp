@@ -39,6 +39,10 @@ Object* Object::__integer__(){
   throw TypeError("Unsupported to convert to integer.");
 }
 
+Object* Object::__float__(){
+  throw TypeError("Unsupported to convert to float.");
+}
+
 const char* Object::get_name() const {
   return ANONYMOUS_FUNCTION;
 }

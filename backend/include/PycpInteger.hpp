@@ -28,6 +28,8 @@ class PYCP_API Integer : public Object{
 		static Object* FromLong(long long value);
 
 		Object* __integer__() override;
+		// 浮点转换：Integer 提升为 Float（double）。
+		Object* __float__() override;
 		Object* __string__() override;
 		// repr：与 __string__ 一致（数值不带引号）。经虚分派，Boolean 覆写的
 		// __string__（True/False）同样生效。

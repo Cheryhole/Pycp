@@ -1,0 +1,183 @@
+// Float / Decimal 类型与小数、十六进制字面量基础行为验证。
+// 覆盖：小数字面量（1.23 / 0.34）、0x/0X 十六进制、Float 四则与比较、
+//       Decimal 精确运算、混合运算自动提升（int->Float / int->Decimal /
+//       Float+Decimal->Float）、truthiness、类型构造器。
+import io
+import pycp
+
+func main() {
+	// ---------- 1) 小数字面量识别 ----------
+	x = 1.23
+	y = 0.34
+	if (x != 1.23) {
+		io.stdout.write("FAIL float literal 1.23\n")
+	}
+	if (y != 0.34) {
+		io.stdout.write("FAIL float literal 0.34\n")
+	}
+	io.stdout.write("float_literal_ok\n")
+
+	// ---------- 2) 十六进制字面量（0x / 0X 前缀） ----------
+	if (0x10 != 16) {
+		io.stdout.write("FAIL hex 0x10\n")
+	}
+	if (0X1F != 31) {
+		io.stdout.write("FAIL hex 0X1F\n")
+	}
+	if (0xff != 255) {
+		io.stdout.write("FAIL hex 0xff\n")
+	}
+	if (0x0 != 0) {
+		io.stdout.write("FAIL hex 0x0\n")
+	}
+	io.stdout.write("hex_literal_ok\n")
+
+	// ---------- 3) Float 四则与乘方 ----------
+	if (0.5 + 0.25 != 0.75) {
+		io.stdout.write("FAIL float add\n")
+	}
+	if (1.5 - 0.25 != 1.25) {
+		io.stdout.write("FAIL float sub\n")
+	}
+	if (1.5 * 2.0 != 3.0) {
+		io.stdout.write("FAIL float mul\n")
+	}
+	if (1.0 / 4.0 != 0.25) {
+		io.stdout.write("FAIL float div\n")
+	}
+	if (2.0 ** 3.0 != 8.0) {
+		io.stdout.write("FAIL float pow\n")
+	}
+	if (-0.5 != 0.0 - 0.5) {
+		io.stdout.write("FAIL float neg\n")
+	}
+	io.stdout.write("float_arith_ok\n")
+
+	// ---------- 4) Float 比较 ----------
+	if (1.5 > 1.0) {
+		if (1.0 < 1.5) {
+			if (1.5 >= 1.5) {
+				if (1.5 <= 1.5) {
+					io.stdout.write("float_compare_ok\n")
+				} else {
+					io.stdout.write("FAIL float le\n")
+				}
+			} else {
+				io.stdout.write("FAIL float ge\n")
+			}
+		} else {
+			io.stdout.write("FAIL float lt\n")
+		}
+	} else {
+		io.stdout.write("FAIL float gt\n")
+	}
+
+	// ---------- 5) 混合运算：Integer 与 Float 自动提升 ----------
+	if (1 + 0.5 != 1.5) {
+		io.stdout.write("FAIL int+float\n")
+	}
+	if (0.5 + 1 != 1.5) {
+		io.stdout.write("FAIL float+int\n")
+	}
+	if (2 * 0.5 != 1.0) {
+		io.stdout.write("FAIL int*float\n")
+	}
+	if (3 - 0.5 != 2.5) {
+		io.stdout.write("FAIL int-float\n")
+	}
+	if (2 / 4.0 != 0.5) {
+		io.stdout.write("FAIL int/float\n")
+	}
+	if (1 < 1.5) {
+		if (2 > 1.9) {
+			if (1 == 1.0) {
+				io.stdout.write("mixed_compare_ok\n")
+			} else {
+				io.stdout.write("FAIL int==float\n")
+			}
+		} else {
+			io.stdout.write("FAIL int>float\n")
+		}
+	} else {
+		io.stdout.write("FAIL int<float\n")
+	}
+	io.stdout.write("int_float_promote_ok\n")
+
+	// ---------- 6) Decimal 精确运算（0.1+0.2 == 0.3，与 Float 对比） ----------
+	d = pycp.Decimal("0.1") + pycp.Decimal("0.2")
+	if (d != pycp.Decimal("0.3")) {
+		io.stdout.write("FAIL decimal 0.1+0.2\n")
+	}
+	// 十进制精确 0.3 转 double 后与字面量 0.3 相等（跨类型比较提升为 double）
+	if (d != 0.3) {
+		io.stdout.write("FAIL decimal==float 0.3\n")
+	}
+	// 十进制除不尽：按上下文舍入为 28 位有效数字
+	third = pycp.Decimal("1") / pycp.Decimal("3")
+	if (third != pycp.Decimal("0.3333333333333333333333333333")) {
+		io.stdout.write("FAIL decimal 1/3 rounding\n")
+	}
+	// 乘法精确：0.00000000000000000001 * 0.00000000000000000001 不丢位
+	tiny = pycp.Decimal("1e-10") * pycp.Decimal("1e-10")
+	if (tiny != pycp.Decimal("1e-20")) {
+		io.stdout.write("FAIL decimal tiny mul\n")
+	}
+	io.stdout.write("decimal_exact_ok\n")
+
+	// ---------- 7) 混合运算：Integer / Float 与 Decimal ----------
+	if (pycp.Decimal("2.5") + 1 != pycp.Decimal("3.5")) {
+		io.stdout.write("FAIL decimal+int\n")
+	}
+	if (1 + pycp.Decimal("2.5") != pycp.Decimal("3.5")) {
+		io.stdout.write("FAIL int+decimal\n")
+	}
+	if (pycp.Decimal("2.5") * 2 != pycp.Decimal("5.0")) {
+		io.stdout.write("FAIL decimal*int\n")
+	}
+	// Decimal 与 Float 比较 -> 经 double 提升
+	if (pycp.Decimal("0.1") + pycp.Decimal("0.1") < 0.25) {
+		io.stdout.write("decimal_float_compare_ok\n")
+	} else {
+		io.stdout.write("FAIL decimal<0.25\n")
+	}
+	f = pycp.Decimal("0.1") + 0.1   // -> Float（0.1+0.1 在 double 下精确等于 0.2）
+	if (f != 0.2) {
+		io.stdout.write("FAIL decimal+float promote\n")
+	}
+	io.stdout.write("mixed_promote_ok\n")
+
+	// ---------- 8) truthiness ----------
+	if (0.0) {
+		io.stdout.write("FAIL 0.0 is true\n")
+	}
+	if (0.1) {
+		io.stdout.write("float_truthy_ok\n")
+	} else {
+		io.stdout.write("FAIL 0.1 is false\n")
+	}
+	if (pycp.Decimal("0.0")) {
+		io.stdout.write("FAIL Decimal 0 is true\n")
+	}
+	if (pycp.Decimal("0.0001")) {
+		io.stdout.write("decimal_truthy_ok\n")
+	} else {
+		io.stdout.write("FAIL Decimal 0.0001 is false\n")
+	}
+
+	// ---------- 9) 显示形式 ----------
+	io.print(1.5)                                    // -> 1.5
+	io.print(2.0)                                    // -> 2.0
+	io.print(d)                                      // -> 0.3
+	io.print(third)                                  // -> 0.3333333333333333333333333333
+	io.print(0xFF)                                   // -> 255
+	io.print(pycp.Float("2.5"))                      // 构造器：字符串 -> 2.5
+	io.print(pycp.Float(3))                          // 构造器：Integer -> 3.0
+	io.print(pycp.Integer(2.75))                     // 构造器：Float 截断 -> 2
+	io.print(pycp.Decimal(42))                       // 构造器：Integer -> 42
+	io.print(pycp.Decimal("1e3"))                    // 科学计数法 -> 1E+3
+
+	io.stdout.write("FLOAT DECIMAL TEST PASS\n")
+	return None
+}
+
+main()
