@@ -3,6 +3,7 @@
 #include <fstream>
 #include <cstring>
 #include <string>
+#include <unordered_set>
 #include "PycpAstNode.hpp"
 #include "PycpLexer.hpp"
 #include "preprocessor/PycpPreprocessor.hpp"
@@ -26,9 +27,36 @@ extern int Pycplineno;
 extern YY_BUFFER_STATE Pycp_scan_string(const char*);
 extern void Pycp_delete_buffer(YY_BUFFER_STATE);
 
+// 语法错误计数（定义于本文件末尾）；解析期语义动作据此标记“已报错”，
+// 使后续 ModuleLoader 抛出空消息异常中止编译（错误内容已在此直接输出）。
+extern int Pycp_parse_error_count;
+
+// 报语法错误：与 Python 一致在【解析期】报为 SyntaxError，输出两行格式
+// File "<file>", line N[, column M]  +  SyntaxError: <msg>，并递增错误计数
+// 使编译中止。不回显源码行（lexer/parser 未保留原始行文本），故无 caret 指示。
+static void report_syntax_error(int line, const std::string& msg, int column) {
+	++Pycp_parse_error_count;
+	std::cerr << "File \"" << g_current_source_path << "\", line " << line;
+	if (column >= 0) std::cerr << ", column " << column;
+	std::cerr << "\nSyntaxError: " << msg << std::endl;
+}
+
 // 构建函数表达式节点：把解析期收集的 Param* 列表折叠为按值持有的
 // std::vector<Param>（转移成员所有权后释放外壳），再构造 FunctionExpression。
 // 顶层函数 / 匿名函数 / 类内方法三处共用，统一所有权管理。
+//
+// 形参结构校验集中在此【单一漏斗】（与 Python 一致，均为解析期 SyntaxError）：
+//   1) `**kwargs` 之后不得再有任何形参；
+//   2) `*args` / `**kwargs` / 裸 `*` 各至多一个；
+//   3) 裸 `*` 之后必须至少有一个关键字-only 形参（named arguments must follow bare *）；
+//   4) 位置形参不得接在带默认值的位置形参之后（仅限 `*` 之前的位置段）；
+//   5) 形参名不得重复。
+// 星号之后出现的普通形参在此改写为 ParamKind::KeywordOnly（关键字-only 由
+// 「位于 `*` / `*args` 之后」隐含，与 Python 一致）。
+//
+// 裸 `*` 标记【保留】在 params 中（name 为 nullptr）：它是关键字-only 段的
+// 起点，codegen 会为它分配一个占位局部槽并用专门的 param_kinds 字节表示，
+// 从而保证 names 与 param_kinds 逐项对齐、且多余位置实参仍能被正确拒绝。
 static Pycp::Ast::FunctionExpression* make_func_expr(
 	std::vector<Pycp::Ast::Param*>* params,
 	Pycp::Ast::Program* body,
@@ -38,39 +66,70 @@ static Pycp::Ast::FunctionExpression* make_func_expr(
 	std::vector<Pycp::Ast::Param> pv;
 	if (params != nullptr) {
 		pv.reserve(params->size());
+		bool seen_star    = false;  // 已出现 *args 或裸 *
+		bool seen_kw      = false;  // 已出现 **kwargs
+		bool seen_default = false;  // 位置段已出现带默认值的形参
+		std::size_t bare_star_pos = 0;
+		bool has_bare_star = false;
+		std::unordered_set<std::string> seen_names;
 		for (Pycp::Ast::Param* item : *params) {
+			if (item == nullptr) continue;
+			// 1) **kwargs 必须是最后一个形参。
+			if (seen_kw) {
+				report_syntax_error(item->line,
+				                    "arguments cannot follow var-keyword argument", -1);
+				delete item;
+				continue;
+			}
+			// 5) 重名（星号无名字，跳过）。
+			if (item->name != nullptr &&
+			    !seen_names.insert(*item->name).second) {
+				report_syntax_error(item->line,
+				                    "duplicate argument '" + *item->name +
+				                        "' in function definition", -1);
+			}
+			switch (item->kind) {
+			case Pycp::Ast::ParamKind::VarPositional:
+				if (seen_star) {
+					report_syntax_error(item->line, "*args may only appear once", -1);
+				}
+				seen_star = true;
+				break;
+			case Pycp::Ast::ParamKind::BareStar:
+				if (seen_star) {
+					report_syntax_error(item->line, "bare * may only appear once", -1);
+				}
+				seen_star     = true;
+				has_bare_star = true;
+				bare_star_pos = pv.size();
+				break;
+			case Pycp::Ast::ParamKind::VarKeyword:
+				seen_kw = true;
+				break;
+			default:   // Positional：位置段形参，或星号之后的关键字-only 形参
+				if (seen_star) {
+					item->kind = Pycp::Ast::ParamKind::KeywordOnly;
+				} else if (item->default_value != nullptr) {
+					seen_default = true;
+				} else if (seen_default) {
+					// 4) 位置段：带默认值形参之后不得再接无默认值形参。
+					report_syntax_error(
+						item->line,
+						"parameter without a default follows parameter with a default",
+						-1);
+				}
+				break;
+			}
 			pv.push_back(std::move(*item));
 			delete item;
 		}
 		delete params;
+		// 3) 裸 * 之后必须至少有一个形参（否则关键字-only 段为空）。
+		if (has_bare_star && bare_star_pos + 1 >= pv.size()) {
+			report_syntax_error(line, "named arguments must follow bare *", -1);
+		}
 	}
 	return new Pycp::Ast::FunctionExpression(std::move(pv), body, name, line, decos);
-}
-
-// 语法错误计数（定义于本文件末尾）；解析期语义动作据此标记“已报错”，
-// 使后续 ModuleLoader 抛出空消息异常中止编译（错误内容已在此直接输出）。
-extern int Pycp_parse_error_count;
-
-// 形参顺序错误：带默认值的形参之后又出现无默认值的普通形参
-//（如 func f(a, b = 1, c)）。与 Python 一致在【解析期】报为 SyntaxError，
-// 输出两行格式：File "<file>", line N[, column M]  +  SyntaxError: ...
-// 不回显源码行（lexer/parser 未保留原始行文本），故无 caret 指示。
-static void report_param_order_error(int line, int column) {
-	++Pycp_parse_error_count;
-	std::cerr << "File \"" << g_current_source_path << "\", line " << line;
-	if (column >= 0) std::cerr << ", column " << column;
-	std::cerr << "\n"
-	          << "SyntaxError: parameter without a default follows parameter with a default"
-	          << std::endl;
-}
-
-// parameter_defs 容器中是否已存在“带默认值”的形参。
-static bool has_default_param(const std::vector<Pycp::Ast::Param*>* ps) {
-	if (ps == nullptr) return false;
-	for (Pycp::Ast::Param* p : *ps) {
-		if (p != nullptr && p->default_value != nullptr) return true;
-	}
-	return false;
 }
 %}
 
@@ -85,6 +144,8 @@ static bool has_default_param(const std::vector<Pycp::Ast::Param*>* ps) {
 	std::vector<std::string*>* string_ptrs;   // identifier lists (from_import_names)
 	Pycp::Ast::Param* param_def_item;         // single parameter (name + optional default)
 	std::vector<Pycp::Ast::Param*>* param_defs; // parameter items (owning Param*)
+	CallArg* call_arg;                        // 单个调用实参项（owning）
+	std::vector<CallArg>* call_args;          // 调用实参项列表（owning）
 	std::vector<Pycp::Ast::Expression*>* expressions; // call arguments
 	std::vector<std::pair<Pycp::Ast::Expression*, Pycp::Ast::Expression*>>* pair_list; // map 键值对列表
 	std::pair<Pycp::Ast::Expression*, Pycp::Ast::Expression*>* key_value_pair;
@@ -113,6 +174,14 @@ static bool has_default_param(const std::vector<Pycp::Ast::Param*>* ps) {
 	struct IfSuffix {
 		std::vector<Pycp::Ast::IfBranch*>* elif_branches;
 		Pycp::Ast::Program* else_body;
+	};
+	// 调用实参项（owning）：位置实参 kind==0，关键字实参 kind==1（name 非空）。
+	// 仅含裸指针/整型，平凡可拷贝，可直接作为 Bison %union 成员。
+	struct CallArg {
+		int kind;                      // 0 = 位置实参，1 = 关键字实参
+		Pycp::Ast::Expression* value;  // 实参表达式（owning）
+		std::string* name;             // 关键字名（owning；仅 kind==1）
+		int line;                      // 所在行（错误报告用）
 	};
 }
 
@@ -150,6 +219,8 @@ static bool has_default_param(const std::vector<Pycp::Ast::Param*>* ps) {
 %type <param_def_item> parameter_def
 %type <param_defs> parameter_list
 %type <statements> code_block
+%type <call_arg> call_arg_item
+%type <call_args> call_arguments
 %type <expressions> arguments
 %type <pair_list> map_literal
 %type <pair_list> map_pairs
@@ -340,19 +411,41 @@ code_block: OP_LBRACE OP_RBRACE {
 		}
 ;
 
-// 参数定义项：形参名，或带默认值的形参（name = default_expr）。
-// 默认值可为任意表达式（Python 语义：函数定义时求值一次）。
+// 参数定义项（形参）：
+//   name              普通形参（调用侧按位置或关键字传皆可）
+//   name = default    带默认值的普通形参（默认值可为任意表达式，定义时求值一次）
+//   *args             可变位置形参（收集多余位置实参为元组）
+//   **kwargs          可变关键字形参（收集未匹配关键字实参为字典）
+//   *                 裸星号：仅作「其后形参为关键字-only」的分隔标记
+// 顺序 / 唯一性 / 重名等全部结构校验集中在 make_func_expr（解析期 SyntaxError）。
 parameter_def: IDENTIFIER {
-				$$ = new Pycp::Ast::Param($1);
+				$$ = new Pycp::Ast::Param($1, nullptr,
+				                          Pycp::Ast::ParamKind::Positional,
+				                          @1.first_line);
 		}
 		| IDENTIFIER OP_EQUALS expression {
-				$$ = new Pycp::Ast::Param($1, static_cast<Expression*>($3));
+				$$ = new Pycp::Ast::Param($1, static_cast<Expression*>($3),
+				                          Pycp::Ast::ParamKind::Positional,
+				                          @1.first_line);
+		}
+		| OP_MULTIPLY IDENTIFIER {
+				$$ = new Pycp::Ast::Param($2, nullptr,
+				                          Pycp::Ast::ParamKind::VarPositional,
+				                          @1.first_line);
+		}
+		| OP_POWER IDENTIFIER {
+				$$ = new Pycp::Ast::Param($2, nullptr,
+				                          Pycp::Ast::ParamKind::VarKeyword,
+				                          @1.first_line);
+		}
+		| OP_MULTIPLY {
+				$$ = new Pycp::Ast::Param(nullptr, nullptr,
+				                          Pycp::Ast::ParamKind::BareStar,
+				                          @1.first_line);
 		}
 ;
 
-// 参数列表：逗号分隔的形参项。形如 (a, b = 1, c) 或空 ()。
-// 「默认值形参后不得再接必填普通形参」的顺序校验在【解析期】执行
-//（与 Python 一致，表现为 SyntaxError），见下方 OP_COMMA 规则。
+// 参数列表：逗号分隔的形参项。形如 (a, b = 1, *args, c, **kwargs) 或空 ()。
 parameter_list: %empty {
 				$$ = new std::vector<Pycp::Ast::Param*>();
 		}
@@ -361,20 +454,12 @@ parameter_list: %empty {
 				$$->push_back($1);
 		}
 		| parameter_list OP_COMMA parameter_def {
-				// 顺序校验：若前面已出现过带默认值的形参，新加入的无默认值
-				// 普通形参即非法（func f(a, b = 1, c)）。在解析期直接以
-				// SyntaxError 报出，并标记错误计数使编译中止。
-				if ($3 != nullptr && $3->default_value == nullptr &&
-				    has_default_param($1)) {
-					report_param_order_error(@3.first_line, -1);
-				}
 				$1->push_back($3);
 				$$ = $1;
 		}
 ;
 
-// 调用实参列表：逗号分隔的表达式。
-// 形如 (1, a + 2) 或空 ()。
+// 序列字面量元素列表（列表字面量 [a, b] 专用）：逗号分隔的表达式，不支持关键字实参。
 arguments: %empty {
 				$$ = new std::vector<Expression*>();
 		}
@@ -387,8 +472,60 @@ arguments: %empty {
 				$$ = $1;
 		}
 		| arguments OP_COMMA {
-				// 尾逗号（Python 风格）：f(a, ) / [a, ]
+				// 尾逗号（Python 风格）：[a, ]
 				$$ = $1;
+		}
+;
+
+// 调用实参列表：逗号分隔的实参项（位置实参 / 关键字实参 name = expr）。
+// 形如 (1, a + 2) 或 (x, k = 1) 或空 ()。
+// 关键字实参写作「expression OP_EQUALS expression」而非「IDENTIFIER OP_EQUALS」，
+// 以避免与表达式归约产生 LALR 冲突：左侧在语义动作中校验必须是裸标识符。
+call_arguments: %empty {
+				$$ = new std::vector<CallArg>();
+		}
+		| call_arg_item {
+				$$ = new std::vector<CallArg>();
+				if ($1 != nullptr) $$->push_back(*$1);
+				delete $1;
+		}
+		| call_arguments OP_COMMA call_arg_item {
+				if ($3 != nullptr) $1->push_back(*$3);
+				delete $3;
+				$$ = $1;
+		}
+		| call_arguments OP_COMMA {
+				// 尾逗号（Python 风格）：f(a, )
+				$$ = $1;
+		}
+;
+
+// 单个调用实参项：
+//   expression                       位置实参
+//   expression OP_EQUALS expression  关键字实参（左侧须为裸标识符，名字由左侧借用）
+call_arg_item: expression {
+				$$ = new CallArg{0, static_cast<Expression*>($1), nullptr,
+				                 @1.first_line};
+		}
+		| expression OP_EQUALS expression {
+				Expression* lhs = static_cast<Expression*>($1);
+				Expression* rhs = static_cast<Expression*>($3);
+				if (lhs == nullptr || rhs == nullptr) {
+					$$ = nullptr;
+				} else if (lhs->get_type() != NodeType::IDENTIFIER_EXPRESSION) {
+					// Python 同样拒绝 f(a.b = 1) 这类写法（非裸标识符不可作关键字名）。
+					report_syntax_error(
+						@2.first_line,
+						"keyword argument must be a plain identifier", -1);
+					delete lhs;
+					delete rhs;
+					$$ = nullptr;
+				} else {
+					auto* id = static_cast<IdentifierExpression*>(lhs);
+					$$ = new CallArg{1, rhs, new std::string(*id->name),
+					                 @2.first_line};
+					delete lhs;   // 只借用其名字
+				}
 		}
 ;
 
@@ -1061,11 +1198,36 @@ primary_expression: LT_INTEGER {
 		| class_expr {
 			$$ = $1;
 		}
-		| primary_expression OP_LPARENTHESES arguments OP_RPARENTHESES {
+		| primary_expression OP_LPARENTHESES call_arguments OP_RPARENTHESES {
+			// 实参项列表拆分为位置实参 / 关键字实参两组，并做调用侧结构校验：
+			//   1) 位置实参不得出现在关键字实参之后（Python: positional argument
+			//      follows keyword argument）；
+			//   2) 同一调用内关键字名不得重复（Python: keyword argument repeated: x）。
+			std::vector<Expression*> pos_args;
+			std::vector<std::pair<std::string*, Expression*>> kw_args;
+			bool seen_keyword = false;
+			std::unordered_set<std::string> kw_names;
+			for (CallArg& a : *$3) {
+				if (a.kind == 0) {
+					if (seen_keyword) {
+						report_syntax_error(
+							a.line, "positional argument follows keyword argument", -1);
+					}
+					pos_args.push_back(a.value);
+				} else {
+					seen_keyword = true;
+					if (!kw_names.insert(*a.name).second) {
+						report_syntax_error(
+							a.line, "keyword argument repeated: " + *a.name, -1);
+					}
+					kw_args.emplace_back(a.name, a.value);
+				}
+			}
 			$$ = new CallExpression(
 				static_cast<Expression*>($1),
-				*$3,                 // arguments
-				@$.first_line
+				std::move(pos_args),
+				@$.first_line,
+				std::move(kw_args)
 			);
 			delete $3; // 实参已移动进 CallExpression
 		}

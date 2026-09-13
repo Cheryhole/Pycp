@@ -101,6 +101,10 @@ enum class Op : uint8_t {
 
 	MARK_BINDING = 0x59, // 操作数: name_idx -> 读该全局绑定值的 is_private/is_readonly 并登记模块绑定属性（@private/@readonly 声明）
 
+	// 带关键字实参的调用：操作数 = (nkw << 16) | npos（各 <= 65535）。
+	// 栈布局（自栈底）：callee, npos 个位置实参, nkw 组「关键字名字符串常量 + 值」。
+	CALL_KW     = 0x5A,
+
 	// ---- 其他 ----
 	HALT          = 0x00, // 模块执行结束
 };
@@ -142,11 +146,46 @@ struct Constant {
 // 代码对象
 // =============================================================
 
+// 形参种类编码（CodeObject::param_kinds 的字节值；与 Pycp::Extension::ArgKind
+// 的枚举顺序一致，便于绑定内核直接映射）：
+//   0 = Required     位置或关键字皆可传，必填
+//   1 = Optional     位置或关键字皆可传，有默认值
+//   2 = Rest         *args：收集多余位置实参为元组
+//   3 = RestKeywords **kwargs：收集未匹配关键字实参为字典
+//   4 = BareStar     裸 `*` 分隔标记：仅表示其后形参为关键字-only（占位槽，
+//                    无实际绑定值；框架工厂不提供这种规范，仅语言层使用）
+// 关键字-only 的判定与 Python 一致：位于 `*args` 或裸 `*` 之后的形参。
+enum class ParamKindCode : uint8_t {
+	Required     = 0,
+	Optional     = 1,
+	Rest         = 2,
+	RestKeywords = 3,
+	BareStar     = 4,
+};
+
+// 按旧版语义（全位置形参：前段 Required + 后段 Optional）合成等价形态表。
+// 供旧字节码（format minor < 3，无 param_kinds 字段）与旧 AOT 产物
+// （未注入 param_kinds）回退使用，保证行为与升级前逐字一致。
+inline std::vector<uint8_t> SynthesizeParamKinds(std::size_t nparams,
+                                                 std::size_t default_count) {
+	std::vector<uint8_t> kinds(nparams,
+	                           static_cast<uint8_t>(ParamKindCode::Required));
+	const std::size_t opt = std::min<std::size_t>(default_count, nparams);
+	for (std::size_t i = nparams - opt; i < nparams; ++i) {
+		kinds[i] = static_cast<uint8_t>(ParamKindCode::Optional);
+	}
+	return kinds;
+}
+
 struct CodeObject {
 	std::string name;                 // 函数名 / "<module>"
-	uint16_t nparams = 0;             // 参数个数（含尾部带默认值的形参）
-	uint16_t default_count = 0;       // 尾部带默认值的形参个数；必填数 = nparams - default_count
+	uint16_t nparams = 0;             // 形参个数（含 *args/**kwargs/裸 * 占位，声明顺序）
+	uint16_t default_count = 0;       // 有默认值的形参个数（按声明顺序取用 defaults）
 	uint16_t nlocals = 0;             // 局部变量数（slots 大小）
+	// 形参种类（声明顺序，每形参 1 字节）；与 names[0..nparams) / slots[0..nparams)
+	// 逐项对齐。format minor >= 3 才有；旧产物为空，读取侧按「前段必填 + 后段可选」
+	// 合成等价的纯位置形态（见 PycpBytecode.cpp）。
+	std::vector<uint8_t> param_kinds;
 	std::vector<Instruction> code;    // 指令流
 	std::vector<int> linenos;         // 行号表，与 code 逐条对齐（-1 表示无行号信息）
 	std::vector<Constant> consts;     // 本函数引用的常量（复用全局常量池索引）

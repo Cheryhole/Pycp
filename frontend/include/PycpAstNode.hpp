@@ -208,20 +208,36 @@ struct BinaryExpression : Expression {
 // FunctionExpression 节点
 // ============================================================
 
+// 形参种类（与 Python 语义一一对应）：
+//   Positional    普通形参（调用侧按位置或关键字传皆可）
+//   VarPositional *args（收集多余位置实参为元组）
+//   KeywordOnly   关键字-only 形参（写在 `*` / `*args` 之后，必须按关键字传）
+//   VarKeyword    **kwargs（收集未匹配关键字实参为字典）
+//   BareStar      裸 `*` 分隔标记（仅解析期内部使用，make_func_expr 会剔除，
+//                 故 AST 消费方（codegen）永远看不到它）
+enum class ParamKind { Positional, VarPositional, KeywordOnly, VarKeyword, BareStar };
+
 // 形参项：参数名（owning string*）+ 可选默认值表达式（owning Expression*；
-// nullptr 表示该形参无默认值）。
+// nullptr 表示该形参无默认值）+ 形参种类。
 // 仅支持移动、禁止拷贝（避免成员被重复释放）。
 struct Param {
 	std::string* name;
 	Expression* default_value;
+	ParamKind kind;
+	int line;              // 形参所在行（解析期校验的报错定位）
 
-	Param(std::string* n, Expression* dv = nullptr)
-		: name(n), default_value(dv) {}
+	Param(std::string* n, Expression* dv = nullptr,
+	      ParamKind k = ParamKind::Positional, int ln = -1)
+		: name(n), default_value(dv), kind(k), line(ln) {}
 	Param(const Param&) = delete;
 	Param& operator=(const Param&) = delete;
-	Param(Param&& o) noexcept : name(o.name), default_value(o.default_value) {
+	Param(Param&& o) noexcept
+		: name(o.name), default_value(o.default_value), kind(o.kind),
+		  line(o.line) {
 		o.name = nullptr;
 		o.default_value = nullptr;
+		o.kind = ParamKind::Positional;
+		o.line = -1;
 	}
 };
 
@@ -248,9 +264,13 @@ struct FunctionExpression : Expression {
 struct CallExpression : Expression {
 	Expression* callee;
 	std::vector<Expression*> arguments;
+	// 关键字实参（name = expr，源码顺序）；名字为 owning string*，
+	// 值为 owning Expression*。位置实参恒在关键字实参之前（解析期已校验）。
+	std::vector<std::pair<std::string*, Expression*>> keyword_arguments;
 
 	CallExpression(Expression* callee_,
-	               std::vector<Expression*> args, int line = -1);
+	               std::vector<Expression*> args, int line = -1,
+	               std::vector<std::pair<std::string*, Expression*>> kwargs = {});
 	~CallExpression() override;
 
 	NodeType get_type() const override { return NodeType::CALL_EXPRESSION; }

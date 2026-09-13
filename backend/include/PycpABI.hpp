@@ -124,6 +124,28 @@ PYCP_API bool IsFalse(Object* v);
 // 返回 Owned 结果；参数数量或类型不符时抛异常
 PYCP_API Object* Call(Object* callable, Object** argv, std::size_t argc);
 
+// 带关键字实参的统一调用入口（VM CALL_KW 与 AOT 共用）：
+//   callable : Function（含 BoundMethod）或 Class（实例化）
+//   argv     : 位置实参数组（Borrowed）
+//   argc     : 位置实参个数
+//   kwargs   : 关键字实参字典（Borrowed，可为 nullptr，等价于无关键字）
+// 返回 Owned 结果；名字 / 个数不符时抛 TypeError。
+PYCP_API Object* CallKw(Object* callable, Object** argv, std::size_t argc,
+                        Map* kwargs);
+
+// AOT 生成代码专用：为「尚无位置信息」的当前异常补上调用点位置后重抛。
+// 解释器在 execute() 的 catch 里做同样的事（见 PycpBytecodeVM.cpp），本函数
+// 让 AOT 产物对「调用点抛出且自身不带位置」的异常（参数绑定错误、不可调用、
+// 原生函数内部错误等）给出一致的 `File "...", line N` 前缀。
+// 仅在 catch 块内调用；异常已带位置、或不是 Pycp::Exception 时原样传播。
+PYCP_API [[noreturn]] void RethrowWithPosition(const char* file, int lineno);
+
+// 关键字实参字典构建（CALL_KW 的 VM / AOT 生成代码共用）。
+//   NewKwargs  : 新建空 Map（Owned，由调用方 Decref）
+//   KwargsSet  : 写入一项（name 须为 String；内部持有引用，调用方无需接管返回值）
+PYCP_API Map* NewKwargs();
+PYCP_API void KwargsSet(Map* kwargs, Object* name, Object* value);
+
 // =============================================================
 // 模块导入（类似 CPython 的 PyImport_ImportModule）
 // =============================================================

@@ -1,0 +1,14 @@
+// 裸 * 分隔符：之后全部为关键字-only，且必须显式按关键字传参。
+import io
+import pycp
+
+func f(a, *, b, c = 9) {
+	io.print("f " + pycp.String(a) + " " + pycp.String(b) + " " + pycp.String(c))
+}
+
+func main() {
+	f(1, b = 2)
+	f(1, b = 2, c = 3)
+	io.print("BARE STAR PASS")
+}
+main()

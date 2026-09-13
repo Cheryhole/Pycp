@@ -54,6 +54,40 @@ endif()
 
 file(MAKE_DIRECTORY "${WORK_DIR}")
 
+# ---------------------------------------------------------------------
+# 并行度（JOBS）
+#   每个 (用例, 模式) 组合互相独立：各自的 AOT 工程目录、各自的 configure/
+#   build/run，唯一共享的是只读的 pycp 可执行文件与 dist SDK。因此把任务按
+#   轮询分给 JOBS 个**工作进程**（同一脚本 + -DWORKER=1 -DWORKER_INDEX=i），
+#   能把 234 次 CMake 配置 + 编译的墙钟时间压到约 1/JOBS。
+#   JOBS=0/auto（默认）按 CPU 核数自动取，上限 8：每个 AOT 工程都要跑一次
+#   cmake configure，并发过高时内存与磁盘争用反而拖慢。
+# ---------------------------------------------------------------------
+if(NOT JOBS)
+	set(JOBS 0)
+endif()
+if(JOBS STREQUAL "auto")
+	set(JOBS 0)
+endif()
+if(JOBS EQUAL 0)
+	include(ProcessorCount)
+	ProcessorCount(_pycp_ncpu)
+	if(_pycp_ncpu EQUAL 0)
+		set(JOBS 1)
+	elseif(_pycp_ncpu GREATER 8)
+		set(JOBS 8)
+	else()
+		set(JOBS ${_pycp_ncpu})
+	endif()
+endif()
+
+# 工作进程模式：校验分片参数（由驱动进程写入，必给）。
+if(WORKER)
+	if(WORKER_COUNT EQUAL 0 OR RESULT_FILE STREQUAL "")
+		message(FATAL_ERROR "pycp-aot-equiv: WORKER=1 时必须提供 WORKER_COUNT 与 RESULT_FILE。")
+	endif()
+endif()
+
 # '|' 分隔字符串 -> CMake 列表
 function(pycp_equiv_split out_var value)
 	set(_items "")
@@ -114,6 +148,9 @@ set(_failed 0)
 set(_skipped 0)
 set(_xfail 0)
 set(_failure_report "")
+# 全局 (用例, 模式) 序号：所有工作进程按同一顺序遍历同一列表，故该序号在
+# 各进程内一致，可安全用作「第 i 个任务归哪个 worker」的分片依据。
+set(_pair_global 0)
 
 foreach(_case IN LISTS _cases)
 	if(_case STREQUAL "")
@@ -134,6 +171,17 @@ foreach(_case IN LISTS _cases)
 	foreach(_mode IN LISTS _modes)
 		if(_mode STREQUAL "")
 			continue()
+		endif()
+
+		# 分片：本进程只处理 slot == WORKER_INDEX 的任务，其余直接跳过
+		# （注意 _pair_global 必须无条件自增，否则各 worker 的序号会错位）。
+		math(EXPR _pair_idx "${_pair_global}")
+		math(EXPR _pair_global "${_pair_global} + 1")
+		if(WORKER)
+			math(EXPR _pair_slot "${_pair_idx} % ${WORKER_COUNT}")
+			if(NOT _pair_slot EQUAL WORKER_INDEX)
+				continue()
+			endif()
 		endif()
 
 		math(EXPR _total "${_total} + 1")
@@ -254,6 +302,160 @@ foreach(_case IN LISTS _cases)
 		endif()
 	endforeach()
 endforeach()
+
+# =====================================================================
+# 工作进程：把本分片的计数与差异明细落盘，交给驱动进程合并
+# =====================================================================
+if(WORKER)
+	file(WRITE "${RESULT_FILE}"
+		"\ntotal=${_total}"
+		"\npassed=${_passed}"
+		"\nfailed=${_failed}"
+		"\nskipped=${_skipped}"
+		"\nxfail=${_xfail}"
+		"\nreport<<EOF\n${_failure_report}")
+	message(STATUS "  [worker ${WORKER_INDEX}] 通道 ${_passed}/${_total}"
+		"（不一致 ${_failed}，跳过 ${_skipped}，XFAIL ${_xfail}）")
+	return()
+endif()
+
+# =====================================================================
+# 驱动进程：JOBS > 1 时拉起工作进程并合并各分片结果
+# =====================================================================
+if(JOBS GREATER 1)
+	math(EXPR _wmax "${JOBS} - 1")
+
+	# 传给工作进程的多值参数统一改用 '|'（脚本内 pycp_equiv_split 同时吃 '|'
+	# 和 ';'），避免把 CMake 列表分隔符带进 shell/bat 命令串。
+	string(REPLACE ";" "|" _cases_pipe "${_cases}")
+	string(REPLACE ";" "|" _modes_pipe "${_modes}")
+	string(REPLACE ";" "|" _xfail_pipe "${_xfail_patterns}")
+
+	message(STATUS "并行执行: ${JOBS} 个工作进程（分片日志 ${WORK_DIR}/_worker_*.log）")
+
+	set(_spawn_rc 0)
+	if(WIN32)
+		# Windows：用 start /B 拉起 N-1 个后台 worker，最后一个同步跑，再轮询
+		# 各 worker 的结果文件确认全部收尾（cmd 无 wait 原语）。
+		set(_runner "${WORK_DIR}/_equiv_workers.bat")
+		file(WRITE "${_runner}" "@echo off\r\nsetlocal\r\n")
+		foreach(_i RANGE 0 ${_wmax})
+			set(_log "${WORK_DIR}/_worker_${_i}.log")
+			set(_res "${WORK_DIR}/_worker_${_i}.result")
+			file(REMOVE "${_log}")
+			file(REMOVE "${_res}")
+			set(_line
+				"\"${CMAKE_COMMAND}\""
+				"\"-DPYCP=${PYCP}\""
+				"\"-DCASES=${_cases_pipe}\""
+				"\"-DMODES=${_modes_pipe}\""
+				"\"-DWORK_DIR=${WORK_DIR}\""
+				"\"-DGENERATOR=${GENERATOR}\""
+				"\"-DXFAIL=${_xfail_pipe}\""
+				"\"-DWORKER=1\""
+				"\"-DWORKER_INDEX=${_i}\""
+				"\"-DWORKER_COUNT=${JOBS}\""
+				"\"-DRESULT_FILE=${_res}\""
+				"\"-P\""
+				"\"${CMAKE_CURRENT_LIST_FILE}\"")
+			list(JOIN _line " " _line_str)
+			file(APPEND "${_runner}"
+				"start \"\" /B cmd /c \"${_line_str} > \"${_log}\" 2>&1\"\r\n")
+		endforeach()
+		file(APPEND "${_runner}" ":pycp_wait\r\n")
+		foreach(_i RANGE 0 ${_wmax})
+			file(APPEND "${_runner}"
+				"if not exist \"${WORK_DIR}/_worker_${_i}.result\" goto pycp_sleep\r\n")
+		endforeach()
+		file(APPEND "${_runner}"
+			"goto pycp_done\r\n"
+			":pycp_sleep\r\n"
+			"timeout /t 1 /nobreak > nul 2>&1\r\n"
+			"ping -n 2 127.0.0.1 > nul 2>&1\r\n"
+			"goto pycp_wait\r\n"
+			":pycp_done\r\n")
+		execute_process(COMMAND cmd /c "${_runner}" RESULT_VARIABLE _spawn_rc)
+	else()
+		# POSIX：一条 shell 脚本里全部后台拉起 + wait，语义最简且无轮询开销。
+		set(_runner "${WORK_DIR}/_equiv_workers.sh")
+		file(WRITE "${_runner}" "#!/bin/sh\nset -u\n")
+		foreach(_i RANGE 0 ${_wmax})
+			set(_log "${WORK_DIR}/_worker_${_i}.log")
+			set(_res "${WORK_DIR}/_worker_${_i}.result")
+			file(REMOVE "${_log}")
+			file(REMOVE "${_res}")
+			set(_line
+				"\"${CMAKE_COMMAND}\""
+				"\"-DPYCP=${PYCP}\""
+				"\"-DCASES=${_cases_pipe}\""
+				"\"-DMODES=${_modes_pipe}\""
+				"\"-DWORK_DIR=${WORK_DIR}\""
+				"\"-DGENERATOR=${GENERATOR}\""
+				"\"-DXFAIL=${_xfail_pipe}\""
+				"\"-DWORKER=1\""
+				"\"-DWORKER_INDEX=${_i}\""
+				"\"-DWORKER_COUNT=${JOBS}\""
+				"\"-DRESULT_FILE=${_res}\""
+				"\"-P\""
+				"\"${CMAKE_CURRENT_LIST_FILE}\"")
+			list(JOIN _line " " _line_str)
+			file(APPEND "${_runner}" "${_line_str} > \"${_log}\" 2>&1 &\n")
+		endforeach()
+		file(APPEND "${_runner}" "wait\n")
+		execute_process(COMMAND sh "${_runner}" RESULT_VARIABLE _spawn_rc)
+	endif()
+	if(NOT _spawn_rc EQUAL 0)
+		message(STATUS "警告: 工作进程调度脚本返回 ${_spawn_rc}，按已产出的分片结果继续合并。")
+	endif()
+
+	# ---- 合并：计数求和，差异明细按 worker 序号拼接（顺序稳定，便于比对）----
+	set(_m_total 0)
+	set(_m_passed 0)
+	set(_m_failed 0)
+	set(_m_skipped 0)
+	set(_m_xfail 0)
+	set(_merged_report "")
+	set(_missing_workers "")
+	foreach(_i RANGE 0 ${_wmax})
+		set(_res "${WORK_DIR}/_worker_${_i}.result")
+		if(NOT EXISTS "${_res}")
+			list(APPEND _missing_workers "${_i}")
+			continue()
+		endif()
+		file(READ "${_res}" _txt)
+		foreach(_key IN ITEMS total passed failed skipped xfail)
+			string(REGEX MATCH "\n${_key}=([0-9]+)" _hit "${_txt}")
+			if(_hit STREQUAL "")
+				continue()
+			endif()
+			set(_acc "_m_${_key}")
+			math(EXPR ${_acc} "${${_acc}} + ${CMAKE_MATCH_1}")
+		endforeach()
+		string(FIND "${_txt}" "report<<EOF" _pos)
+		if(_pos GREATER -1)
+			math(EXPR _start "${_pos} + 11")
+			string(SUBSTRING "${_txt}" ${_start} -1 _rep)
+			string(APPEND _merged_report "${_rep}")
+		endif()
+	endforeach()
+
+	if(NOT _missing_workers STREQUAL "")
+		# 工作进程异常退出（崩溃/被杀）：按失败计入，避免「少跑一半仍报全绿」。
+		string(REPLACE ";" ", " _mw "${_missing_workers}")
+		list(LENGTH _missing_workers _mw_n)
+		math(EXPR _m_failed "${_m_failed} + ${_mw_n}")
+		string(APPEND _merged_report
+			"[FAIL] ${_mw_n} 个工作进程未产出结果（worker ${_mw}），"
+			"详见 ${WORK_DIR}/_worker_*.log\n")
+	endif()
+
+	set(_total ${_m_total})
+	set(_passed ${_m_passed})
+	set(_failed ${_m_failed})
+	set(_skipped ${_m_skipped})
+	set(_xfail ${_m_xfail})
+	set(_failure_report "${_merged_report}")
+endif()
 
 # =====================================================================
 # 汇总

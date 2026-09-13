@@ -130,18 +130,6 @@ private:
 // 函数编译的局部变量上下文
 // =============================================================
 
-// 统计带默认值的形参个数（供 CodeObject 写入 default_count）。
-// 顺序校验（「带默认值形参后不得再接必填普通形参」）已在解析期执行，
-// 此处仅负责计数；保留参数以兼容既有调用点。
-static uint16_t validate_default_params(const FunctionExpression* fe,
-                                        int /*line*/, Emitter& /*em*/) {
-	uint16_t count = 0;
-	for (const Param& prm : fe->params) {
-		if (prm.default_value != nullptr) ++count;
-	}
-	return count;
-}
-
 // 编译一个函数体时，需要一个"局部变量名 -> 槽索引"的映射。
 // 顶层模块没有局部变量（全部走 globals）。
 struct Scope {
@@ -160,6 +148,51 @@ struct Scope {
 			names.push_back(name);
 	}
 };
+
+// 把形参声明写入函数代码对象：局部名（声明顺序，占 slots[0..nparams)）、
+// nparams、default_count 与 param_kinds。
+// 裸 `*` 没有名字：分配一个源码不可达的占位槽（`$bare_star_N`），使 names
+// 与 param_kinds 逐项对齐——绑定内核靠 BareStar 字节判定「其后均为
+// 关键字-only」，同时该占位槽保证多余的裸 `*` 也会被识别而是被拒绝。
+static void write_param_info(Scope& scope, CodeObject* co,
+                             const std::vector<Param>& params) {
+	std::vector<uint8_t> kinds;
+	kinds.reserve(params.size());
+	uint16_t default_count = 0;
+	std::size_t bare = 0;
+	for (const Param& prm : params) {
+		if (prm.kind == ParamKind::BareStar) {
+			// 仅占位：源码无法引用该名字，绑定内核见到 BareStar 即转为
+			// 关键字-only 段。
+			scope.add("$bare_star_" + std::to_string(bare++));
+			kinds.push_back(static_cast<uint8_t>(ParamKindCode::BareStar));
+			continue;
+		}
+		// 形参名按声明顺序占据 slots[0..nparams)，与 param_kinds 逐项对齐。
+		scope.add(*prm.name);
+		switch (prm.kind) {
+		case ParamKind::VarPositional:
+			kinds.push_back(static_cast<uint8_t>(ParamKindCode::Rest));
+			break;
+		case ParamKind::VarKeyword:
+			kinds.push_back(static_cast<uint8_t>(ParamKindCode::RestKeywords));
+			break;
+		case ParamKind::KeywordOnly:
+		case ParamKind::Positional:
+		default:
+			// 位置段/关键字-only 段共用 Required|Optional 编码，段归属由
+			// 声明位置（是否在 Rest / BareStar 之后）决定。
+			kinds.push_back(static_cast<uint8_t>(
+				prm.default_value != nullptr ? ParamKindCode::Optional
+				                             : ParamKindCode::Required));
+			break;
+		}
+		if (prm.default_value != nullptr) ++default_count;
+	}
+	co->nparams = static_cast<uint16_t>(params.size());
+	co->default_count = default_count;
+	co->param_kinds = std::move(kinds);
+}
 
 // 预扫描函数体，收集所有赋值目标标识符作为局部变量
 static void collect_assignment_targets(Program* p, std::unordered_set<std::string>& out) {
@@ -362,8 +395,6 @@ static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 		}
 		case NodeType::FUNCTION_EXPRESSION: {
 			FunctionExpression* fe = static_cast<FunctionExpression*>(e);
-			// 顺序校验：默认值形参后不得再接必填普通形参。
-			uint16_t default_count = validate_default_params(fe, e->lineno, em);
 
 			// 新代码对象（压栈，成为 current）
 			std::size_t co_idx = em.push_code_object(fe->name);
@@ -371,13 +402,11 @@ static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 			// 构造函数局部作用域：参数 + 函数体内赋值目标
 			Scope fn_scope;
 			fn_scope.has_locals = true;
-			for (const Param& prm : fe->params) fn_scope.add(*prm.name);
+			write_param_info(fn_scope, em.current(), fe->params);
 			std::unordered_set<std::string> targets;
 			collect_assignment_targets(fe->body, targets);
 			for (const auto& t : targets) fn_scope.add(t);
 
-			em.current()->nparams = static_cast<uint16_t>(fe->params.size());
-			em.current()->default_count = default_count;
 			em.current()->nlocals = static_cast<uint16_t>(fn_scope.names.size());
 			em.current()->names = fn_scope.names;
 
@@ -427,7 +456,25 @@ static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 			compile_expr(em, ce->callee, scope);
 			for (Expression* arg : ce->arguments)
 				compile_expr(em, arg, scope);
-			em.emit(Op::CALL, static_cast<int32_t>(ce->arguments.size()));
+			if (ce->keyword_arguments.empty()) {
+				em.emit(Op::CALL, static_cast<int32_t>(ce->arguments.size()));
+			} else {
+				// 带关键字实参：栈布局
+				//   [callee][pos...][name0][val0] ... [nameN][valN]
+				// 名字用字符串常量压栈（VM/AOT 弹出后作为 Map 键）。
+				const std::size_t nkw  = ce->keyword_arguments.size();
+				const std::size_t npos = ce->arguments.size();
+				if (nkw > 0xFFFFu || npos > 0xFFFFu) {
+					throw Pycp::Exception("Codegen: too many call arguments.");
+				}
+				for (const auto& kv : ce->keyword_arguments) {
+					em.emit(Op::LOAD_CONST,
+					        static_cast<int32_t>(em.intern_string(*kv.first)));
+					compile_expr(em, kv.second, scope);
+				}
+				em.emit(Op::CALL_KW,
+				        static_cast<int32_t>((nkw << 16) | npos));
+			}
 			if (!flag_target.empty()) {
 				em.emit(Op::MARK_BINDING,
 				        static_cast<int32_t>(em.intern_name(flag_target)));
@@ -970,22 +1017,16 @@ static void compile_class_body(Emitter& em, const std::string& name,
 		MethodDefinition* md = static_cast<MethodDefinition*>(ms);
 		FunctionExpression* fe = md->function;
 
-		// 顺序校验（默认值形参后不得接必填普通形参）并取默认值个数。
-		const uint16_t method_default_count =
-			validate_default_params(fe, fe->lineno, em);
-
 		std::size_t co_idx = em.push_code_object(fe->name);
 
 		// 构造方法局部作用域：参数（含 self）+ 方法体内赋值目标。
 		Scope fn_scope;
 		fn_scope.has_locals = true;
-		for (const Param& prm : fe->params) fn_scope.add(*prm.name);
+		write_param_info(fn_scope, em.current(), fe->params);
 		std::unordered_set<std::string> targets;
 		collect_assignment_targets(fe->body, targets);
 		for (const auto& t : targets) fn_scope.add(t);
 
-		em.current()->nparams = static_cast<uint16_t>(fe->params.size());
-		em.current()->default_count = method_default_count;
 		em.current()->nlocals = static_cast<uint16_t>(fn_scope.names.size());
 		em.current()->names = fn_scope.names;
 
@@ -1032,6 +1073,8 @@ static void compile_class_body(Emitter& em, const std::string& name,
 			fn_scope.add("self");
 
 			em.current()->nparams = 1;
+			em.current()->default_count = 0;
+			em.current()->param_kinds = {static_cast<uint8_t>(ParamKindCode::Required)};
 			em.current()->nlocals = 1;
 			em.current()->names = fn_scope.names;
 

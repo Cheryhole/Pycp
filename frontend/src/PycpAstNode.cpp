@@ -178,7 +178,10 @@ std::string FunctionExpression::to_string() const {
 	std::string params_str;
 	for (size_t i = 0; i < params.size(); ++i) {
 		if (i > 0) params_str += ", ";
-		params_str += *(params[i].name);
+		// 星号前缀还原 Python 写法（*args / **kwargs）。
+		if (params[i].kind == ParamKind::VarPositional) params_str += "*";
+		else if (params[i].kind == ParamKind::VarKeyword) params_str += "**";
+		if (params[i].name != nullptr) params_str += *(params[i].name);
 		if (params[i].default_value != nullptr) {
 			params_str += " = " + params[i].default_value->to_string();
 		}
@@ -203,9 +206,13 @@ std::string FunctionExpression::to_string() const {
 // ============================================================
 // CallExpression 实现
 // ============================================================
-CallExpression::CallExpression(Expression* callee_,
-                               std::vector<Expression*> args, int line)
-	: callee(callee_), arguments(std::move(args)) {
+CallExpression::CallExpression(
+	Expression* callee_,
+	std::vector<Expression*> args, int line,
+	std::vector<std::pair<std::string*, Expression*>> kwargs)
+	: callee(callee_),
+	  arguments(std::move(args)),
+	  keyword_arguments(std::move(kwargs)) {
 	lineno = line;
 }
 
@@ -214,6 +221,10 @@ CallExpression::~CallExpression() {
 	for (Expression* arg : arguments) {
 		delete arg;
 	}
+	for (auto& kv : keyword_arguments) {
+		delete kv.first;
+		delete kv.second;
+	}
 }
 
 std::string CallExpression::to_string() const {
@@ -221,6 +232,11 @@ std::string CallExpression::to_string() const {
 	for (size_t i = 0; i < arguments.size(); ++i) {
 		if (i > 0) args_str += ", ";
 		args_str += arguments[i]->to_string();
+	}
+	for (size_t i = 0; i < keyword_arguments.size(); ++i) {
+		if (i > 0 || !arguments.empty()) args_str += ", ";
+		args_str += *(keyword_arguments[i].first) + " = " +
+		            keyword_arguments[i].second->to_string();
 	}
 	return "<Call: " + callee->to_string() + "(" + args_str + ")>";
 }

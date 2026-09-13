@@ -1,0 +1,4 @@
+import eg
+
+// 关键字-only 形参缺失 -> 规范表报「缺必填关键字-only 参数」
+eg.kwonly(1)

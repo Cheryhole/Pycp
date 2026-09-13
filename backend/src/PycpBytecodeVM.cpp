@@ -1,6 +1,7 @@
 #include "PycpBytecodeVM.hpp"
 #include "PycpABI.hpp"
 #include "PycpBoolean.hpp"
+#include "PycpExtension.hpp"
 #include "PycpFixedList.hpp"
 #include "PycpMap.hpp"
 
@@ -431,17 +432,9 @@ Object* VM::execute(CodeObject* co,
 	std::vector<Object*> stack;
 	stack.reserve(64);
 
-	// 参数个数校验：实参少于声明的形参个数（含 self）时，
-	// 抛 TypeError 提示缺少必填位置参数。典型场景：类对象（Class）
-	// 未实例化直接调用方法（如 `Class.method()`），self 未传入。
-	if (argc < static_cast<std::size_t>(co->nparams)) {
-		throw VMError("function '" + std::string(co->name) +
-		              "' missing required positional argument(s): expected " +
-		              std::to_string(co->nparams) + ", got " +
-		              std::to_string(argc));
-	}
-
-	// 参数绑定到局部槽（locals[0..nparams)）
+	// 参数落槽：实参已由 BytecodeFunction::invoke 的统一绑定内核按声明顺序
+	// 校验并补齐（缺参 / 多参 / 重复赋值均在彼处报错），此处只做线性落槽。
+	// 裸 `*` 占位槽对应 nullptr，跳过即可。
 	for (std::size_t i = 0; i < argc && i < env->locals.size(); ++i) {
 		env->locals[i] = argv[i];
 		if (argv[i] != nullptr) Incref(argv[i]);
@@ -966,6 +959,45 @@ Object* VM::execute(CodeObject* co,
 				break;
 			}
 
+			case Op::CALL_KW: {
+				// 操作数打包：(nkw << 16) | npos（高 16 位关键字个数，低 16 位位置实参个数）。
+				const std::size_t nkw =
+				    static_cast<std::size_t>(ins.operand) >> 16;
+				const std::size_t npos =
+				    static_cast<std::size_t>(ins.operand) & 0xFFFFu;
+				if (stack.size() < npos + 2 * nkw + 1)
+					throw VMError(cur_file(), cur_line(), "call stack underflow.");
+
+				// 栈布局：[callee][pos...][name0][val0]...[nameN][valN]
+				// 逆序弹出「名字 + 值」对，组装关键字实参字典。
+				Map* kwargs = Pycp::NewKwargs();   // Owned
+				for (std::size_t i = 0; i < nkw; ++i) {
+					Object* val = pop();
+					Object* nms = pop();
+					Pycp::KwargsSet(kwargs, nms, val);
+					if (nms != nullptr) Decref(nms);
+					if (val != nullptr) Decref(val);
+				}
+
+				std::vector<Object*> args(npos);
+				for (std::size_t i = 0; i < npos; ++i)
+					args[npos - 1 - i] = pop();
+				Object* callee = pop();
+
+				// 统一调用入口（与 AOT 生成代码共用 CallKw）：Function 走
+				// 容器形态 invoke（未绑定方法调用由该重载提升接收者），
+				// Class 走 instantiate（含 kwargs 透传给 __initialize__）。
+				Object* ret = Pycp::CallKw(
+				    callee, npos == 0 ? nullptr : args.data(), npos, kwargs);
+
+				Decref(kwargs);
+				for (Object* a : args) Decref(a);
+				Decref(callee);
+				push(ret);
+				Decref(ret);
+				break;
+			}
+
 			case Op::RETURN: {
 				Object* ret = pop();
 				// 释放局部槽：被闭包捕获的槽位保留（由 ~Environment 释放）。
@@ -1165,6 +1197,15 @@ BytecodeFunction::BytecodeFunction(BC::VM* vm_, BC::Module* module_,
 		name = co.name.c_str();
 		fn_nparams_ = co.nparams;
 		fn_default_count_ = co.default_count;
+		// 形参形态表与形参名：解释器路径直接取 CodeObject 元信息。
+		fn_param_kinds_ = co.param_kinds;
+		if (fn_param_kinds_.size() != fn_nparams_) {
+			fn_param_kinds_ = BC::SynthesizeParamKinds(fn_nparams_, fn_default_count_);
+		}
+		const std::size_t np =
+		    std::min<std::size_t>(co.nparams, co.names.size());
+		fn_param_names_.assign(co.names.begin(), co.names.begin() + np);
+		fn_param_names_.resize(fn_nparams_);   // 名字缺失时补空串（仅影响报错文案）
 	}
 }
 
@@ -1187,9 +1228,18 @@ BytecodeFunction::~BytecodeFunction() {
 	}
 }
 
-void BytecodeFunction::set_param_info(uint16_t nparams, uint16_t default_count) {
+void BytecodeFunction::set_param_info(uint16_t nparams, uint16_t default_count,
+                                      std::vector<uint8_t> param_kinds,
+                                      std::vector<std::string> param_names) {
 	fn_nparams_ = nparams;
 	fn_default_count_ = default_count;
+	fn_param_kinds_ = std::move(param_kinds);
+	if (fn_param_kinds_.size() != fn_nparams_) {
+		// 旧 AOT 产物未注入形态表：回退为纯位置形态，行为不变。
+		fn_param_kinds_ = BC::SynthesizeParamKinds(fn_nparams_, fn_default_count_);
+	}
+	fn_param_names_ = std::move(param_names);
+	fn_param_names_.resize(fn_nparams_);
 }
 
 void BytecodeFunction::set_defaults(const std::vector<Object*>& vals) {
@@ -1220,17 +1270,20 @@ namespace {
 // 三者语义耦合、必须同进同出，故收在一处统一处理。
 class MethodCallContext {
 public:
-	MethodCallContext(Class* owner, Object** argv, std::size_t argc)
+	// receiver 为绑定内核解析出的接收者（self 缺省时回退到首个位置实参，
+	// 与旧「argv[0] 即接收者」约定等价），不再直接读 argv[0]。
+	MethodCallContext(Class* owner, Object* receiver)
 		: pushed_self_(false), pushed_class_(false) {
 		if (owner != nullptr) {
 			Pycp::push_current_class(owner);
 			pushed_class_ = true;
 		}
 		Pycp::enter_internal_access();
-		if (argc > 0 && argv != nullptr && argv[0] != nullptr &&
-		    dynamic_cast<Instance*>(argv[0]) != nullptr) {
-			Pycp::push_current_self(static_cast<Instance*>(argv[0]));
-			pushed_self_ = true;
+		if (receiver != nullptr) {
+			if (Instance* inst = dynamic_cast<Instance*>(receiver)) {
+				Pycp::push_current_self(inst);
+				pushed_self_ = true;
+			}
 		}
 	}
 	~MethodCallContext() {
@@ -1248,53 +1301,151 @@ private:
 
 } // anonymous namespace
 
-Object* BytecodeFunction::invoke(Object* self, FixedList* args, Map* kwargs) {
-	(void)kwargs;   // 语言层暂无关键字实参来源：字节码函数体的形参按位置线性绑定。
+namespace {
 
-	// 容器 -> 数组还原：生成的函数体（以及解释器 execute）按
-	// argv[0..] 线性绑定形参。方法调用时 argv[0] 恒为接收者（self），
-	// 与旧实现 BoundMethod 把接收者塞进 argv[0] 的形态逐字一致。
-	//
-	// 完整实参缓冲区必须声明在【函数作用域】：若声明在下面的 if 块内，
-	// 出块即析构，而 argv = full.data() 之后仍要在块外供
-	// MethodCallContext / vm->call / 原生 stub 使用 —— 那会让 argv 变成
-	// 悬空指针，读到已释放的堆内存（表现为 self 偶发失效）。
-	std::vector<Object*> full;
+// CPython 风格参数名列表渲染：'a' / 'a' and 'b' / 'a', 'b', and 'c'
+std::string RenderParamNames(const std::vector<std::string>& names) {
+	std::string out;
+	for (std::size_t i = 0; i < names.size(); ++i) {
+		if (i > 0) {
+			if (names.size() == 2) out += " and ";
+			else if (i + 1 == names.size()) out += ", and ";
+			else out += ", ";
+		}
+		out += '\'';
+		out += names[i];
+		out += '\'';
+	}
+	return out;
+}
+
+// 语言层绑定失败文案（对齐 CPython 原文案，含单复数与连接词）。
+// 原生规范表有各自的历史文案（tests/native_args 有断言），两者互不影响。
+std::string FormatBindError(const std::string& fn_name,
+                            const Extension::BindError& err) {
+	std::string msg = fn_name + "() ";
+	const std::size_t n = err.names.size();
+	switch (err.code) {
+	case Extension::BindErrorCode::TooManyPositional:
+		msg += "takes " + std::to_string(err.expected) + " positional " +
+		       (err.expected == 1 ? "argument" : "arguments") + " but " +
+		       std::to_string(err.got) + " " +
+		       (err.got == 1 ? "was" : "were") + " given";
+		break;
+	case Extension::BindErrorCode::MissingPositional:
+		msg += "missing " + std::to_string(n) + " required positional " +
+		       (n == 1 ? "argument" : "arguments") + ": " +
+		       RenderParamNames(err.names);
+		break;
+	case Extension::BindErrorCode::MissingKeywordOnly:
+		msg += "missing " + std::to_string(n) + " required keyword-only " +
+		       (n == 1 ? "argument" : "arguments") + ": " +
+		       RenderParamNames(err.names);
+		break;
+	case Extension::BindErrorCode::MultipleValues:
+		msg += "got multiple values for argument '" +
+		       (n > 0 ? err.names[0] : std::string()) + "'";
+		break;
+	case Extension::BindErrorCode::UnexpectedKeyword:
+		msg += "got an unexpected keyword argument '" +
+		       (n > 0 ? err.names[0] : std::string()) + "'";
+		break;
+	default:
+		msg += "invalid arguments";
+		break;
+	}
+	return msg;
+}
+
+} // namespace
+
+Object* BytecodeFunction::invoke(Object* self, FixedList* args, Map* kwargs) {
+	using BC::ParamKindCode;
+
+	// 1) 位置实参视图：self 前置为第 0 个实参（与旧实现 BoundMethod 把
+	//    接收者塞进 argv[0] 的形态逐字一致）。
+	std::vector<Object*> pos;
 	const std::size_t given = (args != nullptr) ? args->size() : 0;
-	full.reserve(given + 1);
-	if (self != nullptr) full.push_back(self);
-	for (std::size_t i = 0; i < given; ++i) full.push_back(args->at(i));
+	pos.reserve(given + 1);
+	if (self != nullptr) pos.push_back(self);
+	for (std::size_t i = 0; i < given; ++i) pos.push_back(args->at(i));
+
+	// 2) 形参形态表（解释器构造时取自 CodeObject；native 模式由 AOT 经
+	//    set_param_info 注入；皆缺失时按旧语义（全位置）回退）。
+	const std::size_t nparams = fn_nparams_;
+	std::vector<uint8_t> kinds = fn_param_kinds_;
+	if (kinds.size() != nparams) {
+		kinds = BC::SynthesizeParamKinds(nparams, fn_default_count_);
+	}
+
+	// 3) 由元信息构造规范表（声明顺序）：名字取参数名表，默认值按声明
+	//    顺序消费 defaults_（每个 Optional 形参各占一项）。裸 `*` 为占位
+	//    槽（不入规范表），但它之后的位置形态一律视为关键字-only。
+	std::vector<Extension::ArgSpec> specs;
+	specs.reserve(nparams);
+	std::size_t di = 0;
+	bool kwonly = false;
+	for (std::size_t i = 0; i < nparams; ++i) {
+		const char* nm =
+		    (i < fn_param_names_.size()) ? fn_param_names_[i].c_str() : "";
+		const uint8_t k = kinds[i];
+		if (k == static_cast<uint8_t>(ParamKindCode::BareStar)) {
+			kwonly = true;
+			continue;
+		}
+		if (k == static_cast<uint8_t>(ParamKindCode::Rest)) {
+			specs.push_back(Extension::Arg::Rest(nm));
+			kwonly = true;
+			continue;
+		}
+		if (k == static_cast<uint8_t>(ParamKindCode::RestKeywords)) {
+			specs.push_back(Extension::Arg::RestKeywords(nm));
+			continue;
+		}
+		Object* def = nullptr;
+		if (k == static_cast<uint8_t>(ParamKindCode::Optional)) {
+			if (di < defaults_.size()) def = defaults_[di];
+			++di;
+		}
+		if (kwonly) {
+			// 关键字-only 为内部形态（无公开工厂）：default_value 为 nullptr
+			// 即必填，非空即取默认值——与被删的 Arg::Keyword 语义逐字一致。
+			specs.push_back(Extension::ArgSpec{nm, def, Extension::ArgKind::Keyword});
+		} else if (def != nullptr) {
+			specs.push_back(Extension::Arg::Optional(nm, def));
+		} else {
+			specs.push_back(Extension::Arg::Required(nm));
+		}
+	}
+
+	// 4) 统一绑定内核：位置 → *args → 关键字分拣 → 默认值 → 缺参检查。
+	//    失败时按 CPython 文案报 TypeError（解释器与 AOT 共用本门，故
+	//    两侧行为与文案完全一致）。
+	Extension::BoundArgs bound;
+	Extension::BindError err;
+	if (!Extension::BindParams(specs.data(), specs.size(),
+	                           pos.empty() ? nullptr : pos.data(), pos.size(),
+	                           kwargs, bound, err)) {
+		throw TypeError(FormatBindError(name, err));
+	}
+
+	// 5) 展开为「声明顺序」的完整实参缓冲区（裸 `*` 占位槽保持 nullptr）。
+	//    缓冲区必须声明在函数作用域：argv 在 MethodCallContext / vm->call /
+	//    原生 stub 中持续使用，若退化为块内局部变量会变悬空指针。
+	std::vector<Object*> full(nparams, nullptr);
+	std::size_t si = 0;
+	for (std::size_t i = 0; i < nparams; ++i) {
+		if (kinds[i] == static_cast<uint8_t>(ParamKindCode::BareStar)) continue;
+		if (si < bound.slots.size()) full[i] = bound.slots[si];
+		++si;
+	}
 	Object**    argv = full.empty() ? nullptr : full.data();
 	std::size_t argc = full.size();
 
-	// 默认值（少传尾部位置实参触发）补齐：本层是解释器（vm->call/execute）
-	// 与 AOT（native_fn_）的公共调用门，补齐后两侧始终收到完整参数，原有
-	// 参数线性绑定代码无需改动。
-	//   无默认值函数（fn_default_count_==0）不经此路径：缺参由 execute()
-	//   既有校验按原文案报错，行为零变化。
-	//   有默认值函数：实参 < 必填数（nparams - default_count）报缺参；
-	//   实参介于 [必填数, nparams) 时把缺失的尾部默认值追加展开。
-	if (fn_default_count_ != 0 &&
-	    argc < static_cast<std::size_t>(fn_nparams_)) {
-		const std::size_t required =
-			static_cast<std::size_t>(fn_nparams_) - fn_default_count_;
-		if (argc < required) {
-			throw VMError(std::string("function '") + name +
-			              "' missing required positional argument(s): expected " +
-			              std::to_string(required) + ", got " +
-			              std::to_string(argc));
-		}
-		// 已提供的实参可能已覆盖 default 段的前缀，缺的是 defaults_ 剩余项。
-		const std::size_t have_defaults = argc - required;
-		full.reserve(fn_nparams_);
-		for (std::size_t i = have_defaults; i < defaults_.size(); ++i) {
-			full.push_back(defaults_[i]);
-		}
-		argv = full.data();
-		argc = full.size();
-	}
-
-	MethodCallContext ctx(owner_class_, argv, argc);
+	// 接收者：优先显式 self（BoundMethod 注入 / 未绑定方法调用提升），
+	// 否则回退到首个位置实参（与旧「argv[0] 即接收者」约定等价）。
+	Object* receiver = (self != nullptr) ? self : (full.empty() ? nullptr : full[0]);
+	MethodCallContext ctx(owner_class_, receiver);
 	if (native_fn_ != nullptr) {
 		// native 模式（AOT）：self 传 this，使生成的 pycp_fn_N 能经
 		// get_captured 取捕获环境。

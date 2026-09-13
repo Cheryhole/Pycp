@@ -229,6 +229,11 @@ std::vector<uint8_t> Serialize(const Module& module) {
 			WriteULEB128(seg, name_index(co.name));
 			WriteULEB128(seg, co.nparams);
 			WriteULEB128(seg, co.default_count); // format minor >= 1
+			// 形参种类（format minor >= 3）：声明顺序、每形参 1 字节。
+			WriteULEB128(seg, co.param_kinds.size());
+			for (uint8_t kind : co.param_kinds) {
+				put_u8(seg, kind);
+			}
 			WriteULEB128(seg, co.nlocals);
 
 			// 局部变量名表（符号索引序列）
@@ -393,6 +398,8 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 	// format minor >= 2 的 ClassDef 成员/方法装饰器按「槽位数 + 槽位」分组编码
 	// （支持叠加装饰器）；minor < 2 为旧的「每成员单槽位，UINT32_MAX 表示无」。
 	const bool has_grouped_decorators = (minor >= 2);
+	// format minor >= 3 的代码对象记录含 param_kinds（形参种类表）。
+	const bool has_param_kinds = (minor >= 3);
 	(void)get_u32(data, size, off); // flags 预留
 
 	Module module;
@@ -483,6 +490,25 @@ Module Deserialize(const uint8_t* data, std::size_t size) {
 			if (has_default_count) {
 				co.default_count =
 					static_cast<uint16_t>(ReadULEB128(data, size, off));
+			}
+			// 形参种类表（format minor >= 3）：声明顺序、每形参 1 字节。
+			// 旧产物（minor < 3）没有该字段，按「前段必填 + 后段带默认值」合成
+			// 等价的纯位置形态；长度损坏（与 nparams 不符）时同样退回该合成结果。
+			if (has_param_kinds) {
+				const uint64_t kcount = ReadULEB128(data, size, off);
+				co.param_kinds.reserve(static_cast<std::size_t>(kcount));
+				for (uint64_t k = 0; k < kcount; ++k) {
+					co.param_kinds.push_back(get_u8(data, size, off));
+				}
+			}
+			if (co.param_kinds.size() != co.nparams) {
+				const std::size_t ndef =
+					std::min<std::size_t>(co.default_count, co.nparams);
+				co.param_kinds.assign(
+					co.nparams, static_cast<uint8_t>(ParamKindCode::Required));
+				for (std::size_t k = co.nparams - ndef; k < co.nparams; ++k) {
+					co.param_kinds[k] = static_cast<uint8_t>(ParamKindCode::Optional);
+				}
 			}
 			co.nlocals = static_cast<uint16_t>(ReadULEB128(data, size, off));
 

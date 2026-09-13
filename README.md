@@ -39,9 +39,22 @@ Pycp 对象的类型判定使用**字符串**（而非枚举），与 ABI 保持
 - 函数定义（`func name(params){...}`）与匿名函数（`func(params){...}`）
 - 函数调用、`return`
 - **带默认值的形参**（`func f(a, b = 1){...}`）：默认值可为任意表达式，在函数定义执行时求值一次；
-  调用时少传**尾部**位置实参即自动填充默认值（`f(10)` → `b=1`）。无关键字实参语法（`f(b=1)` 不支持）。
+  调用时少传**尾部**位置实参即自动填充默认值（`f(10)` → `b=1`）。
   非法：默认值形参后不得再接必填普通形参（`func f(a, b = 1, c)` 编译期报错）。共享可变默认对象
   （如 `b = []`）按 Python 语义由所有调用共享。
+- **可变位置参数 `*args`**：多余位置实参按序收集为不可变元组（`FixedList`，零个 → `Fixed[]`），
+  可与默认值形参共存（`func f(a, b = 2, *rest)`）。
+- **关键字-only 形参与裸 `*`**：写在 `*args` 之后（或裸 `*` 分隔符之后）的形参只能按关键字传，
+  也不受「默认值顺序」约束（`func f(a, *, b, c = 9)`）。
+- **可变关键字参数 `**kwargs`**：未被形参名消费的关键字实参收集为 `Map`，必须是最后一个形参。
+- **调用侧关键字实参**：`f(1, b = 2, x = 3)` 可与位置实参混用（位置实参必须在前）；同一调用内
+  关键字名不得重复。运行期/解析期错误文案与 Python 一致（如
+  `f() missing 1 required keyword-only argument: 'b'`、
+  `f() takes 2 positional arguments but 3 were given`、
+  `f() got an unexpected keyword argument 'x'`、
+  `f() got multiple values for argument 'a'`）。
+  形参/实参完整形态规则（顺序、唯一性、裸 `*` 后必须有关键字-only 等）与 Python 对齐；
+  本轮暂不支持 `f(*a)` / `f(**k)` 调用侧解包。
 - 闭包（匿名函数捕获外层局部变量）
 - 类定义（`class Name{...}`）与实例化，含 `__initialize__` / `__string__` / `__raw_string__` 等魔术方法
 - 单继承（`class Child inherits Parent{...}`）

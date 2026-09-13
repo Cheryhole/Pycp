@@ -6,7 +6,8 @@
 #   1) 内置构造器 / insp / typeof / 实例方法的正常路径
 #   2) File 各方法正常路径 + Optional 默认值（mode 省略、read 可省略 size）
 #   3) 参数不足 / 过多 / 类型错误时的统一错误消息（含函数名与参数名）
-#   4) *rest（可变参数）与 **kw（关键字参数）的规范与收集
+#   4) *rest（可变位置参数）与 **kw（RestKeywords 收集器）的规范与收集
+#   5) 关键字-only 形参（Arg::Required/Optional 写在 *rest 之后）+ 调用侧关键字实参
 #
 # 沙箱运行：复制 build/dist 到 build/native_args_work，并把夹具扩展
 # fixtures/eg.cpp 编译为 eg.so 放进沙箱，避免污染构建产物与源码目录。
@@ -102,6 +103,14 @@ check_ok "File 方法与 Optional 默认值（mode 省略 / read(n)）" \
 check_ok "*rest 收集与默认值分拣（零个 -> 空元组；**kw 恒空）" \
 	ok_rest.pycp "REST OK" "0" "6" "Fixed[1, 0, Fixed[]]" "Fixed[1, 2, Fixed[]]" \
 	"Fixed[1, 2, Fixed[3, 4]]" "Fixed[Fixed[], {}]"
+
+# --- 3b) 关键字-only 形参（Rest 之后的位置形参）与调用侧关键字实参 ---
+check_ok "关键字-only 形参与关键字实参（kwonly / kwonly_opt / pick(b=) / echo(x=)）" \
+	ok_kwonly.pycp "KWONLY OK" "Fixed[1, Fixed[], 2]" "Fixed[1, Fixed[2, 3], 4]" \
+	"Fixed[1, Fixed[], 0]" "Fixed[1, Fixed[2,], 5]" \
+	"Fixed[1, 5, Fixed[]]" 'Fixed[Fixed[1, 2], {"x": 3}]'
+check_err "缺必填关键字-only 参数（规范表文案）" \
+	err_kwonly_missing.pycp "TypeError: kwonly() missing required keyword-only argument: 'b'."
 
 # --- 4) 参数个数错误（统一消息：函数名 + 参数名）---
 check_err "参数不足：append() missing required argument: 'item'." \

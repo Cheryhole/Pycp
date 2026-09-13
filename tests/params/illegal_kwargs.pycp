@@ -1,0 +1,4 @@
+// 解析期：**kwargs 必须是最后一个形参。
+func f(**k, b) {
+	return b
+}

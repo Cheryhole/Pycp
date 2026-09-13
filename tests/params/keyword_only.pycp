@@ -1,0 +1,15 @@
+// 关键字-only 形参：写在 *args 之后的位置形参只能按关键字传，
+// 且不再受「默认值顺序」约束（必填关键字-only 可排在可选关键字-only 之前）。
+import io
+import pycp
+
+func f(a, *rest, kw, kw2 = 7) {
+	io.print("f " + pycp.String(a) + " " + pycp.String(rest) + " " + pycp.String(kw) + " " + pycp.String(kw2))
+}
+
+func main() {
+	f(1, kw = 2)
+	f(1, 2, 3, kw = 4, kw2 = 5)
+	io.print("KEYWORD ONLY PASS")
+}
+main()

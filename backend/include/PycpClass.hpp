@@ -138,7 +138,8 @@ public:
 	// 子类（如 BuiltinTypeClass）可重写以返回内置对象。
 	//
 	// 容器形态为主入口（唯一虚函数）；数组重载为 VM / AOT 兼容入口，
-	// 内部打包为容器后转调主入口。
+	// 内部打包为容器后转调主入口。kwargs 为 nullptr 等价于无关键字实参。
+	Object* instantiate(Object** argv, std::size_t argc, Map* kwargs);
 	Object* instantiate(Object** argv, std::size_t argc);
 	virtual Object* instantiate(FixedList* args, Map* kwargs);
 

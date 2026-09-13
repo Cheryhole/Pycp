@@ -41,10 +41,23 @@
 //   }
 //
 // 参数形态（只校验个数与名字，不做类型检查/转换）：
-//   Arg::Required("name")            必填位置参数
-//   Arg::Optional("name"[, 默认值])  可选参数（省略默认值即 None）
-//   Arg::Rest("name")                可变参数（*rest，收集为 FixedList）
-//   Arg::Keyword("name")             关键字参数（**kw，收集为 Map）
+//   Arg::Required("name")            位置必填参数
+//   Arg::Optional("name"[, 默认值])  位置可选参数（省略默认值即 None）
+//   Arg::Rest("name")                可变位置参数（*args，收集为 FixedList）
+//   Arg::RestKeywords("name")        可变关键字参数（**kwargs，收集为 Map）
+//
+// 关键字-only 参数（对应语言层 `*args` / 裸 `*` 之后的形参，只能按关键字
+// 传参）由**位置隐含**，无需显式写法：写在 Arg::Rest(...) 之后的
+// Required 即必填关键字-only，其后的 Optional 即可选关键字-only（省略时
+// 取默认值）。ArgKind::Keyword 仅为语言层映射用的内部形态，不设公开工厂。
+// 顺序规则：
+//   Required* → Optional* → Rest? → Required/Optional(关键字-only)* → RestKeywords?
+// 其中 Rest / RestKeywords 各至多一个，RestKeywords 必须是最后一个；
+// 一旦越过 Arg::Rest，其后不再允许位置形态（Required / Optional 按
+// 关键字-only 解释）。
+//
+// 必填判定：Required 恒必填；Optional 恒取默认值；关键字-only 段内的
+// Required 必填、Optional 可选（default_value 归一化为 None）。
 // =============================================================
 
 #include "PycpObject.hpp"
@@ -103,11 +116,15 @@ namespace Pycp {
 namespace Extension {
 
 // ---- 参数形态 ----
+// 关键字-only 为内部形态 ArgKind::Keyword：由语言层（裸 `*` / `*args` 之后的
+// 形参映射，见 PycpBytecodeVM.cpp）产生；公开规范表通过「Rest 之后的
+// Required / Optional」位置隐含表达，不提供显式工厂。
 enum class ArgKind {
-	Required,   // 必填位置参数
-	Optional,   // 可选位置参数（省略时取登记的默认值）
-	Rest,       // *rest：收集为 FixedList（零个 -> 空元组）
-	Keyword,    // **kw：收集未匹配的关键字参数为 Map（零个 -> 空 Map）
+	Required,       // 位置必填；位于 Rest 之后 => 必填关键字-only
+	Optional,       // 位置可选（省略时取登记的默认值）；位于 Rest 之后 => 可选关键字-only
+	Rest,           // *args：收集为 FixedList（零个 -> 空元组）
+	RestKeywords,   // **kwargs：收集未匹配的关键字参数为 Map（零个 -> 空 Map）
+	Keyword,        // [内部] 关键字-only：default_value == nullptr 为必填，否则取默认值
 };
 
 // 单条参数规范。
@@ -115,7 +132,8 @@ enum class ArgKind {
 // 业务函数自行完成（对齐「只校验个数与名字」的设计）。
 struct ArgSpec {
 	const char* name          = nullptr;   // 参数名（须为合法标识符）
-	Object*     default_value = nullptr;   // 仅 Optional 使用
+	Object*     default_value = nullptr;   // Optional 使用（nullptr 归一化为 None）；
+	                                       // Keyword 中 nullptr 表示「必填」
 	ArgKind     kind          = ArgKind::Required;
 };
 
@@ -134,12 +152,70 @@ inline ArgSpec Optional(const char* n) {
 inline ArgSpec Rest(const char* n) {
 	return ArgSpec{n, nullptr, ArgKind::Rest};
 }
-inline ArgSpec Keyword(const char* n) {
-	return ArgSpec{n, nullptr, ArgKind::Keyword};
+inline ArgSpec RestKeywords(const char* n) {
+	return ArgSpec{n, nullptr, ArgKind::RestKeywords};
 }
 } // namespace Arg
 
-// 规范表常量：无上界（存在 *rest）时 max_args 取该值。
+// =============================================================
+// 统一绑定内核（语言层字节码函数 与 C++ 规范表 共用）
+//
+// 语义对齐 Python：
+//   1) 位置实参依序填位置段（Rest / Keyword 之前的 Required / Optional）；
+//   2) 多余的实参进 *args（FixedList）；
+//   3) 关键字按名字匹配位置段与关键字-only 段（Keyword 槽位 + Rest 之后的
+//      Required / Optional；同一形参重复赋值报错）；
+//   4) 未匹配的关键字进 **kwargs（Map）；无 **kwargs 则报未知关键字；
+//   5) 缺失的可选形参取默认值，缺失的必填形参报错（位置 / 关键字-only 分开）。
+//
+// 内核【不抛异常】：失败时填 BindError 由调用方各自格式化文案
+// （语言层用 CPython 文案，原生规范表沿用既有文案）。
+// =============================================================
+
+// 绑定失败原因。
+enum class BindErrorCode {
+	None,                 // 成功
+	TooManyPositional,    // 位置实参过多（无 *args 接收）
+	MissingPositional,    // 缺必填位置形参
+	MissingKeywordOnly,   // 缺必填关键字-only 形参
+	MultipleValues,       // 同一形参被位置与关键字重复赋值
+	UnexpectedKeyword,    // 未知关键字（无 **kwargs 接收）
+};
+
+struct BindError {
+	BindErrorCode      code     = BindErrorCode::None;
+	std::vector<std::string> names;   // 涉及的形参名 / 关键字名（缺参时按声明顺序）
+	std::size_t        expected = 0;  // TooManyPositional：位置形参上界
+	std::size_t        got      = 0;  // TooManyPositional：实到的位置实参个数
+};
+
+// 绑定结果：slots 为「声明顺序」槽位（长度 == nspec，Borrowed 与 Owned 混合）；
+// owned 为内核新建的容器（*args 的 FixedList / **kwargs 的 Map），由本对象
+// 托管并在析构时释放。不可拷贝、可移动；有效期内不得超出调用方的实参容器寿命。
+class PYCP_API BoundArgs {
+public:
+	BoundArgs() = default;
+	~BoundArgs();
+	BoundArgs(BoundArgs&& other) noexcept;
+	BoundArgs& operator=(BoundArgs&& other) noexcept;
+	BoundArgs(const BoundArgs&) = delete;
+	BoundArgs& operator=(const BoundArgs&) = delete;
+
+	// 主动释放 owned（幂等）；slots 随即失效。
+	void ReleaseOwned();
+
+	std::vector<Object*>       slots;   // 声明顺序槽位
+	std::vector<unsigned char> given;   // 该槽位是否由调用方显式给出
+	std::vector<Object*>       owned;   // 内核新建的容器（Owned）
+};
+
+// 绑定：specs 为声明顺序的形参规范；pos/npos 为位置实参视图（Borrowed）；
+// kwargs 为关键字实参（Borrowed，可为 nullptr）。成功返回 true 并填 out。
+bool PYCP_API BindParams(const ArgSpec* specs, std::size_t nspec,
+                         Object* const* pos, std::size_t npos,
+                         Map* kwargs, BoundArgs& out, BindError& err);
+
+// 规范表常量：无上界（存在 *args）时 max_args 取该值。
 constexpr std::size_t kUnbounded = static_cast<std::size_t>(-1);
 
 class ArgTable;
@@ -186,15 +262,19 @@ class PYCP_API ArgTable {
 public:
 	ArgTable() = default;
 
-	// 绑定实参：位置填充 -> *rest 收集 -> 关键字分拣 -> 默认值 / 缺参检查。
+	// 绑定实参（走统一内核 BindParams，本表只负责把结果转成按名取值形态，
+	// 并把结构化错误格式化为原生扩展的既有文案）。
 	//   args   : 位置参数容器（可为 nullptr，等价空）
 	//   kwargs : 关键字参数字典（可为 nullptr，等价空）
 	ArgResult Bind(FixedList* args, Map* kwargs = nullptr) const;
 
 	const std::string& name() const { return name_; }
+	// 位置形参的必填个数 / 上界（关键字-only 形参不计入，与 Python 一致）。
 	std::size_t min_args() const { return min_args_; }
 	std::size_t max_args() const { return max_args_; }
 	bool has_kwargs() const { return kw_index_ != kNone; }
+	// 是否存在关键字-only 形参（显式 Keyword，或 Rest 之后的 Required / Optional）。
+	bool has_kwonly() const { return kwonly_start_ < specs_.size(); }
 
 private:
 	friend class ArgResult;   // ArgResult 的按名查找需读取 index_ / name_
@@ -206,10 +286,13 @@ private:
 	std::vector<ArgSpec>                         specs_;     // 按声明顺序
 	std::vector<std::string>                     names_;     // 参数名（拥有）
 	std::unordered_map<std::string, std::size_t> index_;     // 名字 -> 槽位
-	std::size_t min_args_   = 0;                            // 必填个数
+	std::size_t min_args_   = 0;                            // 位置必填个数
 	std::size_t max_args_   = 0;                            // 位置参数上界（kUnbounded 表示无上界）
-	std::size_t rest_index_ = kNone;                        // *rest 槽位
-	std::size_t kw_index_   = kNone;                        // **kw 槽位
+	std::size_t rest_index_ = kNone;                        // *args 槽位
+	std::size_t kw_index_   = kNone;                        // **kwargs 槽位
+	// 位置段长度 == min(rest_index_, 首个 Keyword 槽位)（两者皆无时即 specs_.size()）；
+	// 关键字-only 段自 kwonly_start_ 起（显式 Keyword 槽位，或 Rest 的下一槽位）。
+	std::size_t kwonly_start_ = 0;
 };
 
 // 编译参数规范：一次性完成名字合法性 / 重名 / 顺序 / 唯一性校验并预计算，

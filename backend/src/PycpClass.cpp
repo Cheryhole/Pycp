@@ -342,13 +342,17 @@ void Class::foreach_ref(const std::function<void(Object*)>& visit) {
 	}
 }
 
-Object* Class::instantiate(Object** argv, std::size_t argc) {
-	// 数组兼容入口：打包位置实参后转调容器形态主入口。
+Object* Class::instantiate(Object** argv, std::size_t argc, Map* kwargs) {
+	// 数组兼容入口：打包位置实参后转调容器形态主入口（关键字实参直接透传）。
 	const bool no_args = (argv == nullptr || argc == 0);
 	FixedList* args = no_args ? Extension::EmptyArgs() : Extension::MakeArgs(argv, argc);
-	Object* r = instantiate(args, Extension::EmptyKwargs());
+	Object* r = instantiate(args, kwargs != nullptr ? kwargs : Extension::EmptyKwargs());
 	if (!no_args) Decref(args);
 	return r;
+}
+
+Object* Class::instantiate(Object** argv, std::size_t argc) {
+	return instantiate(argv, argc, Extension::EmptyKwargs());
 }
 
 Object* Class::instantiate(FixedList* args, Map* kwargs) {

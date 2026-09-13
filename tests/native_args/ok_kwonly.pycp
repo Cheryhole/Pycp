@@ -1,0 +1,18 @@
+import io
+import eg
+
+// *rest 之后的位置形参 = 关键字-only（必填，必须按关键字传）
+io.print(eg.kwonly(1, b = 2))
+io.print(eg.kwonly(1, 2, 3, b = 4))
+
+// *rest 之后的可选形参 = 可选关键字-only（省略取默认值 / 按关键字传）
+io.print(eg.kwonly_opt(1))
+io.print(eg.kwonly_opt(1, 2, mode = 5))
+
+// 关键字实参同样可命中普通位置形参（按名匹配）
+io.print(eg.pick(1, b = 5))
+
+// **kw：关键字实参被收集为 Map
+io.print(eg.echo(1, 2, x = 3))
+
+io.print("KWONLY OK")

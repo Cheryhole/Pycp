@@ -613,7 +613,13 @@ add_dependencies(pycp-dist
 #
 # 用例集在【配置期】GLOB，新增 .pycp 后需重新配置（与 dist 里的头文件
 # GLOB 同为「配置期快照」，不追求运行时自增）。
+#
+# 并行度：脚本默认按 CPU 核数自动分片（上限 8），可用 PYCP_EQUIV_JOBS 覆盖：
+#   cmake -S . -B build -DPYCP_EQUIV_JOBS=4
+# 每个用例的 AOT 工程目录互不相干，故按 (用例, 模式) 轮询分给工作进程。
 # =====================================================================
+set(PYCP_EQUIV_JOBS "" CACHE STRING
+    "pycp-aot-equiv 并行工作进程数（空 = 按 CPU 核数自动，上限 8）")
 file(GLOB_RECURSE _pycp_equiv_cases "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.pycp")
 set(_pycp_equiv_case_list "")
 foreach(_c IN LISTS _pycp_equiv_cases)
@@ -627,6 +633,8 @@ add_custom_target(pycp-aot-equiv
         -DCASES=${_pycp_equiv_case_list}
         -DWORK_DIR=${CMAKE_BINARY_DIR}/aot-equiv
         -DMODES=shared$<SEMICOLON>static
+        # 并行分片：空 -> 脚本按 CPU 核数自动决定
+        -DJOBS=${PYCP_EQUIV_JOBS}
         # 复用主构建所用的生成器：保证 AOT 项目用的是同一套可用工具链
         # （不指定时 CMake 会自选，Windows 上可能落到未安装的 nmake）。
         -DGENERATOR=${CMAKE_GENERATOR}

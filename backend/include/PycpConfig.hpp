@@ -43,7 +43,10 @@ constexpr uint16_t BYTECODE_VERSION_MAJOR = 3;
 // minor 1：CodeObject 新增 default_count 字段（尾部默认值形参个数）。
 // minor 2：ClassDef 的成员/方法装饰器改为【分组】编码（支持叠加装饰器），
 //          每组为「槽数 + 各槽位」；minor < 2 仍按旧的单槽位格式读取。
-constexpr uint16_t BYTECODE_VERSION_MINOR = 2;
+// minor 3：CodeObject 新增 param_kinds（声明顺序的形参种类，含 *args/**kwargs/
+//          裸 * 占位）与 Op::CALL_KW（带关键字实参的调用）；minor < 3 的旧产物
+//          没有 param_kinds，读取侧按「前段必填 + 后段带默认值」合成纯位置形态。
+constexpr uint16_t BYTECODE_VERSION_MINOR = 3;
 
 // =============================================================
 // AOT 生成符号前缀（跨模块链接约定）

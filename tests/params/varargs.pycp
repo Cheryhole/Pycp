@@ -1,0 +1,22 @@
+// 可变位置参数 *args：多余位置实参按序收集为不可变元组（FixedList）。
+// 零个 -> Fixed[]；与默认值形参、纯 *args 形态共用同一绑定内核。
+import io
+import pycp
+
+func f(a, b = 2, *rest) {
+	io.print("f " + pycp.String(a) + " " + pycp.String(b) + " " + pycp.String(rest))
+}
+
+func g(*rest) {
+	io.print("g " + pycp.String(rest))
+}
+
+func main() {
+	f(1)
+	f(1, 2)
+	f(1, 2, 3, 4)
+	g()
+	g(1, 2)
+	io.print("VARARGS PASS")
+}
+main()

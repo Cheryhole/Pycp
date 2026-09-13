@@ -1,0 +1,5 @@
+// 运行期：无 **kwargs 时未知关键字实参 -> TypeError（CPython 等价文案）。
+func f(a) {
+	return a
+}
+f(1, x = 2)

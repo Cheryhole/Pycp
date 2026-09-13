@@ -12,7 +12,7 @@ io.print(eg.pick(1))
 io.print(eg.pick(1, 2))
 io.print(eg.pick(1, 2, 3, 4))
 
-// **kw：当前语言层无关键字实参来源，恒为空 Map
+// **kw：不传关键字实参时恒为空 Map（关键字实参用例见 ok_kwonly.pycp）
 io.print(eg.echo())
 
 io.print("REST OK")

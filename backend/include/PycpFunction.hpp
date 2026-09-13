@@ -88,10 +88,14 @@ class PYCP_API Function : public Object{
 		// =============================================================
 		virtual Object* invoke(Object* self, FixedList* args, Map* kwargs);
 
-		// 便捷重载（数组形态位置实参）：供 VM CALL / Call / AOT 兼容入口使用。
-		// 内部把 argv 打包为 FixedList 后转调容器形态入口；并处理「未绑定方法
-		// 调用」——当 self 为 nullptr 且本函数是某类的方法（owner_class_ 非空）
-		// 时，把首个位置实参提升为 self（对齐 `Class.method(obj, ...)` 语义）。
+		// 便捷重载（数组形态位置实参 + 可选关键字实参）：供 VM CALL / CALL_KW、
+		// Call / CallKw / AOT 兼容入口使用。内部把 argv 打包为 FixedList 后转调
+		// 容器形态入口；并处理「未绑定方法调用」——当 self 为 nullptr 且本函数
+		// 是某类的方法（owner_class_ 非空）时，把首个位置实参提升为 self
+		// （对齐 `Class.method(obj, ...)` 语义）。
+		//   kwargs 为 nullptr 等价于「无关键字实参」。
+		Object* invoke(Object* self, Object** argv, std::size_t argc, Map* kwargs);
+		// 3 参重载：等价于 kwargs 为空的 4 参重载（保留旧调用点零改动）。
 		Object* invoke(Object* self, Object** argv, std::size_t argc);
 
 		static void Initialize();

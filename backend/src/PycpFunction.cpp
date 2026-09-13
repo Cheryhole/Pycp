@@ -77,7 +77,7 @@ Object* Function::invoke(Object* self, FixedList* args, Map* kwargs){
 // 数组形态便捷重载：打包位置实参为 FixedList 后转调容器形态入口。
 // 「未绑定方法调用」（Class.method(obj, ...)）：self 缺省时把首个实参提升为
 // 接收者——语义与旧实现中 BoundMethod 之外的手工 argv[0] 约定一致。
-Object* Function::invoke(Object* self, Object** argv, std::size_t argc){
+Object* Function::invoke(Object* self, Object** argv, std::size_t argc, Map* kwargs){
 	const bool no_args = (argv == nullptr || argc == 0);
 	FixedList* args = no_args ? Extension::EmptyArgs()
 	                          : Extension::MakeArgs(argv, argc);
@@ -95,10 +95,14 @@ Object* Function::invoke(Object* self, Object** argv, std::size_t argc){
 	}
 
 	Object* result = invoke(self, tail != nullptr ? tail : args,
-	                        Extension::EmptyKwargs());
+	                        kwargs != nullptr ? kwargs : Extension::EmptyKwargs());
 	if (tail != nullptr) Decref(tail);
 	if (!no_args) Decref(args);
 	return result;
+}
+
+Object* Function::invoke(Object* self, Object** argv, std::size_t argc){
+	return invoke(self, argv, argc, Extension::EmptyKwargs());
 }
 
 // 兼容旧 tree-walking 解释器：单参数形态转调统一入口（无实参调用）。

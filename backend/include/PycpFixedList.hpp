@@ -56,6 +56,10 @@ public:
 	std::size_t size() const { return size_; }
 	Object* at(std::size_t idx) const;
 
+	// 元素表只读视图（Borrowed 元素指针；长度 == size()，无拷贝）。
+	// 供「按数组视图消费实参」的内部接口（如 Extension::BindParams）零拷贝读取。
+	Object* const* data() const { return items_; }
+
 	// 魔术方法（不可变：不提供 __set_item__ / __delete_item__）。
 	Object* __get_item__(Object* key) override;
 	Object* __boolean__() override;

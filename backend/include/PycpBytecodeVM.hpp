@@ -161,9 +161,14 @@ private:
 	// 定义点（MAKE_FUNCTION / MAKE_CLASS）求值一次，所有调用共享，
 	// 语义对齐 Python 的默认参数对象。
 	std::vector<Object*> defaults_;
-	// 参数元信息（创建时从 CodeObject 复制，供 invoke 缺省补齐判定）。
-	uint16_t fn_nparams_ = 0;         // 形参总数（含尾部默认值形参）
-	uint16_t fn_default_count_ = 0;   // 尾部默认值形参个数
+	// 参数元信息（创建时从 CodeObject 复制，供 invoke 绑定使用）。
+	uint16_t fn_nparams_ = 0;         // 形参总数（含 *args/**kwargs/裸 * 占位槽）
+	uint16_t fn_default_count_ = 0;   // 带默认值形参个数
+	// 形参形态表（声明顺序，取值同 BC::ParamKindCode；长度 == fn_nparams_）。
+	// 为空表示按旧形态回退：前段 Required + 后段 Optional（据 fn_default_count_）。
+	std::vector<uint8_t> fn_param_kinds_;
+	// 形参名（声明顺序，长度 == fn_nparams_；native 模式由 AOT 注入，否则取自 CodeObject::names）。
+	std::vector<std::string> fn_param_names_;
 
 public:
 	BytecodeFunction(BC::VM* vm, BC::Module* module, std::size_t code_idx,
@@ -184,8 +189,11 @@ public:
 	const std::shared_ptr<BC::Environment>& get_captured() const { return captured; }
 
 	// 参数元信息注入（AOT 生成代码在 native 构造后调用；解释器构造时已从
-	// CodeObject 填充）。
-	void set_param_info(uint16_t nparams, uint16_t default_count);
+	// CodeObject 填充）。param_kinds / param_names 为声明顺序、长度 nparams；
+	// 留空则按旧形态（全位置）回退，保证旧版 AOT 产物等价。
+	void set_param_info(uint16_t nparams, uint16_t default_count,
+	                    std::vector<uint8_t> param_kinds = {},
+	                    std::vector<std::string> param_names = {});
 
 	// 装载默认值：将 vals 中元素以 Owned 引用转入 defaults_（对每个元素
 	// Incref）；调用方栈/容器上的原引用后续仍由其自身清理 Decref。

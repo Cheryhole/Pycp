@@ -1,0 +1,15 @@
+// 可变关键字参数 **kwargs：未被形参名消费的关键字实参进入 Map；
+// 与关键字-only 形参并存时，先按名匹配形参，剩余才落入 **kwargs。
+import io
+import pycp
+
+func f(a, *rest, kw = 1, **extras) {
+	io.print("f " + pycp.String(a) + " " + pycp.String(rest) + " " + pycp.String(kw) + " " + pycp.String(extras))
+}
+
+func main() {
+	f(1)
+	f(1, 2, kw = 3, x = 4)
+	io.print("KWARGS PASS")
+}
+main()

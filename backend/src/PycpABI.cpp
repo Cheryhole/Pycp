@@ -318,6 +318,45 @@ Object* Call(Object* callable, Object** argv, std::size_t argc){
 	return fn->invoke(nullptr, argv, argc);
 }
 
+Object* CallKw(Object* callable, Object** argv, std::size_t argc, Map* kwargs){
+	if (callable == nullptr) throw TypeError("Cannot call null object.");
+	if (callable->is_type("Function")) {
+		Function* fn = static_cast<Function*>(callable);
+		// 数组合规入口：与 Call 同门，仅多带关键字（未绑定方法调用时
+		// 仍由该重载把首个位置实参提升为接收者）。
+		return fn->invoke(nullptr, argv, argc, kwargs);
+	}
+	if (Class* cls = dynamic_cast<Class*>(callable)) {
+		// 实例构造：位置 + 关键字一并交给 instantiate（BuiltinTypeClass
+		// 的构造回调同样经参数规范表消费 kwargs）。
+		return cls->instantiate(argv, argc, kwargs);
+	}
+	throw TypeError("object is not callable.");
+}
+
+void RethrowWithPosition(const char* file, int lineno){
+	try {
+		throw;   // 重抛当前活动异常
+	} catch (Exception& e) {
+		// 已经带位置（例如同帧 AOT 指令自己标注过）时不覆盖，保持最内层信息。
+		if (e.file.empty()) {
+			if (file != nullptr) e.file = file;
+			e.lineno = lineno;
+		}
+		throw;
+	}
+}
+
+Map* NewKwargs(){
+	return Map::New();
+}
+
+void KwargsSet(Map* kwargs, Object* name, Object* value){
+	if (kwargs == nullptr || name == nullptr) return;
+	Object* r = kwargs->__set_item__(name, value);   // 内部持有引用
+	if (r != nullptr) Decref(r);
+}
+
 BC::Environment* Environment_New(){
 	return new BC::Environment();
 }

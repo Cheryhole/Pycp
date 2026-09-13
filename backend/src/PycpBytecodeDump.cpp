@@ -41,6 +41,7 @@ const char* op_name(Op op) {
 		case Op::FOR_ITER:       return "FOR_ITER";
 		case Op::MAKE_FUNCTION: return "MAKE_FUNCTION";
 		case Op::CALL:          return "CALL";
+		case Op::CALL_KW:       return "CALL_KW";
 		case Op::RETURN:        return "RETURN";
 		case Op::RETURN_NONE:   return "RETURN_NONE";
 		case Op::LOAD_MODULE:   return "LOAD_MODULE";
@@ -161,7 +162,25 @@ void DumpModule(const Module& module, std::ostream& os) {
 		os << "\n--- CodeObject[" << ci << "] ---\n"
 		   << "  name    : " << co.name << "\n"
 		   << "  nparams : " << co.nparams << "\n"
+		   << "  ndefault: " << co.default_count << "\n"
 		   << "  nlocals : " << co.nlocals << "\n";
+
+		// 形参形态表（声明顺序，1 字节/形参；长度不足时按旧语义合成）
+		if (co.nparams > 0) {
+			std::vector<uint8_t> kinds = co.param_kinds;
+			if (kinds.size() != co.nparams) {
+				kinds = SynthesizeParamKinds(co.nparams, co.default_count);
+			}
+			static const char* kKindNames[] = {"required", "optional",
+			                                   "*args", "**kwargs", "bare*"};
+			os << "  ptypes  : ";
+			for (size_t k = 0; k < kinds.size(); ++k) {
+				if (k) os << ", ";
+				const uint8_t v = kinds[k];
+				os << ((v < 5) ? kKindNames[v] : "?");
+			}
+			os << "\n";
+		}
 
 		// 局部变量名表（字段信息）
 		if (!co.names.empty()) {

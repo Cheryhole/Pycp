@@ -55,6 +55,32 @@ std::string cpp_string_literal(const std::string& s) {
 	return out;
 }
 
+// 生成 `<ptr>->set_param_info(nparams, default_count, {kinds}, {names});` 文本。
+// 形参形态表与形参名必须在 native 模式下注入，否则 BytecodeFunction::invoke
+// 无法按声明顺序绑定关键字-only / *args / **kwargs，并无法产出 CPython 文案。
+std::string param_info_call(const std::string& ptr,
+                            const Pycp::BC::CodeObject& co) {
+	std::vector<uint8_t> kinds = co.param_kinds;
+	if (kinds.size() != co.nparams) {
+		// 旧产物 / 未填形态表：回退为纯位置形态（行为与升级前一致）。
+		kinds = Pycp::BC::SynthesizeParamKinds(co.nparams, co.default_count);
+	}
+	std::string out = ptr + "->set_param_info(" + std::to_string(co.nparams) +
+	                  ", " + std::to_string(co.default_count) + ", {";
+	for (std::size_t i = 0; i < kinds.size(); ++i) {
+		if (i > 0) out += ", ";
+		out += std::to_string(static_cast<unsigned>(kinds[i]));
+	}
+	out += "}, {";
+	for (std::size_t i = 0; i < co.nparams; ++i) {
+		if (i > 0) out += ", ";
+		out += cpp_string_literal(i < co.names.size() ? co.names[i]
+		                                             : std::string());
+	}
+	out += "});";
+	return out;
+}
+
 // 将模块名转为合法的 C++ 标识符片段（用于生成唯一的桩类型/变量名）。
 // 非字母数字下划线的字符按字节转义为 _xx，避免生成的源码非法。
 std::string sanitize_identifier(const std::string& s) {
@@ -113,6 +139,17 @@ std::size_t estimate_stack_depth(const Pycp::BC::CodeObject& co) {
 			case Pycp::BC::Op::CALL: {
 				std::size_t argc = static_cast<std::size_t>(ins.operand);
 				depth = (depth > argc + 1) ? (depth - argc - 1) : 0;
+				++depth;
+				break;
+			}
+			case Pycp::BC::Op::CALL_KW: {
+				// 弹出 callee + npos 个位置实参 + 2*nkw 个（名字, 值）对，压回结果。
+				const std::size_t npos =
+				    static_cast<std::size_t>(ins.operand) & 0xFFFFu;
+				const std::size_t nkw =
+				    static_cast<std::size_t>(ins.operand) >> 16;
+				const std::size_t popped = npos + 2 * nkw + 1;
+				depth = (depth > popped) ? (depth - popped) : 0;
 				++depth;
 				break;
 			}
@@ -486,8 +523,7 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 				   << cpp_string_literal(mco.name)
 				   << ", " << Pycp::AOT_FN_PREFIX << fidx << ", env);\n";
 				os << "      Pycp::GC_Track(fn);\n";
-				os << "      fn->set_param_info(" << mco.nparams << ", "
-				   << mco.default_count << ");\n";
+				os << "      " << param_info_call("fn", mco) << "\n";
 				// 闭包捕获：登记该函数（含其创建的嵌套函数）引用的自由变量名，
 				// 使本帧退出时保留这些局部槽位，避免闭包持有已释放对象。
 				if (!mco.free_names.empty()) {
@@ -519,19 +555,62 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 			}
 			case Pycp::BC::Op::CALL: {
 				std::size_t nargs = static_cast<std::size_t>(ins.operand);
+				const int lineno = (pc < co.linenos.size()) ? co.linenos[pc] : -1;
 				os << "    { Pycp::Object* args[" << (nargs == 0 ? 1 : nargs) << "];\n";
 				os << "      for (std::size_t i = 0; i < " << nargs << "; ++i) "
 				   << "{ args[" << nargs << " - 1 - i] = st.back(); st.pop_back(); }\n";
 				os << "      Pycp::Object* callee = st.back(); st.pop_back();\n";
 				// 统一调用：Class 走 instantiate（类实例化），其余走 Call（可调用对象）。
-				os << "      Pycp::Object* ret;\n";
+				// 调用点 try/catch 为「位置未标注」的异常补上本行位置，与解释器
+				// execute() 的 catch 行为一致（参数绑定错误在进入被调帧前抛出）。
+				os << "      Pycp::Object* ret = nullptr;\n";
+				os << "      try {\n";
 				os << "      if (dynamic_cast<Pycp::Class*>(callee) != nullptr) {\n";
 				os << "        ret = static_cast<Pycp::Class*>(callee)->instantiate(args, "
 				   << nargs << ");\n";
 				os << "      } else {\n";
 				os << "        ret = Pycp::Call(callee, args, " << nargs << ");\n";
 				os << "      }\n";
+				os << "      } catch (...) { Pycp::RethrowWithPosition("
+				   << cpp_string_literal(module.source_path) << ", " << lineno
+				   << "); }\n";
 				os << "      for (std::size_t i = 0; i < " << nargs
+				   << "; ++i) Pycp::Decref(args[i]);\n";
+				os << "      Pycp::Decref(callee);\n";
+				os << "      st.push_back(ret); }\n";
+				break;
+			}
+			case Pycp::BC::Op::CALL_KW: {
+				// 带关键字实参调用：与 VM 的 CALL_KW 语义逐字对应，统一走
+				// CallKw（Class 实例化 / Function 容器形态 invoke）。
+				const std::size_t npos =
+				    static_cast<std::size_t>(ins.operand) & 0xFFFFu;
+				const std::size_t nkw =
+				    static_cast<std::size_t>(ins.operand) >> 16;
+				const int lineno = (pc < co.linenos.size()) ? co.linenos[pc] : -1;
+				os << "    { Pycp::Object* args[" << (npos == 0 ? 1 : npos) << "];\n";
+				os << "      Pycp::Map* kwargs = Pycp::NewKwargs();\n";
+				// 栈顶为最后一组关键字的「值」，逆序还原（nkw 编译期已知，直接展开）。
+				for (std::size_t i = 0; i < nkw; ++i) {
+					os << "      { Pycp::Object* kval = st.back(); st.pop_back();\n";
+					os << "        Pycp::Object* kname = st.back(); st.pop_back();\n";
+					os << "        Pycp::KwargsSet(kwargs, kname, kval);\n";
+					os << "        if (kname != nullptr) Pycp::Decref(kname);\n";
+					os << "        if (kval != nullptr) Pycp::Decref(kval); }\n";
+				}
+				os << "      for (std::size_t i = 0; i < " << npos << "; ++i) "
+				   << "{ args[" << npos << " - 1 - i] = st.back(); st.pop_back(); }\n";
+				os << "      Pycp::Object* callee = st.back(); st.pop_back();\n";
+				os << "      Pycp::Object* ret = nullptr;\n";
+				os << "      try {\n";
+				os << "        ret = Pycp::CallKw(callee, "
+				   << (npos == 0 ? "nullptr" : "args") << ", " << npos
+				   << ", kwargs);\n";
+				os << "      } catch (...) { Pycp::RethrowWithPosition("
+				   << cpp_string_literal(module.source_path) << ", " << lineno
+				   << "); }\n";
+				os << "      Pycp::Decref(kwargs);\n";
+				os << "      for (std::size_t i = 0; i < " << npos
 				   << "; ++i) Pycp::Decref(args[i]);\n";
 				os << "      Pycp::Decref(callee);\n";
 				os << "      st.push_back(ret); }\n";
@@ -665,8 +744,8 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 								os << "        mfn" << i << "->set_defaults(defs);\n";
 								os << "      }\n";
 							}
-						}
-						const std::vector<uint32_t>& dgroup = cdef.method_decorators[i];
+							}
+							const std::vector<uint32_t>& dgroup = cdef.method_decorators[i];
 						os << "      { Pycp::Object* dg" << i << "[] = {";
 						for (std::size_t k = 0; k < dgroup.size(); ++k) {
 							if (k > 0) os << ", ";
@@ -694,8 +773,8 @@ void emit_function(std::ostringstream& os, const Pycp::BC::Module& module,
 						os << "      Pycp::GC_Track(mfn" << i << ");\n";
 						{
 							const auto& mco = module.code_objects[co_idx];
-							os << "      mfn" << i << "->set_param_info(" << mco.nparams
-							   << ", " << mco.default_count << ");\n";
+							os << "      " << param_info_call("mfn" + std::to_string(i), mco)
+							   << "\n";
 							if (mco.default_count > 0) {
 								os << "      { std::vector<Pycp::Object*> defs;\n";
 								os << "        for (std::size_t k = 0; k < "

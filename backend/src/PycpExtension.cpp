@@ -40,6 +40,53 @@ struct OwnedRef {
 	OwnedRef& operator=(const OwnedRef&) = delete;
 };
 
+constexpr std::size_t kNoSlot = static_cast<std::size_t>(-1);
+
+// 位置段长度 = 第一个 *args 或首个显式关键字-only 参数的槽位（都没有时即形参总数）。
+std::size_t positional_count(const ArgSpec* specs, std::size_t nspec) {
+	for (std::size_t i = 0; i < nspec; ++i) {
+		if (specs[i].kind == ArgKind::Rest || specs[i].kind == ArgKind::Keyword) {
+			return i;
+		}
+	}
+	return nspec;
+}
+
+// 按名字查槽位（形参数量极小，线性扫描比建哈希表更快，且无需额外分配）。
+std::size_t find_slot(const ArgSpec* specs, std::size_t nspec,
+                      const std::string& name) {
+	for (std::size_t i = 0; i < nspec; ++i) {
+		if (specs[i].name != nullptr && name == specs[i].name) return i;
+	}
+	return kNoSlot;
+}
+
+// 原生规范表的错误文案（沿用既有风格；新增关键字-only 缺参一条）。
+std::string format_bind_error(const std::string& name, const BindError& err) {
+	const std::string head = fn_prefix(name);
+	const std::string first = err.names.empty() ? std::string() : err.names[0];
+	switch (err.code) {
+	case BindErrorCode::TooManyPositional:
+		if (err.expected == 0) {
+			return head + " takes no positional arguments (" +
+			       std::to_string(err.got) + " given).";
+		}
+		return head + " takes at most " + std::to_string(err.expected) +
+		       " positional arguments (" + std::to_string(err.got) + " given).";
+	case BindErrorCode::MissingPositional:
+		return head + " missing required argument: '" + first + "'.";
+	case BindErrorCode::MissingKeywordOnly:
+		return head + " missing required keyword-only argument: '" + first + "'.";
+	case BindErrorCode::MultipleValues:
+		return head + " got multiple values for argument '" + first + "'.";
+	case BindErrorCode::UnexpectedKeyword:
+		return head + " got an unexpected keyword argument '" + first + "'.";
+	case BindErrorCode::None:
+		break;
+	}
+	return head + " invalid arguments.";
+}
+
 } // anonymous namespace
 
 // =============================================================
@@ -90,6 +137,168 @@ Object* Invoke(Function* fn, Object* self,
 	Object* r = fn->invoke(self, a, kwargs);
 	Decref(a);
 	return r;
+}
+
+// =============================================================
+// BoundArgs（内核产出：声明顺序槽位 + 新建容器）
+// =============================================================
+BoundArgs::~BoundArgs() {
+	ReleaseOwned();
+}
+
+void BoundArgs::ReleaseOwned() {
+	for (Object* o : owned) {
+		if (o != nullptr) Decref(o);
+	}
+	owned.clear();
+}
+
+BoundArgs::BoundArgs(BoundArgs&& other) noexcept
+	: slots(std::move(other.slots)),
+	  given(std::move(other.given)),
+	  owned(std::move(other.owned)) {
+	other.owned.clear();   // 已转移，避免 other 析构时重复 Decref
+}
+
+BoundArgs& BoundArgs::operator=(BoundArgs&& other) noexcept {
+	if (this != &other) {
+		ReleaseOwned();
+		slots = std::move(other.slots);
+		given = std::move(other.given);
+		owned = std::move(other.owned);
+		other.owned.clear();
+	}
+	return *this;
+}
+
+// =============================================================
+// BindParams：语言层字节码函数 与 C++ 规范表 共用的唯一绑定算法
+// =============================================================
+bool BindParams(const ArgSpec* specs, std::size_t nspec,
+                Object* const* pos, std::size_t npos,
+                Map* kwargs, BoundArgs& out, BindError& err) {
+	err = BindError{};
+	out.ReleaseOwned();
+	out.slots.assign(nspec, nullptr);
+	out.given.assign(nspec, 0);
+
+	const std::size_t cap = positional_count(specs, nspec);
+	std::size_t rest_index = kNoSlot;
+	std::size_t kw_index   = kNoSlot;
+	for (std::size_t i = 0; i < nspec; ++i) {
+		if (specs[i].kind == ArgKind::Rest) rest_index = i;
+		else if (specs[i].kind == ArgKind::RestKeywords) kw_index = i;
+	}
+
+	// 1) 位置实参依序填位置段。
+	const std::size_t fill = (npos < cap) ? npos : cap;
+	for (std::size_t i = 0; i < fill; ++i) {
+		out.slots[i] = pos[i];
+		out.given[i] = 1;
+	}
+	// 位置实参过多且无 *args 接收 -> 报错（优先于关键字相关错误，与旧行为一致）。
+	if (npos > cap && rest_index == kNoSlot) {
+		err.code     = BindErrorCode::TooManyPositional;
+		err.expected = cap;
+		err.got      = npos;
+		return false;
+	}
+
+	// 2) *args：剩余位置实参收集为 FixedList（零个 -> 空元组）。
+	if (rest_index != kNoSlot) {
+		std::vector<Object*> items;
+		if (npos > cap) items.reserve(npos - cap);
+		for (std::size_t k = cap; k < npos; ++k) {
+			if (pos[k] != nullptr) {
+				Incref(pos[k]);   // FixedList 构造函数接管引用（不 Incref）
+				items.push_back(pos[k]);
+			}
+		}
+		FixedList* rest = FixedList::New(items);
+		out.owned.push_back(rest);
+		out.slots[rest_index] = rest;
+	}
+
+	// 3) 关键字实参：按名回填位置段 / 关键字-only 段，未匹配项进 **kwargs。
+	if (kwargs != nullptr && kwargs->size() > 0) {
+		OwnedRef keys(kwargs->keys());
+		FixedList* key_list = static_cast<FixedList*>(keys.obj);
+		for (std::size_t k = 0; k < key_list->size(); ++k) {
+			Object* key = key_list->at(k);
+			if (key == nullptr || !IsString(key)) continue;   // 非字符串键不参与匹配
+			const std::string nm = AsString(key);
+
+			const std::size_t slot = find_slot(specs, nspec, nm);
+			const bool named_slot =
+				slot != kNoSlot && (specs[slot].kind == ArgKind::Required ||
+				                    specs[slot].kind == ArgKind::Optional ||
+				                    specs[slot].kind == ArgKind::Keyword);
+			if (named_slot) {
+				if (out.slots[slot] != nullptr) {
+					err.code = BindErrorCode::MultipleValues;
+					err.names.push_back(nm);
+					return false;
+				}
+				out.slots[slot] = kwargs->__get_item__(key);   // Borrowed
+				out.given[slot] = 1;
+			} else if (kw_index == kNoSlot) {
+				err.code = BindErrorCode::UnexpectedKeyword;
+				err.names.push_back(nm);
+				return false;
+			} else {
+				if (out.slots[kw_index] == nullptr) {
+					Map* m = Map::New();
+					out.owned.push_back(m);
+					out.slots[kw_index] = m;
+				}
+				static_cast<Map*>(out.slots[kw_index])
+					->__set_item__(key, kwargs->__get_item__(key));
+			}
+		}
+	}
+	if (kw_index != kNoSlot && out.slots[kw_index] == nullptr) {
+		Map* m = Map::New();
+		out.owned.push_back(m);
+		out.slots[kw_index] = m;
+	}
+
+	// 4) 默认值填充 + 缺参检查（位置缺参与关键字-only 缺参分开，按声明顺序聚合）。
+	std::vector<std::string> missing_pos;
+	std::vector<std::string> missing_kw;
+	for (std::size_t k = 0; k < nspec; ++k) {
+		if (specs[k].kind == ArgKind::Optional) {
+			if (out.slots[k] == nullptr) {
+				out.slots[k] = (specs[k].default_value != nullptr)
+				                   ? specs[k].default_value
+				                   : None::instance;
+			}
+		} else if (specs[k].kind == ArgKind::Keyword) {
+			// 关键字-only：default_value 为 nullptr 即必填（见 ArgSpec 注释）。
+			if (out.slots[k] == nullptr) {
+				if (specs[k].default_value != nullptr) {
+					out.slots[k] = specs[k].default_value;
+				} else {
+					missing_kw.push_back((specs[k].name != nullptr) ? specs[k].name : "");
+				}
+			}
+		} else if (specs[k].kind == ArgKind::Required &&
+		           out.slots[k] == nullptr) {
+			const std::string nm = (specs[k].name != nullptr) ? specs[k].name : "";
+			if (k < cap) missing_pos.push_back(nm);
+			else         missing_kw.push_back(nm);
+		}
+	}
+	if (!missing_pos.empty()) {
+		err.code  = BindErrorCode::MissingPositional;
+		err.names = std::move(missing_pos);
+		return false;
+	}
+	if (!missing_kw.empty()) {
+		err.code  = BindErrorCode::MissingKeywordOnly;
+		err.names = std::move(missing_kw);
+		return false;
+	}
+	return true;
 }
 
 // =============================================================
@@ -159,11 +368,13 @@ ArgTable CompileArgs(const char* fn_name, std::initializer_list<ArgSpec> specs) 
 	ArgTable t;
 	t.name_ = (fn_name != nullptr) ? fn_name : "";
 
-	bool seen_optional = false;
-	bool seen_rest     = false;
-	bool seen_kw       = false;
-	std::size_t required = 0;
-	std::size_t optional = 0;
+	bool seen_optional = false;   // 位置段是否已出现带默认值的形参
+	bool seen_rest     = false;   // 是否已出现 *args
+	bool seen_kw       = false;   // 是否已出现 **kwargs
+	bool seen_kwonly   = false;   // 是否已进入关键字-only 段（显式 Keyword）
+	std::size_t kwonly_start = ArgTable::kNone;   // 关键字-only 段起点
+	std::size_t required = 0;     // 位置必填个数
+	std::size_t optional = 0;     // 位置可选个数
 
 	for (const ArgSpec& s : specs) {
 		// 1) 名字合法性
@@ -175,37 +386,63 @@ ArgTable CompileArgs(const char* fn_name, std::initializer_list<ArgSpec> specs) 
 
 		// 2) 顺序与唯一性
 		switch (s.kind) {
+		// 关键字-only 有两种表达：显式 Keyword，或 seen_rest 之后的 Required / Optional。
 		case ArgKind::Required:
-			if (seen_rest) {
+			if (seen_kw) {
 				throw ValueError("required parameter '" + std::string(s.name) +
-				                 "' cannot follow *rest parameter.");
+				                 "' cannot follow **keywords parameter.");
 			}
-			if (seen_optional) {
-				throw ValueError("required parameter '" + std::string(s.name) +
-				                 "' cannot follow an optional parameter.");
+			if (seen_kwonly) {
+				throw ValueError("positional parameter '" + std::string(s.name) +
+				                 "' cannot follow a keyword-only parameter.");
 			}
-			++required;
+			if (!seen_rest) {
+				if (seen_optional) {
+					throw ValueError("required parameter '" + std::string(s.name) +
+					                 "' cannot follow an optional parameter.");
+				}
+				++required;
+			}
 			break;
 		case ArgKind::Optional:
-			if (seen_rest) {
+			if (seen_kw) {
 				throw ValueError("optional parameter '" + std::string(s.name) +
-				                 "' cannot follow *rest parameter.");
+				                 "' cannot follow **keywords parameter.");
 			}
-			seen_optional = true;
-			++optional;
+			if (seen_kwonly) {
+				throw ValueError("positional parameter '" + std::string(s.name) +
+				                 "' cannot follow a keyword-only parameter.");
+			}
+			if (!seen_rest) {
+				seen_optional = true;
+				++optional;
+			}
 			break;
 		case ArgKind::Rest:
 			if (seen_rest) {
-				throw ValueError("duplicate *rest parameter ('" +
+				throw ValueError("duplicate *args parameter ('" +
 				                 std::string(s.name) + "').");
 			}
 			if (seen_kw) {
-				throw ValueError("*rest parameter must precede **keywords parameter.");
+				throw ValueError("*args parameter must precede **keywords parameter.");
+			}
+			if (seen_kwonly) {
+				throw ValueError("*args parameter must precede keyword-only parameters.");
 			}
 			seen_rest     = true;
 			t.rest_index_ = slot;
 			break;
 		case ArgKind::Keyword:
+			if (seen_kw) {
+				throw ValueError("keyword-only parameter '" + std::string(s.name) +
+				                 "' cannot follow **keywords parameter.");
+			}
+			if (!seen_kwonly) {
+				seen_kwonly  = true;
+				kwonly_start = slot;
+			}
+			break;
+		case ArgKind::RestKeywords:
 			if (seen_kw) {
 				throw ValueError("duplicate **keywords parameter ('" +
 				                 std::string(s.name) + "').");
@@ -232,10 +469,19 @@ ArgTable CompileArgs(const char* fn_name, std::initializer_list<ArgSpec> specs) 
 	t.min_args_ = required;
 	t.max_args_ = (t.rest_index_ != ArgTable::kNone) ? kUnbounded
 	                                                : (required + optional);
+	// 关键字-only 段起点：显式 Keyword 的槽位，或 *args 的下一槽位；两者皆无
+	// 则不存在关键字-only 段（起点取形参总数）。
+	if (kwonly_start == ArgTable::kNone) {
+		kwonly_start = (t.rest_index_ != ArgTable::kNone) ? t.rest_index_ + 1
+		                                                 : t.specs_.size();
+	}
+	t.kwonly_start_ = kwonly_start;
 
-	// 4) Optional 默认值常驻（数量极少，与既有常驻缓存同策略）
+	// 4) Optional / 关键字-only 可选形参的默认值常驻（数量极少，与既有常驻缓存同策略）
 	for (ArgSpec& s : t.specs_) {
-		if (s.kind == ArgKind::Optional && s.default_value != nullptr) {
+		const bool has_default = (s.kind == ArgKind::Optional) ||
+		                         (s.kind == ArgKind::Keyword);
+		if (has_default && s.default_value != nullptr) {
 			Incref(s.default_value);
 			GC_AddRoot(s.default_value);
 		}
@@ -249,101 +495,22 @@ ArgTable CompileArgs(const char* fn_name, std::initializer_list<ArgSpec> specs) 
 ArgResult ArgTable::Bind(FixedList* args, Map* kwargs) const {
 	const std::size_t n = (args != nullptr) ? args->size() : 0;
 
-	// 1) 位置参数上界（无 *rest 时生效；下界由逐槽必填检查给出更精确的报错）
-	if (max_args_ != kUnbounded && n > max_args_) {
-		const std::string head = fn_prefix(name_) + " takes ";
-		if (max_args_ == 0) {
-			throw TypeError(head + "no positional arguments (" +
-			                std::to_string(n) + " given).");
-		}
-		throw TypeError(head + "at most " + std::to_string(max_args_) +
-		                " positional arguments (" + std::to_string(n) + " given).");
+	// 统一内核完成全部绑定：位置填充 -> *args 收集 -> 关键字分拣 ->
+	// 默认值填充 -> 缺参检查（关键字-only 由内核按位置隐含判定）。
+	BoundArgs bound;
+	BindError err;
+	if (!BindParams(specs_.data(), specs_.size(),
+	                (n > 0) ? args->data() : nullptr, n,
+	                kwargs, bound, err)) {
+		throw TypeError(format_bind_error(name_, err));
 	}
 
 	ArgResult r;
-	r.owner_ = this;
-	r.values_.assign(specs_.size(), nullptr);
-	r.given_.assign(specs_.size(), 0);
-
-	// 2) 位置填充：第 i 个实参 -> 第 i 个槽（遇 *rest / **kw 停止）
-	std::size_t filled = 0;
-	for (; filled < n && filled < specs_.size(); ++filled) {
-		const ArgKind kind = specs_[filled].kind;
-		if (kind == ArgKind::Rest || kind == ArgKind::Keyword) break;
-		r.values_[filled] = args->at(filled);   // Borrowed
-		r.given_[filled]  = 1;
-	}
-
-	// 3) *rest：剩余实参收集为 FixedList（零个 -> 空元组）
-	if (rest_index_ != kNone) {
-		std::vector<Object*> items;
-		if (n > filled) items.reserve(n - filled);
-		for (std::size_t k = filled; k < n; ++k) {
-			Object* item = args->at(k);
-			if (item != nullptr) {
-				Incref(item);   // FixedList 接管引用（不 Incref）
-				items.push_back(item);
-			}
-		}
-		FixedList* rest = FixedList::New(items);
-		r.owned_.push_back(rest);
-		r.values_[rest_index_] = rest;
-	}
-
-	// 4) 关键字参数：按名回填位置槽，未匹配项进 **kw（与 *rest 互不混淆）
-	if (kwargs != nullptr && kwargs->size() > 0) {
-		OwnedRef keys(kwargs->keys());
-		FixedList* key_list = static_cast<FixedList*>(keys.obj);
-		for (std::size_t k = 0; k < key_list->size(); ++k) {
-			Object* key = key_list->at(k);
-			if (key == nullptr || !IsString(key)) continue;   // 非字符串键不参与匹配
-			const std::string nm = AsString(key);
-
-			auto it = index_.find(nm);
-			const bool named_slot =
-				(it != index_.end() &&
-				 specs_[it->second].kind != ArgKind::Rest &&
-				 specs_[it->second].kind != ArgKind::Keyword);
-			if (named_slot) {
-				const std::size_t slot = it->second;
-				if (r.values_[slot] != nullptr) {
-					throw TypeError(fn_prefix(name_) +
-					                " got multiple values for argument '" + nm + "'.");
-				}
-				r.values_[slot] = kwargs->__get_item__(key);   // Borrowed
-				r.given_[slot]  = 1;
-			} else if (kw_index_ == kNone) {
-				throw TypeError(fn_prefix(name_) +
-				                " got an unexpected keyword argument '" + nm + "'.");
-			} else {
-				if (r.values_[kw_index_] == nullptr) {
-					Map* kw = Map::New();
-					r.owned_.push_back(kw);
-					r.values_[kw_index_] = kw;
-				}
-				static_cast<Map*>(r.values_[kw_index_])
-					->__set_item__(key, kwargs->__get_item__(key));
-			}
-		}
-	}
-	if (kw_index_ != kNone && r.values_[kw_index_] == nullptr) {
-		Map* kw = Map::New();
-		r.owned_.push_back(kw);
-		r.values_[kw_index_] = kw;
-	}
-
-	// 5) Optional 默认值 / Required 缺失检查
-	for (std::size_t k = 0; k < specs_.size(); ++k) {
-		const ArgKind kind = specs_[k].kind;
-		if (kind == ArgKind::Optional) {
-			if (r.values_[k] == nullptr) r.values_[k] = specs_[k].default_value;
-		} else if (kind == ArgKind::Required) {
-			if (r.values_[k] == nullptr) {
-				throw TypeError(fn_prefix(name_) +
-				                " missing required argument: '" + names_[k] + "'.");
-			}
-		}
-	}
+	r.owner_  = this;
+	r.values_ = std::move(bound.slots);
+	r.given_  = std::move(bound.given);
+	r.owned_  = std::move(bound.owned);
+	bound.owned.clear();   // 所有权已转移，避免 bound 析构时重复释放
 	return r;
 }
 
