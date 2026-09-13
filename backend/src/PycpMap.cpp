@@ -46,6 +46,7 @@ const std::vector<MethodEntry>& Map_method_table() {
 		{"__map__",              nullptr},
 		{"__boolean__",          nullptr},
 		{"__string__",           nullptr},
+		{"__raw_string__",       nullptr},
 		{"__get_item__",         nullptr},
 		{"__set_item__",         nullptr},
 		{"__delete_item__",      nullptr},
@@ -233,7 +234,8 @@ Object* Map::__boolean__() {
 }
 
 Object* Map::__string__() {
-	// "{k: v, ...}"：键/值经 __string__ 转换；字符串元素加引号（repr 风格）。
+	// "{k: v, ...}"：键与值均经各自的 __raw_string__（repr）渲染，字符串
+	// 键/值带引号并转义，形如 {'a': 1}（对齐 Python 的 dict repr）。
 	std::ostringstream oss;
 	oss << "{";
 	bool first = true;
@@ -246,7 +248,8 @@ Object* Map::__string__() {
 			Object* v = kv.second;
 			if (!first) oss << ", ";
 			first = false;
-			oss << "\"" << name << "\": ";
+			// 成员名是 C++ 字符串，直接按 repr 规则加引号并转义。
+			oss << EscapeForRepr(name) << ": ";
 			// 视图中方法名对应 value 为 nullptr，动态经 __get_attribute__
 			// 取真实可调用对象用于显示。注意 __get_attribute__ 对魔术方法
 			// 返回 Borrowed（GC 常驻，不可 Decref），对方法返回 Owned；
@@ -255,15 +258,13 @@ Object* Map::__string__() {
 				Object* dyn = owner_->__get_attribute__(name);
 				if (dyn != nullptr) {
 					Incref(dyn);
-					oss << AsString(dyn);
+					oss << AsRawString(dyn);
 					Decref(dyn);
 				} else {
 					oss << "None";
 				}
-			} else if (v->is_type("String")) {
-				oss << "\"" << AsString(v) << "\"";
 			} else {
-				oss << AsString(v);
+				oss << AsRawString(v);
 			}
 		}
 	} else {
@@ -272,25 +273,18 @@ Object* Map::__string__() {
 			first = false;
 			Object* k = kv.first;
 			Object* v = kv.second;
-			if (k != nullptr && k->is_type("String")) {
-				oss << "\"" << AsString(k) << "\"";
-			} else if (k != nullptr) {
-				oss << AsString(k);
-			} else {
-				oss << "None";
-			}
+			oss << (k != nullptr ? AsRawString(k) : std::string("None"));
 			oss << ": ";
-			if (v != nullptr && v->is_type("String")) {
-				oss << "\"" << AsString(v) << "\"";
-			} else if (v != nullptr) {
-				oss << AsString(v);
-			} else {
-				oss << "None";
-			}
+			oss << (v != nullptr ? AsRawString(v) : std::string("None"));
 		}
 	}
 	oss << "}";
 	return String::FromCString(oss.str().c_str());
+}
+
+Object* Map::__raw_string__() {
+	// dict 的 repr 与 str 同形（对齐 Python）：嵌套在容器中时显示自身形状。
+	return __string__();
 }
 
 Object* Map::__get_attribute__(const std::string& name) {

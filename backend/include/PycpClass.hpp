@@ -123,6 +123,8 @@ public:
 	// 类的字符串表示：<class "name">。
 	// 匿名类（内部名为 @anonymous）沿用同一格式，输出 <class "@anonymous">。
 	Object* __string__() override;
+	// repr：与 __string__ 同形（<class "name">）。
+	Object* __raw_string__() override;
 
 	// 属性名枚举：返回类的方法名 + 通用成员。
 	Object* __inspect__() override;
@@ -212,6 +214,11 @@ public:
 
 	// 字符串转换：类定义 __string__ 时转发，否则返回默认 "<ClassName instance>"。
 	Object* __string__() override;
+
+	// 原始字符串（repr）：类定义 __raw_string__ 时转发；否则返回
+	// "<ClassName instance at 0xADDR>"（与 __string__ 的默认分支同形）。
+	// 注意：默认形态固定，不因用户覆写 __string__ 而改变。
+	Object* __raw_string__() override;
 
 	// 整数转换：类定义 __integer__ 时转发，否则抛 TypeError。
 	Object* __integer__() override;

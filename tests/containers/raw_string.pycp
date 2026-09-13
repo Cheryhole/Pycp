@@ -1,0 +1,73 @@
+import io
+import pycp
+from classtools import super
+
+// =============================================================
+// __raw_string__（对应 Python 的 __repr__）专项用例
+//
+// 规则：容器渲染元素与键值时调用元素的 __raw_string__ —— 字符串带引号并
+// 转义，数值/布尔/None 等保持无引号形式；repr 与 str 相互独立。
+// =============================================================
+
+// 1) 混合容器：字符串带引号，数值/布尔/None 不带
+io.print([1, "a", None, True])
+
+// 2) 嵌套容器：各层保持自身形状
+io.print([[1, "b"], "c"])
+
+// 3) FixedList：单元素 (a,) 与空表 ()
+io.print(pycp.FixedList(["a"]))
+io.print(pycp.FixedList())
+
+// 4) Map：字符串键与值均带引号
+m = pycp.Map()
+m["k"] = "v"
+io.print(m)
+
+// 5) 转义：引号 / 反斜杠（字符串本身仍走 __string__，不带引号）
+io.print("a\"b\\c")
+io.print(["a\"b\\c"])
+
+// 6) 转义：换行 / 制表符（容器内显示为可读转义形式）
+io.print(["line\nbreak"])
+io.print(["tab\tend"])
+
+// 7) 整数与布尔：repr 与 str 一致（不带引号）
+n = 42
+io.print(n.__raw_string__())
+b = True
+io.print(b.__raw_string__())
+
+// 8) 显式调用与成员枚举
+fl = pycp.FixedList(["x"])
+io.print(fl.__raw_string__())
+io.print(pycp.insp([1]))
+
+// 9) 用户类：未定义 __raw_string__ 时 repr 为固定形式，且不因 __string__ 覆写而改变
+class OnlyStr inherits pycp.Object{
+	func __initialize__(self){
+		super().__initialize__(self)
+	}
+	func __string__(self){
+		return "custom-str"
+	}
+}
+os = OnlyStr()
+io.print(pycp.String(os))
+io.print(os.__string__() == "custom-str")
+io.print(os.__raw_string__() == "custom-str")
+
+// 10) 用户类定义 __raw_string__ 后被容器采用
+class WithRaw inherits pycp.Object{
+	func __initialize__(self){
+		super().__initialize__(self)
+	}
+	func __raw_string__(self){
+		return "<WithRaw!>"
+	}
+}
+wr = WithRaw()
+io.print(wr.__raw_string__())
+io.print([wr])
+
+io.print("RAW OK")

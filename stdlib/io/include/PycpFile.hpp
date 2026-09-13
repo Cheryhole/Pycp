@@ -86,6 +86,8 @@ public:
 
     Object* __get_attribute__(const std::string& name) override;
     Object* __string__() override;
+    // repr：与 __string__ 同形（文件描述形式）。
+    Object* __raw_string__() override;
     Object* __inspect__() override;
     void foreach_ref(const std::function<void(Object*)>& visit) override;
 };

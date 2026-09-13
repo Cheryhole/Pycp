@@ -48,10 +48,15 @@ Object* None::__string__(){
 	return none_str_;
 }
 
+Object* None::__raw_string__(){
+	// repr(None) == "None"：不带引号，且不同于基类默认的 <name at 0xADDR>。
+	return String::FromCString("None");
+}
+
 Object* None::__inspect__() {
 	// None 支持的魔术方法（含继承自 Object 的属性钩子/通用钩子）。
 	std::vector<std::string> names = {
-		"__string__", "__integer__", "__boolean__",
+		"__string__", "__raw_string__", "__integer__", "__boolean__",
 		"__get_attribute__", "__set_attribute__", "__delete_attribute__",
 		"__inspect__", "__class__",
 	};

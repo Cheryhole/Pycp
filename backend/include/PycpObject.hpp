@@ -197,6 +197,13 @@ class PYCP_API Object{
 
 		virtual Object* __integer__();
 		virtual Object* __string__();
+		// 原始字符串形式（对应 Python 的 __repr__）：供容器渲染元素与键值时
+		// 调用，使「是否加引号 / 如何转义」由元素自身决定（字符串带引号并
+		// 转义，数值与 None 等保持无引号形式）。
+		//
+		// 默认实现返回固定形式 "<name at 0xADDR>"，且**不**转调虚 __string__：
+		// repr 与 str 相互独立，用户覆写 __string__ 不会改变默认 repr。
+		virtual Object* __raw_string__();
 		// 真值判定：返回 Boolean 对象（True/False）。默认返回 True（基类语义）。
 		virtual Object* __boolean__();
 		virtual Object* __negation__();

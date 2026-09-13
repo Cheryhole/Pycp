@@ -409,6 +409,7 @@ const std::vector<MethodEntry>& Object_method_table() {
 		{"__get_attribute__", _object_get_attribute},
 		{"__set_attribute__", _object_set_attribute},
 		{"__string__",        _object_string},
+		{"__raw_string__",    nullptr},   // 魔术方法：经 GetMagicMethodFunction 分派
 	};
 	return table;
 }

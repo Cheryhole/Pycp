@@ -43,7 +43,7 @@ Pycp 对象的类型判定使用**字符串**（而非枚举），与 ABI 保持
   非法：默认值形参后不得再接必填普通形参（`func f(a, b = 1, c)` 编译期报错）。共享可变默认对象
   （如 `b = []`）按 Python 语义由所有调用共享。
 - 闭包（匿名函数捕获外层局部变量）
-- 类定义（`class Name{...}`）与实例化，含 `__initialize__` / `__string__` 等魔术方法
+- 类定义（`class Name{...}`）与实例化，含 `__initialize__` / `__string__` / `__raw_string__` 等魔术方法
 - 单继承（`class Child inherits Parent{...}`）
 - 运算符重载（`__addition__` / `__subtraction__` / `__power__` 等魔术方法）
 - **列表（List）**：方括号字面量 `[a, b, c]`、下标访问 `obj[key]` 与赋值 `obj[key] = value`、
@@ -919,8 +919,9 @@ cmake --build build -j
 
 - **类定义**：`class Name{ ... }`，含成员变量声明、方法定义（`func name(self, ...){}`）。
 - **单继承**：`class Child inherits Parent{ ... }`，子类复制父类成员与方法（含可见性），支持 `super()` 调用父类方法。
-- **构造与字符串转换**：`__initialize__`（创建实例自动调用）、`__string__`（转字符串时自动调用）。
+- **构造与字符串转换**：`__initialize__`（创建实例自动调用）、`__string__`（转字符串时自动调用）、`__raw_string__`（容器渲染元素/键值时自动调用，见下一条）。
 - **默认字符串表示**：未定义 `__string__` 的对象输出 `<name at 0xADDR>`；函数输出 `<function "name" at 0xADDR>`；类输出 `<class "name">`；类实例输出 `<Name instance at 0xADDR>`；模块输出 `<module "name">`。匿名函数 / 匿名类沿用各自格式，仅名字位置为内部名 `@anonymous`，即 `<function "@anonymous" at 0xADDR>` / `<class "@anonymous">`（其类实例为 `<@anonymous instance at 0xADDR>`）。
+- **原始字符串（`__raw_string__`，对应 Python 的 `__repr__`）与容器渲染**：`list` / `FixedList` / `Map` 渲染元素与键值时调用元素的 `__raw_string__`——字符串带双引号并完整转义（`\\`、`\"`、`\n` / `\r` / `\t`，其余控制字节为 `\xHH`），数值 / 布尔 / None 不带引号，嵌套容器保持自身形状（形如 `[1, "a", None]` / `("a",)` / `{'k': "v"}`）。未显式定义时输出固定形式 `<name at 0xADDR>`，且与 `__string__` 相互独立（覆写 `__string__` 不影响 repr）；该类实例输出 `<Name instance at 0xADDR>`，类 / 函数 / 模块 / 文件沿用各自既有形式。`obj.__raw_string__()` 可直接调用，并出现在 `__inspect__` / `pycp.insp` 结果中。
 - **运算符重载**（魔术方法）：`__addition__` / `__subtraction__` / `__multiplication__` / `__division__` / `__power__` / `__negation__`，及比较 `__less_than__` / `__less_equal__` / `__equal__` / `__not_equal__` / `__greater_than__` / `__greater_equal__`。
 - **装饰器语法糖**：`@decorator` 把被装饰对象（函数或任意对象）作为参数传给装饰器函数，用返回值替换原对象。
 - **叠加装饰器**：同一目标可连续书写多个装饰器（`@d1` 换行 `@d2` 换行 目标），

@@ -69,6 +69,8 @@ class PYCP_API Function : public Object{
 		// 匿名函数（name 为空或 @anonymous）沿用同一格式，名字位置显示
 		// @anonymous，即 <function "@anonymous" at 0xADDR>（不再是裸 @anonymous）。
 		Object* __string__() override;
+		// repr：与 __string__ 同形（<function "name" at 0xADDR>）。
+		Object* __raw_string__() override;
 		Object* __inspect__() override;
 
 		// 内部调用：兼容旧 tree-walking 入口（无实参调用）。

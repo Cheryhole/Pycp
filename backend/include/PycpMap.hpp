@@ -18,7 +18,8 @@
 //   - length() 方法获取键值对个数
 //   - Map 本身不可哈希（未 override __hash__，继承 Object 默认抛
 //     "unhashable type: Map"），故 Map 不能作为另一 Map 的键
-//   - 字符串表示 "{k: v, ...}"（元素经 __string__ 转换，字符串加引号）
+//   - 字符串表示 "{k: v, ...}"（键与值经各自的 __raw_string__ 渲染，
+//     字符串键/值带引号并转义，形如 {'a': 1}）
 //
 // 存储：以 Object* 为键的原生哈希表 std::unordered_map<Object*, Object*,
 // MapKeyHash, MapKeyEqual>。键/值对象由 Map 持有引用（插入 Incref，
@@ -105,6 +106,8 @@ public:
 	Object* __map__() override;
 	Object* __boolean__() override;
 	Object* __string__() override;
+	// repr：与 __string__ 同形（"{k: v, ...}"），故嵌套容器显示为自身形状。
+	Object* __raw_string__() override;
 	Object* __get_attribute__(const std::string& name) override;
 	Object* __inspect__() override;
 

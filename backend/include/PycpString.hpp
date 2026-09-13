@@ -25,6 +25,8 @@ class PYCP_API String : public Object{
 
 		Object* __integer__();
 		Object* __string__();
+		// 原始字符串形式（repr）：返回带双引号并完整转义的新 String（Owned）。
+		Object* __raw_string__() override;
 		Object* __equal__(Object* other) override;
 		Object* __boolean__() override;
 		Object* __addition__(Object*);
@@ -40,7 +42,17 @@ class PYCP_API String : public Object{
 
 };
 
+// 取对象的字符串形式（__string__）的值。借用语义：内部以 Incref/Decref
+// 包围，不接管所有权（__string__ 可能返回 Borrowed 或 Owned）。
 std::string AsString(Object*);
+
+// 取对象的原始字符串形式（__raw_string__）的值。借用语义同上。
+std::string AsRawString(Object*);
+
+// CPython repr 风格转义：外层加双引号，转义 \\ 与 \"，把 \n / \r / \t 转成
+// 可读形式，其余 < 0x20 与 0x7f 的字节写作 \xHH；>= 0x80 的字节原样保留
+// （不破坏 UTF-8 中文）。
+std::string EscapeForRepr(const std::string& value);
 
 // String 全部方法（全部魔术方法）的唯一权威清单。
 // 类型类注册（register_object）与实例 __inspect__ 均从它派生。

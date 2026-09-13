@@ -231,6 +231,7 @@ Object* Module::__inspect__() {
 	// Module 豁免 __get_attribute__/__set_attribute__/__delete_attribute__，
 	// 仅暴露其真实支持的魔术方法。
 	CollectUniqueName(names, "__string__");
+	CollectUniqueName(names, "__raw_string__");
 	CollectUniqueName(names, "__inspect__");
 	CollectUniqueName(names, "__name__");
 	CollectUniqueName(names, "__class__");
@@ -249,6 +250,11 @@ Object* Module::__string__(){
 		Decref(s);
 	}
 	return String::FromCString(("<module \"" + repr + "\">").c_str());
+}
+
+Object* Module::__raw_string__(){
+	// repr 与 str 同形：<module "name">。
+	return __string__();
 }
 
 void Module::foreach_ref(const std::function<void(Object*)>& visit) {

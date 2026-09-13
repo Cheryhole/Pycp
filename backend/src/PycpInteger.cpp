@@ -61,6 +61,12 @@ Object* Integer::__string__(){
 	return New<String>(std::to_string(this->_value));
 }
 
+Object* Integer::__raw_string__(){
+	// 与 __string__ 保持一致（数值不带引号）。走虚分派，故 Boolean 子类
+	// 覆写的 __string__（True / False）在此同样生效，无需另写一份。
+	return __string__();
+}
+
 Object* Integer::__hash__(){
 	// 哈希值即整数本身（对齐 Python：hash(42) == 42）。
 	return Integer::FromLong(this->_value);
@@ -191,6 +197,7 @@ const std::vector<MethodEntry>& Integer_method_table() {
 	static const std::vector<MethodEntry> table = {
 		{"__integer__",          nullptr},
 		{"__string__",           nullptr},
+		{"__raw_string__",       nullptr},
 		{"__boolean__",          nullptr},
 		{"__negation__",         nullptr},
 		{"__addition__",         nullptr},

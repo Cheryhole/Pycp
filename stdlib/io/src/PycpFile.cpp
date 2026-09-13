@@ -465,6 +465,7 @@ const std::vector<MethodEntry>& File_method_table() {
 		{"close",                _file_close},
 		{"open",                 _file_open},
 		{"__string__",           nullptr},
+		{"__raw_string__",       nullptr},
 		{"__inspect__",          nullptr},
 		{"__get_attribute__",    nullptr},
 		{"__set_attribute__",    nullptr},
@@ -584,6 +585,11 @@ Object* File::__string__() {
     }
     if (is_binary_) mode_str += "b";
     return String::FromCString(("<File \"" + name_ + "\" mode=\"" + mode_str + "\" " + status + ">").c_str());
+}
+
+Object* File::__raw_string__() {
+    // repr 与 str 同形：<File "name" mode="r" open>。
+    return __string__();
 }
 
 void File::foreach_ref(const std::function<void(Object*)>& visit) {

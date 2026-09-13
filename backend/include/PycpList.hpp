@@ -10,7 +10,8 @@
 //   - 支持负索引（-1 为末元素）
 //   - length() 方法获取元素个数（不使用 len）
 //   - "+" 拼接（list + list -> 新 list，浅拷贝元素）
-//   - 字符串表示 "[a, b, c]"（元素经 __string__ 转换，字符串元素加引号）
+//   - 字符串表示 "[a, b, c]"（元素经各自的 __raw_string__ 渲染：字符串
+//     元素带引号并转义，数值/None 等无引号）
 //   - Pycp.List(obj) 转换（__list__），本版仅 list -> list 幂等
 //
 // 本阶段不实现 for 迭代协议（见路线图，后续补充）。
@@ -59,6 +60,9 @@ public:
 	Object* __addition__(Object* other) override;
 	Object* __boolean__() override;
 	Object* __string__() override;
+	// repr：与 __string__ 同形（"[a, b, c]"，元素经各自 __raw_string__ 渲染）,
+	// 故嵌套容器显示为自身形状而非默认 <name at 0xADDR>。
+	Object* __raw_string__() override;
 	Object* __get_attribute__(const std::string& name) override;
 	Object* __iterator__() override;
 	Object* __inspect__() override;

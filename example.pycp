@@ -12,6 +12,9 @@ import pycp
 成员变量声明（仅声明，初始化在 __initialize__ 中完成）。
 __initialize__ 为构造函数，创建实例时自动调用。
 __string__ 为字符串转换方法（pycp.String / io.stdout.write 转换时自动调用）。
+__raw_string__ 为原始字符串（repr）方法：容器（list / FixedList / Map）渲染
+元素与键值时调用它，故字符串元素显示为带引号并转义的形式，自定义类可借此
+决定自己在容器里的显示形态。未定义时默认输出 <name at 0xADDR>。
 */
 
 class Point{
@@ -25,6 +28,11 @@ class Point{
 
 	func __string__(self){
 		return "Point(" + pycp.String(self.x) + ", " + pycp.String(self.y) + ")"
+	}
+
+	// 原始字符串（repr）：放进容器（list / FixedList / Map）时使用
+	func __raw_string__(self){
+		return "<Point " + pycp.String(self.x) + "," + pycp.String(self.y) + ">"
 	}
 
 	// 运算符重载：__addition__ 实现 + 操作
@@ -43,6 +51,10 @@ q = Point(3, 4)
 r = p + q
 io.stdout.write(pycp.String(r))
 io.stdout.write("\n")
+
+// ---- 容器渲染：元素与键值走 __raw_string__（repr）----
+// 直接打印实例用 __string__（Point(1, 2)），放进容器则用 __raw_string__。
+io.stdout.write(pycp.String([p]) + "\n")
 
 // ---- stdin 读取 ----
 io.stdout.write("请输入内容：")

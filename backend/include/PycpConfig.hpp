@@ -84,6 +84,7 @@ constexpr const char* BUILTIN_PRINT = "print";
 // =============================================================
 constexpr const char* MAGIC_INITIALIZE = "__initialize__"; // 实例构造时调用
 constexpr const char* MAGIC_STRING     = "__string__";     // 字符串转换
+constexpr const char* MAGIC_RAW_STRING = "__raw_string__"; // 原始字符串（repr，容器渲染元素用）
 
 // =============================================================
 // 匿名对象内部名（匿名函数 / 匿名类）

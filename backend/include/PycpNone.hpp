@@ -22,6 +22,8 @@ class PYCP_API None : public Object{
 
 		Object* __integer__() override;
 		Object* __string__() override;
+		// repr：固定 "None"（不加引号），与 Python 的 repr(None) 一致。
+		Object* __raw_string__() override;
 		Object* __inspect__() override;
 
 		void foreach_ref(const std::function<void(Object*)>& visit) override;

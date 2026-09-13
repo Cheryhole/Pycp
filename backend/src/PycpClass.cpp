@@ -293,6 +293,11 @@ Object* Class::__string__() {
 	return String::FromCString(("<class \"" + display + "\">").c_str());
 }
 
+Object* Class::__raw_string__() {
+	// repr 与 str 同形：<class "name">。
+	return __string__();
+}
+
 Object* Class::__inspect__() {
 	// 返回类的字段声明名 + 方法名 + 通用成员（定型为 FixedList）。
 	std::vector<Object*> names;
@@ -560,19 +565,49 @@ void Instance::__set_attribute__(const std::string& name, Object* value) {
 	Object::__set_attribute__(name, value);
 }
 
+namespace {
+
+// 判断实例所属类上的某魔术方法是否为「框架默认实现」（而非用户 / 类型的
+// 覆写实现）。两条依据取或：
+//   1) 指针与魔术 thunk 表返回的常驻 Function 相同 —— 该 Function 被各类型
+//      共享注册，owner_class 会被覆盖为「最后一个注册者」（例如加载顺序为
+//      io 早于 pycp 时，__string__ 的 owner_class 会变成 File），指针比对
+//      不受注册顺序影响；
+//   2) owner_class 为 Object —— 兼容经继承复制而来的 Object 默认方法。
+// 目的：避免把框架默认实现当作覆写转发（_object_string 会再调
+// self->__string__()），造成无限递归。
+bool is_default_magic_impl(Function* fn, const char* magic_name) {
+	if (fn == nullptr) return false;
+	if (fn == static_cast<Function*>(GetMagicMethodFunction(magic_name))) {
+		return true;
+	}
+	Class* owner = fn->get_owner_class();
+	return owner != nullptr && std::string(owner->get_name()) == "Object";
+}
+
+} // anonymous namespace
+
 Object* Instance::__string__() {
 	if (cls_ != nullptr) {
-		Function* fn = cls_->find_method("__string__");
-		// 仅调用用户 override 的实现；Object 提供的默认 __string__（owner_class
-		// 为 Object，经继承复制而来）回退 C++ 默认，避免 `_object_string` 再调
-		// argv[0]->__string__() 造成无限递归。
-		if (fn != nullptr &&
-		    (fn->get_owner_class() == nullptr ||
-		     std::string(fn->get_owner_class()->get_name()) != "Object")) {
+		Function* fn = cls_->find_method(MAGIC_STRING);
+		if (fn != nullptr && !is_default_magic_impl(fn, MAGIC_STRING)) {
 			return Extension::Invoke(fn, this, {});
 		}
 	}
 	// 默认表示："<ClassName instance at 0xADDR>"
+	return String::FromCString(("<" + std::string(cls_ ? cls_->get_name() : "?") +
+	                          " instance at " + ptr_address(this) + ">").c_str());
+}
+
+Object* Instance::__raw_string__() {
+	if (cls_ != nullptr) {
+		Function* fn = cls_->find_method(MAGIC_RAW_STRING);
+		if (fn != nullptr && !is_default_magic_impl(fn, MAGIC_RAW_STRING)) {
+			return Extension::Invoke(fn, this, {});
+		}
+	}
+	// 默认表示："<ClassName instance at 0xADDR>"（固定形态：不因用户覆写
+	// __string__ 而改变，repr 与 str 相互独立）。
 	return String::FromCString(("<" + std::string(cls_ ? cls_->get_name() : "?") +
 	                          " instance at " + ptr_address(this) + ">").c_str());
 }

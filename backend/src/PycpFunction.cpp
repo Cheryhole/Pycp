@@ -52,10 +52,15 @@ Object* Function::__string__(){
 	                          "\" at " + ptr_address(this) + ">").c_str());
 }
 
+Object* Function::__raw_string__(){
+	// repr 与 str 同形：<function "name" at 0xADDR>。
+	return __string__();
+}
+
 Object* Function::__inspect__() {
 	// Function / BoundMethod 支持的魔术方法（属性钩子继承自 Object）。
 	std::vector<std::string> names = {
-		"__string__", "__call__",
+		"__string__", "__raw_string__", "__call__",
 		"__get_attribute__", "__set_attribute__", "__delete_attribute__",
 		"__inspect__", "__class__",
 	};

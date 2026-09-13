@@ -60,6 +60,7 @@ namespace {
 // ---- 0 参 ----
 PYCP_MAGIC0(_magic_integer,  "__integer__",  self->__integer__())
 PYCP_MAGIC0(_magic_string,   "__string__",   self->__string__())
+PYCP_MAGIC0(_magic_raw_string, "__raw_string__", self->__raw_string__())
 PYCP_MAGIC0(_magic_boolean,  "__boolean__",  self->__boolean__())
 PYCP_MAGIC0(_magic_list,     "__list__",     self->__list__())
 PYCP_MAGIC0(_magic_map,      "__map__",      self->__map__())
@@ -107,6 +108,7 @@ const std::vector<MagicThunk>& magic_thunks() {
 	static const std::vector<MagicThunk> table = {
 		{"__integer__",          _magic_integer},
 		{"__string__",           _magic_string},
+		{"__raw_string__",       _magic_raw_string},
 		{"__boolean__",          _magic_boolean},
 		{"__list__",             _magic_list},
 		{"__map__",              _magic_map},

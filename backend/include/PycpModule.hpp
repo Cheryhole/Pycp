@@ -142,6 +142,8 @@ public:
 	Object* __inspect__() override;
 
 	Object* __string__();
+	// repr：与 __string__ 同形（<module "name">）。
+	Object* __raw_string__() override;
 	// GC 子引用遍历：枚举命名空间（namespace_）中的值，供标记-清除从
 	// 模块 root 出发标记可达对象。仅遍历不 Decref（析构不释放值，由
 	// 模块执行环境收尾时统一管理）。

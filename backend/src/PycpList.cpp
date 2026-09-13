@@ -52,6 +52,7 @@ const std::vector<MethodEntry>& List_method_table() {
 		{"__boolean__",          nullptr},
 		{"__addition__",         nullptr},
 		{"__string__",           nullptr},
+		{"__raw_string__",       nullptr},
 		{"__get_item__",         nullptr},
 		{"__set_item__",         nullptr},
 		{"__delete_item__",      nullptr},
@@ -191,22 +192,26 @@ Object* List::__addition__(Object* other) {
 }
 
 Object* List::__string__() {
-	// "[a, b, c]"：元素经 __string__ 转换；字符串元素加引号（对齐 repr 风格）。
+	// "[a, b, c]"：元素经各自的 __raw_string__（repr）渲染——是否加引号 /
+	// 如何转义由元素自身决定（字符串带引号并转义，数值/None 等无引号）。
 	std::ostringstream oss;
 	oss << "[";
 	for (std::size_t i = 0; i < items_.size(); ++i) {
 		if (i > 0) oss << ", ";
 		Object* o = items_[i];
-		if (o != nullptr && o->is_type("String")) {
-			oss << "\"" << AsString(o) << "\"";
-		} else if (o != nullptr) {
-			oss << AsString(o);
+		if (o != nullptr) {
+			oss << AsRawString(o);
 		} else {
 			oss << "None";
 		}
 	}
 	oss << "]";
 	return String::FromCString(oss.str().c_str());
+}
+
+Object* List::__raw_string__() {
+	// list 的 repr 与 str 同形（对齐 Python）：嵌套在容器中时显示自身形状。
+	return __string__();
 }
 
 Object* List::__get_attribute__(const std::string& name) {

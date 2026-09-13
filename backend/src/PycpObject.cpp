@@ -56,6 +56,14 @@ Object* Object::__string__(){
                             " at " + ptr_address(this) + ">").c_str());
 }
 
+Object* Object::__raw_string__(){
+  // repr 兜底：固定 "<name at 0xADDR>"。
+  // 注意：此处**不**调用虚 __string__() —— repr 与 str 相互独立，用户覆写
+  // __string__ 不应改变默认 repr（与 Python 中 __repr__ 不回退到 __str__ 一致）。
+  return String::FromCString(("<" + std::string(get_name()) +
+                            " at " + ptr_address(this) + ">").c_str());
+}
+
 Object* Object::__negation__(){
   throw TypeError("Unsupported to negate.");
 }

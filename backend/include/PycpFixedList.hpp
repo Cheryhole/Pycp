@@ -9,7 +9,8 @@
 //   - 只读下标 self[key]（__get_item__），支持负索引
 //   - length() 方法获取元素个数
 //   - "+" 拼接（FixedList + FixedList -> 新 FixedList）
-//   - 字符串表示 "(a, b, c)"（单元素 "(a,)"，对齐 Python tuple repr）
+//   - 字符串表示 "(a, b, c)"（单元素 "(a,)"，对齐 Python tuple repr；
+//     元素经各自的 __raw_string__ 渲染，字符串元素带引号并转义）
 //   - 可哈希（元素可哈希时，对齐 Python tuple）
 //   - for 迭代（FixedListIterator）
 //
@@ -59,6 +60,8 @@ public:
 	Object* __get_item__(Object* key) override;
 	Object* __boolean__() override;
 	Object* __string__() override;
+	// repr：与 __string__ 同形（"(a, b, c)"），故嵌套容器显示为自身形状。
+	Object* __raw_string__() override;
 	Object* __iterator__() override;
 	Object* __addition__(Object* other) override;
 	Object* __hash__() override;

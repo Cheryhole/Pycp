@@ -55,6 +55,11 @@ Object* String::__string__(){
 	return this;
 }
 
+Object* String::__raw_string__(){
+	// repr（对应 Python）：双引号包裹 + 完整转义，返回新的 String（Owned）。
+	return String::FromCString(EscapeForRepr(this->_value).c_str());
+}
+
 Object* String::__boolean__(){
 	// 非空串为 True，空串为 False。
 	return _value.empty() ? Boolean::False() : Boolean::True();
@@ -131,6 +136,7 @@ const std::vector<MethodEntry>& String_method_table() {
 	static const std::vector<MethodEntry> table = {
 		{"__integer__",          nullptr},
 		{"__string__",           nullptr},
+		{"__raw_string__",       nullptr},
 		{"__boolean__",          nullptr},
 		{"__addition__",         nullptr},
 		{"__multiplication__",   nullptr},
@@ -157,7 +163,40 @@ Object* String::__inspect__() {
 	return FixedList::New(names);
 }
 
+std::string EscapeForRepr(const std::string& value) {
+	// CPython repr 风格：双引号包裹，转义 \\ 与 \"，\n / \r / \t 转义为
+	// 可读形式，其余控制字节（< 0x20 与 0x7f）写作 \xHH；>= 0x80 的字节
+	// 原样保留（UTF-8 直通，避免破坏中文等多字节字符）。
+	static const char* kHex = "0123456789abcdef";
+	std::string out;
+	out.reserve(value.size() + 2);
+	out.push_back('"');
+	for (unsigned char c : value) {
+		switch (c) {
+			case '\\': out += "\\\\"; break;
+			case '"':  out += "\\\""; break;
+			case '\n': out += "\\n";  break;
+			case '\r': out += "\\r";  break;
+			case '\t': out += "\\t";  break;
+			default:
+				if (c < 0x20 || c == 0x7f) {
+					out += "\\x";
+					out.push_back(kHex[(c >> 4) & 0x0f]);
+					out.push_back(kHex[c & 0x0f]);
+				} else {
+					out.push_back(static_cast<char>(c));
+				}
+				break;
+		}
+	}
+	out.push_back('"');
+	return out;
+}
+
 std::string AsString(Object* obj){
+	// 借用语义：__string__ 可能返回 Borrowed（String 返回自身）或 Owned
+	// （Integer 等返回新对象），故统一以 Incref/Decref 包围读取，
+	// 既不接管所有权，也不泄漏临时对象。
 	if (obj == nullptr){
 		throw TypeError("Cannot convert null object to string.");
 	}
@@ -165,9 +204,24 @@ std::string AsString(Object* obj){
 	if (sobj == nullptr || !sobj->is_type("String")){
 		throw TypeError("__string__ did not return a String object.");
 	}
-	String* s = static_cast<String*>(sobj);
-	std::string cppstr = s->get_value();
-	// __string__ 返回的临时对象若非常驻需释放（此处仅读取，不接管所有权）
+	Incref(sobj);
+	std::string cppstr = static_cast<String*>(sobj)->get_value();
+	Decref(sobj);
+	return cppstr;
+}
+
+std::string AsRawString(Object* obj){
+	// 同 AsString，但走 __raw_string__（repr）：容器渲染元素/键值时使用。
+	if (obj == nullptr){
+		throw TypeError("Cannot convert null object to raw string.");
+	}
+	Object* sobj = obj->__raw_string__();
+	if (sobj == nullptr || !sobj->is_type("String")){
+		throw TypeError("__raw_string__ did not return a String object.");
+	}
+	Incref(sobj);
+	std::string cppstr = static_cast<String*>(sobj)->get_value();
+	Decref(sobj);
 	return cppstr;
 }
 

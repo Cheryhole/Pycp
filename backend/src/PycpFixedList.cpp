@@ -38,6 +38,7 @@ const std::vector<MethodEntry>& FixedList_method_table() {
 		{"__boolean__",          nullptr},
 		{"__addition__",         nullptr},
 		{"__string__",           nullptr},
+		{"__raw_string__",       nullptr},
 		{"__hash__",             nullptr},
 		{"__get_item__",         nullptr},
 		{"__map__",              nullptr},
@@ -170,23 +171,27 @@ Object* FixedList::__inspect__() {
 }
 
 Object* FixedList::__string__() {
-	// "(a, b, c)"；单元素 "(a,)"（对齐 Python tuple repr）。
+	// 元素经各自的 __raw_string__（repr）渲染：字符串元素带引号并转义，
+	// 数值/None 等保持无引号形式。
 	std::ostringstream oss;
-	oss << "(";
+	oss << "Fixed[";
 	for (std::size_t i = 0; i < size_; ++i) {
 		if (i > 0) oss << ", ";
 		Object* o = items_[i];
-		if (o != nullptr && IsString(o)) {
-			oss << "\"" << AsString(o) << "\"";
-		} else if (o != nullptr) {
-			oss << AsString(o);
+		if (o != nullptr) {
+			oss << AsRawString(o);
 		} else {
 			oss << "None";
 		}
 	}
 	if (size_ == 1) oss << ",";
-	oss << ")";
+	oss << "]";
 	return String::FromCString(oss.str().c_str());
+}
+
+Object* FixedList::__raw_string__() {
+	// tuple 的 repr 与 str 同形（对齐 Python）：嵌套在容器中时显示自身形状。
+	return __string__();
 }
 
 Object* FixedList::__get_attribute__(const std::string& name) {
