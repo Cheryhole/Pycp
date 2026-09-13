@@ -1,4 +1,3 @@
 import pycp
 
-// 构造器参数过多：FixedList 最多接受 1 个可选参数
 pycp.FixedList([1], [2])

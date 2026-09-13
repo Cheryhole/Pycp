@@ -1,4 +1,3 @@
-// 运行期：无 *args 时位置实参过多 -> TypeError（CPython 等价文案）。
 func f(a, b) {
 	return a + b
 }

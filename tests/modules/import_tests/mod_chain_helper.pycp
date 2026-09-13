@@ -1,4 +1,3 @@
-// 被 module_attr_chain 调用的辅助模块：提供函数供主模块跨模块调用。
 import io
 import pycp
 

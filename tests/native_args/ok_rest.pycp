@@ -1,18 +1,14 @@
 import io
 import eg
 
-// *rest：零个实参 -> 空元组
 io.print(eg.sum_rest())
 
-// *rest：多个实参按序收集
 io.print(eg.sum_rest(1, 2, 3))
 
-// 位置 + 默认值 + *rest 的分拣
 io.print(eg.pick(1))
 io.print(eg.pick(1, 2))
 io.print(eg.pick(1, 2, 3, 4))
 
-// **kw：不传关键字实参时恒为空 Map（关键字实参用例见 ok_kwonly.pycp）
 io.print(eg.echo())
 
 io.print("REST OK")

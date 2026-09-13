@@ -1,4 +1,3 @@
 import io
 
-// file 鸭子类型：对象无 write 属性 -> AttributeError（对齐 Python）
 io.print("x", file = 123)

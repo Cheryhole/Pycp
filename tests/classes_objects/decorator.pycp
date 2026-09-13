@@ -1,9 +1,6 @@
 import io
 import classtools
 
-// 模块级装饰器测试：@decorator_expr func name(...) {...}
-
-// 恒等装饰器：直接返回原函数（不依赖闭包捕获）
 func identity(f) {
 	return f
 }
@@ -13,9 +10,8 @@ func greet() {
 	return "hello"
 }
 
-io.print(greet())      // hello
+io.print(greet())
 
-// 类内成员装饰器（classtools 私有成员）
 class Counter {
 	@classtools.private
 	x = 0
@@ -27,7 +23,7 @@ class Counter {
 }
 
 c = Counter()
-io.print(c.inc())      // 1
-io.print(c.inc())      // 2
+io.print(c.inc())
+io.print(c.inc())
 
 io.print("done")

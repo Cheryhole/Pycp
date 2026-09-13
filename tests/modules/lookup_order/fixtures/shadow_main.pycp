@@ -1,5 +1,3 @@
-// 入口：同名模块同时存在于 exe 目录 stdlib/ 与 cwd，验证「本地优先」——
-// cwd 排在 stdlib/ 之前，期望取到 cwd 版本的取值 2。
 import io
 import pycp
 import shadow

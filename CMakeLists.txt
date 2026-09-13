@@ -635,9 +635,9 @@ add_custom_target(pycp-aot-equiv
         -DMODES=shared$<SEMICOLON>static
         # 并行分片：空 -> 脚本按 CPU 核数自动决定
         -DJOBS=${PYCP_EQUIV_JOBS}
-        # 复用主构建所用的生成器：保证 AOT 项目用的是同一套可用工具链
-        # （不指定时 CMake 会自选，Windows 上可能落到未安装的 nmake）。
-        -DGENERATOR=${CMAKE_GENERATOR}
+        # 生成器由脚本统一决定：默认 MinGW Makefiles（Windows）/ Unix Makefiles
+        # （POSIX），先生成 Makefile 再 make -j16 构建（见 PycpAotEquivalence.cmake）。
+        # 不再复用主构建生成器：AOT 子工程彼此独立，强制 Makefile 最稳。
         # 已知缺陷用例（解释器自身行为未定义、预期不一致）降级为 XFAIL，
         # 与 tests/modules/import_tests/run.sh 的 EXPECTED_FAIL_PATTERNS 一致。
         # circular_import 与其两端 mod_circ_x / mod_circ_y 同属「真正循环导入」

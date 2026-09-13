@@ -1,66 +1,54 @@
 import io
 import pycp
 
-// ===== Map 基本功能 =====
-// 空构造（pycp.Map(x) 转换见文末）
 m = pycp.Map()
 io.print(m)
 io.print(m.length())
-io.print(pycp.Boolean(m))   // 空映射为 False
+io.print(pycp.Boolean(m))
 
-// 设置键值对（__setitem__）
 m["a"] = 1
 m["b"] = 2
 m[42] = "answer"
 io.print(m)
 io.print(m.length())
-io.print(pycp.Boolean(m))   // 非空为 True
+io.print(pycp.Boolean(m))
 
-// 获取（__getitem__）
 io.print(m["a"])
 io.print(m["b"])
 io.print(m[42])
 
-// 覆盖已有键
 m["a"] = 100
 io.print(m["a"])
-io.print(m.length())        // 仍是 3
+io.print(m.length())
 
-// 删除（__delete_item__）
 delete m["b"]
-io.print(m.length())        // 2
-io.print(m)                 // {a: 100, 42: answer}
+io.print(m.length())
+io.print(m)
 
-// ===== 哈希：仅 Integer/String 支持 =====
 i = 42
-io.print(i.__hash__())                 // Integer 哈希
-io.print(pycp.insp(i))           // Integer 成员含 __hash__
+io.print(i.__hash__())
+io.print(pycp.insp(i))
 s = "abc"
-io.print(s.__hash__())                 // String 哈希
-io.print(pycp.insp(s))           // String 成员含 __hash__
+io.print(s.__hash__())
+io.print(pycp.insp(s))
 
-// length 方法 + __inspect__
 io.print(m.length())
 io.print(m.__inspect__())
-io.print(pycp.insp(pycp.Map))    // Map 类型类的成员（含方法）
+io.print(pycp.insp(pycp.Map))
 
-// ===== 内置类型的 __map__ 视图应含方法成员（非空）=====
-// String 的 __map__ 视图包含 __string__/__hash__ 等方法名
 sm = "abc"
-io.print(sm.__map__())                 // 非空，含方法名
-// Map 的 __map__ 视图包含 length/__get_item__ 等方法名
-io.print(m.__map__())                   // 非空，含方法名
-io.print(m.__map__().__inspect__()) // 视图自身的成员名
+io.print(sm.__map__())
 
-// ===== pycp.Boolean 按对象真值判断 =====
-io.print(pycp.Boolean(""))    // False
-io.print(pycp.Boolean("x"))   // True
-io.print(pycp.Boolean(0))     // False
-io.print(pycp.Boolean(3))     // True
-io.print(pycp.Boolean(pycp.Map()))  // 空映射 → False
-io.print(pycp.Boolean(m))          // 非空 → True
+io.print(m.__map__())
+io.print(m.__map__().__inspect__())
 
-// ===== __map__ 实时成员视图 =====
+io.print(pycp.Boolean(""))
+io.print(pycp.Boolean("x"))
+io.print(pycp.Boolean(0))
+io.print(pycp.Boolean(3))
+io.print(pycp.Boolean(pycp.Map()))
+io.print(pycp.Boolean(m))
+
 class Point {
 	x = 0
 	y = 0
@@ -70,91 +58,77 @@ class Point {
 }
 p = Point()
 view = p.__map__()
-io.print(view)                 // 初始视图含 x, y
-view["x"] = 10                 // 经视图写入实时同步到实例
-io.print(p.x)                  // 10
-io.print(p.__map__())          // 视图再次读取仍同步
-view["z"] = 99                 // 动态新增成员
-io.print(p.z)                  // 99
-io.print(p.__map__())          // 含 z
-// 删除实例成员经视图
+io.print(view)
+view["x"] = 10
+io.print(p.x)
+io.print(p.__map__())
+view["z"] = 99
+io.print(p.z)
+io.print(p.__map__())
+
 delete view["z"]
-io.print(p.__map__())          // z 已移除
-// 直接删除实例成员
+io.print(p.__map__())
+
 delete p.x
-io.print(p.__map__())          // x 已移除
+io.print(p.__map__())
 
-// 视图（__map__）应同时包含属性与方法名（__str__ 为类方法）
 pt_view = p.__map__()
-io.print(pt_view.__inspect__())    // 含 x/y 与 __str__ 等方法名
-io.print(pt_view["__str__"] != None)  // 方法经 __get_attribute__ 可取到的可调用对象
+io.print(pt_view.__inspect__())
+io.print(pt_view["__str__"] != None)
 
-// ===== delete 三种形态 =====
-// 1) delete obj.attr（含字段与动态成员）
 class Box {
 	v = 5
 }
 b = Box()
 b.dyn = "hello"
 delete b.dyn
-io.print(b.__map__())          // 不含 dyn
+io.print(b.__map__())
 delete b.v
-io.print(b.__map__())          // 不含 v
+io.print(b.__map__())
 
-// 2) delete obj[key]（List 按下标）
 lst = [10, 20, 30]
 delete lst[1]
-io.print(lst)                  // [10, 30]
+io.print(lst)
 
-// 3) delete obj（默认抛 TypeError，可自定义 __delete__）
 class Resource {
 	func __delete__(self) {
 		io.print("resource cleaned up")
 	}
 }
 r = Resource()
-delete r                      // 调用自定义 __delete__
+delete r
 
-// ===== map 字面量 {key: value} =====
-// 单行字面量
 ml = {1: "one", 2: "two"}
-io.print(ml.length())               // 2
-io.print(ml[1])                     // one
-io.print(ml[2])                     // two
+io.print(ml.length())
+io.print(ml[1])
+io.print(ml[2])
 
-// 嵌套 map
 n = {1: {2: 3}}
-io.print(n[1][2])                   // 3
-io.print(n[1].length())             // 1
+io.print(n[1][2])
+io.print(n[1].length())
 
-// 空 map
 e = {}
-io.print(e.length())                // 0
-io.print(pycp.Boolean(e))           // False
+io.print(e.length())
+io.print(pycp.Boolean(e))
 
-// 字符串键
 s = {"a": 10, "b": 20}
-io.print(s["a"] + s["b"])           // 30
+io.print(s["a"] + s["b"])
 
-// ===== list/map 跨行定义（Python 风格隐式行续接）=====
-// 跨行 map（含尾部逗号）
 ml2 = {
 	1: "one",
 	2: "two",
 }
-io.print(ml2.length())              // 2
-io.print(ml2[2])                    // two
+io.print(ml2.length())
+io.print(ml2[2])
 
-// 跨行 list（含尾部逗号）
 lst2 = [
 	1,
 	2,
 	3,
 ]
-io.print(lst2.length())             // 3
-io.print(lst2[0] + lst2[2])         // 4
+io.print(lst2.length())
+io.print(lst2[0] + lst2[2])
 
-// 跨行 map 嵌套跨行 list
 mixed = {
 	"nums": [
 		1,
@@ -162,48 +136,42 @@ mixed = {
 	],
 	"flag": True,
 }
-io.print(mixed["nums"].length())    // 2
-io.print(mixed["nums"][1])          // 2
-io.print(pycp.Boolean(mixed["flag"]))  // True
+io.print(mixed["nums"].length())
+io.print(mixed["nums"][1])
+io.print(pycp.Boolean(mixed["flag"]))
 
-// map 作为函数实参
 func pass_through(m) {
 	return m
 }
 ret = pass_through({1: 2})
-io.print(ret[1])                    // 2
+io.print(ret[1])
 
-// map 在 list 内部
 maplist = [{1: 2}, {3: 4}]
-io.print(maplist.length())          // 2
-io.print(maplist[0][1])             // 2
-io.print(maplist[1][3])             // 4
+io.print(maplist.length())
+io.print(maplist[0][1])
+io.print(maplist[1][3])
 
-// 跨行 map 作为函数实参（map 花括号内换行）
 ret2 = pass_through({
 	5: 6,
 })
-io.print(ret2[5])                   // 6
+io.print(ret2[5])
 
-// code_block 内部跨行字面量
 if True {
 	inner = [
 		7,
 		8,
 	]
-	io.print(inner.length())        // 2
+	io.print(inner.length())
 }
-// code_block 顶层语句分隔仍然正常（上一条 if 之后换行分隔）
-io.print("after block")             // after block
 
-// 跨行表达式（分组括号内）
+io.print("after block")
+
 sum = (
 	1 +
 	2
 )
-io.print(sum)                       // 3
+io.print(sum)
 
-// 嵌套 map 跨行（内层花括号也跨行）
 deep = {
 	"outer": {
 		"inner": [
@@ -213,45 +181,38 @@ deep = {
 		],
 	},
 }
-io.print(deep["outer"]["inner"].length())   // 3
-io.print(deep["outer"]["inner"][2])         // 3
+io.print(deep["outer"]["inner"].length())
+io.print(deep["outer"]["inner"][2])
 
-// 多 map 实参
 func first_key(m) {
 	return m[1]
 }
-io.print(first_key({1: "a"}))               // a
+io.print(first_key({1: "a"}))
 
-// ===== keys() 方法 =====
 km = {"x": 1, "y": 2}
-io.print(km.keys().length())        // 2
+io.print(km.keys().length())
 io.print(pycp.Boolean(km.keys().length() == km.length()))
 
-// ===== pycp.Map(x) 转换 =====
-// 1) Map -> 独立浅拷贝（互不影响）
 cp = pycp.Map(km)
-io.print(cp.length())               // 2
-io.print(cp["x"])                   // 1
+io.print(cp.length())
+io.print(cp["x"])
 cp["z"] = 3
-io.print(cp.length())               // 3
-io.print(km.length())               // 2（原映射不受影响）
+io.print(cp.length())
+io.print(km.length())
 
-// 2) 二元组序列 -> Map
 pm = pycp.Map([["a", 1], ["b", 2]])
-io.print(pm.length())               // 2
-io.print(pm["a"] + pm["b"])         // 3
+io.print(pm.length())
+io.print(pm["a"] + pm["b"])
 
-// 3) __map__ 视图 -> 独立快照（不再同步原对象）
 class Bag {
 	v = 7
 }
 bg = Bag()
 snap = pycp.Map(bg.__map__())
-io.print(snap["v"])                 // 7
+io.print(snap["v"])
 snap["v"] = 100
-io.print(bg.v)                      // 7（快照独立，不影响实例）
+io.print(bg.v)
 
-// 4) 自定义类实现 keys() + __get_item__ 即可转换
 class Store {
 	data = None
 	func __initialize__(self) {
@@ -268,11 +229,10 @@ class Store {
 }
 st = Store()
 sm = pycp.Map(st)
-io.print(sm.length())               // 2
-io.print(sm["k1"])                  // 10
-io.print(sm["k2"])                  // 20
+io.print(sm.length())
+io.print(sm["k1"])
+io.print(sm["k2"])
 
-// keys 应出现在 inspect 列表中
 io.print(pycp.insp(pycp.Map))
 io.print(km.__inspect__())
 

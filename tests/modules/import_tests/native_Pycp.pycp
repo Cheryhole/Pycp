@@ -1,20 +1,17 @@
-// 场景：import pycp 并使用其类型与函数（String/Integer）。
 import io
 import pycp
 
 func main() {
-	// pycp.String 构造（输出验证，避免 String 比较受限）
+
 	s = pycp.String(123)
 	io.print(s)
 
-	// pycp.Integer 构造（整数比较）
 	i = pycp.Integer("456")
 	if (i != 456) {
 		io.print("native_Pycp: Integer mismatch got " + pycp.String(i))
 		return None
 	}
 
-	// pycp.List 类型存在（输出类型名，不比较对象）
 	io.print(pycp.List.__name__)
 
 	io.print("IMPORT TEST PASS: native_Pycp")

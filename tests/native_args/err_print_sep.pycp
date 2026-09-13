@@ -1,4 +1,3 @@
 import io
 
-// sep 非 String -> TypeError（不支持 sep=None 以外的类型）
 io.print(1, sep = 2)

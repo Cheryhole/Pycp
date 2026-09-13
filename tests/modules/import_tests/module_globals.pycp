@@ -1,5 +1,3 @@
-// 被导入模块的函数必须看到【自己模块】的全局名（此前 VM::call 一律使用入口
-// 命名空间，导致子模块函数读取本模块全局名报 NameError）。
 import io
 import mod_globals
 

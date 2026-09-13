@@ -1,4 +1,3 @@
-// 真正循环导入的另一端：import 对方。
 import io
 import pycp
 import mod_circ_x

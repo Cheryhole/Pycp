@@ -1,4 +1,3 @@
-// import_once 的被依赖模块 B。
 import io
 import pycp
 

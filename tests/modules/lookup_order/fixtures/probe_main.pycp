@@ -1,5 +1,3 @@
-// 入口：同一目录下同时存在 native_probe.so 与 native_probe.pycp，
-// 验证同层「.pycp 源码优先于同名动态库」——期望命中源码并返回 2。
 import io
 import pycp
 import native_probe

@@ -1,7 +1,5 @@
-// io.print Python 签名：print(*args, sep=" ", end="\n", file=io.stdout, flush=False)
 import io
 
-// 鸭子类型 file：任何有 write 方法的对象
 class Duck {
 	func write(self, s) {
 		io.stdout.write("duck:" + s)
@@ -14,22 +12,22 @@ class Duck {
 }
 
 func main() {
-	// 多参数：sep 默认空格；各实参经 __string__ 渲染
+
 	io.print(1, "a", [1, 2])
-	// sep 自定义 / None 恢复默认
+
 	io.print(1, 2, 3, sep = "-")
 	io.print(1, 2, sep = None)
-	// end 自定义 / None 恢复默认
+
 	io.print("A", end = "")
 	io.print("B", end = "C\n")
 	io.print("D", end = None)
-	// 0 参 -> 空行
+
 	io.print()
-	// file = io.stderr
+
 	io.print("to stderr", file = io.stderr)
-	// flush 真值化（Integer 1 -> True）
+
 	io.print("flushed", flush = 1)
-	// 鸭子类型 file（write + flush 都经属性查找调用）
+
 	io.print("hello", file = Duck(), flush = True)
 	io.print("PRINT OK")
 }

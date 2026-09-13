@@ -1,7 +1,3 @@
-// __name__ 字段行为断言：
-//   规则 1：入口文件命名空间无 __name__ -> 裸名/pycp.__name__ 回退 "__main__"；
-//   规则 2：import 的模块命名空间注入 __name__ = 模块名；
-//   规则 3：文件显式定义 __name__ 优先。
 import io
 import pycp
 import mod_name

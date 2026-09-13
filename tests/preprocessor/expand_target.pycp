@@ -1,3 +1,2 @@
-// 这是被 # expand 展开的目标文件（tests/preprocessor/expand_file.pycp 引用）。
 expanded_content = 42
 inner_line = "inner_value"

@@ -1,5 +1,3 @@
-// 魔术方法完整性：io.File 类对象 / File 实例应能列出其真实支持的魔术方法
-// （含属性钩子 __get_attribute__/__set_attribute__/__del_attribute__）。
 import io
 import pycp
 

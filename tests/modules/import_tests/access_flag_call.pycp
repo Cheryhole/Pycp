@@ -1,7 +1,3 @@
-// 访问控制装饰器「直接调用」形式的跨模块效果断言：
-//   private(secret) / private(hidden) → 跨模块不可见（见 private_import_denied）
-//   public(shown) / public(visible)   → 可 import / 调用
-//   readonly(CONST)                   → 可读
 import io
 import pycp
 from mod_flag import shown, visible, CONST
@@ -23,7 +19,7 @@ func main() {
 		io.print("access_flag_call: readonly(CONST) 后常量读取失败")
 		return None
 	}
-	// insp 应只含公开符号（人工观察：不含 secret / hidden）。
+
 	io.print(pycp.insp(mod_flag))
 	io.print("IMPORT TEST PASS: access_flag_call")
 }

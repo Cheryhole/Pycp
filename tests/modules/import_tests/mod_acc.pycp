@@ -1,4 +1,3 @@
-// 访问控制测试辅助模块：public/private/readonly 三种修饰符作用于模块符号。
 import io
 from classtools import private, public, readonly
 

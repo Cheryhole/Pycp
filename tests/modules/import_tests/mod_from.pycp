@@ -1,4 +1,3 @@
-// 被 from_import 依赖的模块：含多个顶层符号。
 mod_from_alpha = 100
 mod_from_beta = 200
 

@@ -1,4 +1,3 @@
-// 场景：from foo import a, b，直接访问导入的命名空间符号。
 import io
 import pycp
 from mod_from import mod_from_alpha, mod_from_beta, mod_from_greet
@@ -12,7 +11,7 @@ func main() {
 		io.print("from_import: beta mismatch")
 		return None
 	}
-	// greet 返回 String，仅调用展示，不比较（String 比较受限）
+
 	g = mod_from_greet("py")
 	io.print(g)
 	io.print("IMPORT TEST PASS: from_import")

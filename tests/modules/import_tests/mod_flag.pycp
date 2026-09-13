@@ -1,6 +1,3 @@
-// 访问控制辅助模块：以【直接调用】形式（无 @ 语法糖）设置符号访问属性。
-// 三个标准装饰器函数（pycp.readonly / private / public，classtools 同名）
-// 直接调用时与 `@readonly a = ...` 等价：编译器在调用后补发 MARK_BINDING。
 import io
 import pycp
 from classtools import private, public, readonly
@@ -19,7 +16,6 @@ func hidden() {
 
 CONST = 3
 
-// 直接调用形式：private / public / readonly
 private(secret)
 public(shown)
 private(hidden)

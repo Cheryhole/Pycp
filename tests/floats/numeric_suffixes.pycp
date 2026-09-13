@@ -1,12 +1,7 @@
-// 数值字面量 f/F、d/D 后缀验证：
-//   f/F -> PycpFloat（含整数形式 1f -> Float(1.0)）
-//   d/D -> PycpDecimal（保留原文文本精确构造，含整数形式 2d -> Decimal("2")）
-//   无后缀行为不变：42 -> Integer，0.1 -> Float，0x1F -> Integer
 import io
 import pycp
 
 func main() {
-	// ---------- 1) 小数 + f 后缀 -> Float ----------
 	if (0.1f != 0.1) {
 		io.stdout.write("FAIL 0.1f literal\n")
 	}
@@ -15,37 +10,33 @@ func main() {
 	}
 	io.stdout.write("float_suffix_ok\n")
 
-	// ---------- 2) 整数 + f 后缀 -> Float(1.0) ----------
 	if (1f != 1.0) {
 		io.stdout.write("FAIL 1f literal\n")
 	}
 	if (1f + 1 == 2.0) {
-		// Float 与 Integer 混合运算 -> Float
+
 		io.stdout.write("int_f_promote_ok\n")
 	} else {
 		io.stdout.write("FAIL 1f + 1\n")
 	}
 
-	// ---------- 3) 小数 + d 后缀 -> Decimal（精确） ----------
-	// Decimal("0.1") + Decimal("0.2") 精确等于 Decimal("0.3")
 	if (0.1d + 0.2d != 0.3d) {
 		io.stdout.write("FAIL 0.1d + 0.2d\n")
 	}
-	// double 下的对照：0.1f + 0.2f 不精确等于 0.3f（体现两者差异）
+
 	if (0.1f + 0.2f != 0.3f) {
 		io.stdout.write("float_vs_decimal_distinct_ok\n")
 	} else {
 		io.stdout.write("FAIL float 0.1+0.2 unexpectedly exact\n")
 	}
-	// 尾零语义：0.10d 保留两位小数文本
+
 	if (0.10d != 0.1d) {
 		io.stdout.write("FAIL 0.10d != 0.1d\n")
 	}
 	io.stdout.write("decimal_suffix_ok\n")
 
-	// ---------- 4) 整数 + d 后缀 -> Decimal ----------
 	if (2d * 2 == 4) {
-		// Decimal * Integer -> Decimal，与 Integer 精确相等
+
 		io.stdout.write("int_d_mul_ok\n")
 	} else {
 		io.stdout.write("FAIL 2d * 2\n")
@@ -54,7 +45,6 @@ func main() {
 		io.stdout.write("FAIL 2d == Decimal(\"2\")\n")
 	}
 
-	// ---------- 5) 大写后缀等效 ----------
 	if (0.25D + 0.25D != 0.5d) {
 		io.stdout.write("FAIL 0.25D upper\n")
 	}
@@ -63,7 +53,6 @@ func main() {
 	}
 	io.stdout.write("upper_suffix_ok\n")
 
-	// ---------- 6) 无后缀行为不变 ----------
 	if (0x1F != 31) {
 		io.stdout.write("FAIL hex 0x1F with suffix rules\n")
 	}
@@ -75,12 +64,11 @@ func main() {
 	}
 	io.stdout.write("no_suffix_ok\n")
 
-	// ---------- 7) 显示形式 ----------
-	io.print(1f)          // -> 1.0
-	io.print(0.25f)       // -> 0.25
-	io.print(2d)          // -> 2
-	io.print(0.10d)       // -> 0.10（尾零保留）
-	io.print(0.1d + 0.2d) // -> 0.3
+	io.print(1f)
+	io.print(0.25f)
+	io.print(2d)
+	io.print(0.10d)
+	io.print(0.1d + 0.2d)
 
 	io.stdout.write("NUMERIC SUFFIX TEST PASS\n")
 	return None

@@ -1,5 +1,3 @@
-// 关键字-only 形参：写在 *args 之后的位置形参只能按关键字传，
-// 且不再受「默认值顺序」约束（必填关键字-only 可排在可选关键字-only 之前）。
 import io
 import pycp
 

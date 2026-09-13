@@ -4,7 +4,7 @@ from classtools import super, public, private
 
 class FileIO inherits pycp.Object{
 	@private
-	// 约定私有成员加一个下划线
+
 	_filename = pycp.String("")
 
 	mode = pycp.String("")
@@ -28,11 +28,9 @@ class FileIO inherits pycp.Object{
 
 }
 
-
-// 匿名对象写法，支持继承
 BetterObject = class inherits pycp.Object{
 	@private
-	// 如果对魔术方法修饰为private，应warning
+
 	func __initialize__(self){
 		super().__initialize__(self)
 		io.stdout.write("BetterObject initialized.\n")
@@ -57,7 +55,7 @@ class o1 inherits pycp.Object{
 
 class o2 inherits o1{
 	mem3 = pycp.String("")
-	
+
 	func __initialize__(self){
 		super().__initialize__(self)
 		io.stdout.write("o2 initialized.\n")
@@ -68,7 +66,3 @@ io.print(pycp.insp(o1))
 io.print(pycp.insp(o2))
 o = o2()
 io.print(pycp.insp(o))
-
-
-
-

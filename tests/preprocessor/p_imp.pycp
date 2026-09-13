@@ -3,6 +3,3 @@
 func circle_area(r){
 	return PI * r * r
 }
-
-
-

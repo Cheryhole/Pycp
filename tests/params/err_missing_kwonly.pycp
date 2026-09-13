@@ -1,4 +1,3 @@
-// 运行期：必填关键字-only 形参未按关键字传 -> TypeError（CPython 等价文案）。
 func f(a, *, kw) {
 	return a + kw
 }

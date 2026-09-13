@@ -1,4 +1,3 @@
-// 运行期：同一形参既按位置又按关键字赋值 -> TypeError（CPython 等价文案）。
 func f(a) {
 	return a
 }

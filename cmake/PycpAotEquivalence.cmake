@@ -52,6 +52,20 @@ if(NOT WORK_DIR)
 	set(WORK_DIR "${CMAKE_CURRENT_BINARY_DIR}/aot-equiv")
 endif()
 
+# ---------------------------------------------------------------------
+# 生成器：默认强制生成 Makefile（Windows 用 MinGW Makefiles，POSIX 用
+# Unix Makefiles），以便后续统一用 `make -j16` 编译每个 AOT 子工程。
+# 顶层 CMakeLists 不再透传主构建生成器——AOT 子工程彼此独立，且 makefile
+# 生成 + make 的方式在 MinGW 下最稳（避免落到未安装的 nmake）。
+# ---------------------------------------------------------------------
+if(NOT GENERATOR)
+	if(WIN32)
+		set(GENERATOR "MinGW Makefiles")
+	else()
+		set(GENERATOR "Unix Makefiles")
+	endif()
+endif()
+
 file(MAKE_DIRECTORY "${WORK_DIR}")
 
 # ---------------------------------------------------------------------
@@ -214,12 +228,10 @@ foreach(_case IN LISTS _cases)
 			continue()
 		endif()
 
-		# 2b) 配置 + 构建
-		if(GENERATOR)
-			set(_gen_args -G "${GENERATOR}")
-		else()
-			set(_gen_args "")
-		endif()
+		# 2b) 生成 Makefile + 用 make -j16 构建
+		#     先 cmake -S . -B build -G <Makefile 生成器> 产出 Makefile，
+		#     再在 build 目录直接 make -j16 编译（并行度由 -j16 控制）。
+		set(_gen_args -G "${GENERATOR}")
 		pycp_equiv_run(_cfg "${_proj}" "${CMAKE_COMMAND}" -S . -B build ${_gen_args})
 		if(NOT _cfg_RC EQUAL 0)
 			math(EXPR _skipped "${_skipped} + 1")
@@ -229,7 +241,7 @@ foreach(_case IN LISTS _cases)
 			continue()
 		endif()
 
-		pycp_equiv_run(_bld "${_proj}" "${CMAKE_COMMAND}" --build build)
+		pycp_equiv_run(_bld "${_proj}/build" "make" -j16)
 		if(NOT _bld_RC EQUAL 0)
 			math(EXPR _skipped "${_skipped} + 1")
 			string(APPEND _failure_report

@@ -1,8 +1,6 @@
-// __boolean__ 魔术方法与 if 隐式 Boolean 转换验证
 import io
 import pycp
 
-// 字符串 truthiness
 if "" {
     io.stdout.write("FAIL empty string is true\n")
 } else {
@@ -15,7 +13,6 @@ if "hello" {
     io.stdout.write("FAIL nonempty string is false\n")
 }
 
-// 整型 truthiness
 if 0 {
     io.stdout.write("FAIL zero is true\n")
 } else {
@@ -28,7 +25,6 @@ if 42 {
     io.stdout.write("FAIL 42 is false\n")
 }
 
-// 列表 truthiness
 if [] {
     io.stdout.write("FAIL empty list is true\n")
 } else {
@@ -41,7 +37,6 @@ if [1, 2, 3] {
     io.stdout.write("FAIL nonempty list is false\n")
 }
 
-// Boolean truthiness
 if True {
     io.stdout.write("bool_true_ok\n")
 } else {
@@ -54,7 +49,6 @@ if False {
     io.stdout.write("bool_false_ok\n")
 }
 
-// 自定义类：Object 基类默认 __boolean__ 返回 True
 class Box {
     func __initialize__(self) {
         self.x = 0
@@ -67,7 +61,6 @@ if b {
     io.stdout.write("FAIL custom class is false\n")
 }
 
-// pycp.Boolean 隐式转换（对齐 __boolean__）
 if pycp.Boolean("") {
     io.stdout.write("FAIL Boolean empty string is true\n")
 } else {
@@ -104,7 +97,6 @@ if pycp.Boolean([1]) {
     io.stdout.write("FAIL Boolean nonempty list is false\n")
 }
 
-// pycp.Boolean(None) 必须返回 False
 none_bool = pycp.Boolean(None)
 if none_bool {
     io.stdout.write("FAIL Boolean(None) is true\n")
@@ -112,7 +104,6 @@ if none_bool {
     io.stdout.write("boolean_none_false_ok\n")
 }
 
-// __boolean__ 作为魔术方法可被属性访问（inspect 可见，人工观察输出）
 io.stdout.write(pycp.insp("abc"))
 io.stdout.write("\n")
 

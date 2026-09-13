@@ -1,11 +1,10 @@
-// 顶层/匿名函数默认值（本特性第一阶段稳定形态）
 import io
 import pycp
 
 func f(a, b = 10) {
 	return a + b
 }
-// 任意表达式默认值：定义期求值一次（f(1, 2) == 3）
+
 func g(x, y = f(1, 2)) {
 	io.print("g y=" + pycp.String(y))
 }
@@ -18,7 +17,7 @@ func main() {
 		io.print("f(1,2) fail")
 		return None
 	}
-	// 匿名函数同样适用
+
 	an = func(z, w = 100) {
 		return z + w
 	}

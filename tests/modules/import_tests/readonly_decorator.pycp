@@ -1,4 +1,3 @@
-// @readonly 装饰器（pycp / classtools）：类成员只读字段、模块常量绑定。
 import io
 import pycp
 from classtools import readonly
@@ -39,7 +38,7 @@ func main() {
 		io.print("readonly: readonly var read failed")
 		return None
 	}
-	// 只读名在 dir/insp 中可见（pycp.insp 输出含该名，人工观察）。
+
 	io.print(pycp.insp(a))
 	io.print("IMPORT TEST PASS: readonly_decorator")
 }

@@ -1,5 +1,3 @@
-// 可变位置参数 *args：多余位置实参按序收集为不可变元组（FixedList）。
-// 零个 -> Fixed[]；与默认值形参、纯 *args 形态共用同一绑定内核。
 import io
 import pycp
 
