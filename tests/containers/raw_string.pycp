@@ -15,7 +15,7 @@ io.print([1, "a", None, True])
 // 2) 嵌套容器：各层保持自身形状
 io.print([[1, "b"], "c"])
 
-// 3) FixedList：单元素 (a,) 与空表 ()
+// 3) FixedList：单元素 Fixed["a",] 与空表 Fixed[]
 io.print(pycp.FixedList(["a"]))
 io.print(pycp.FixedList())
 

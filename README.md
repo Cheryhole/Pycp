@@ -921,7 +921,7 @@ cmake --build build -j
 - **单继承**：`class Child inherits Parent{ ... }`，子类复制父类成员与方法（含可见性），支持 `super()` 调用父类方法。
 - **构造与字符串转换**：`__initialize__`（创建实例自动调用）、`__string__`（转字符串时自动调用）、`__raw_string__`（容器渲染元素/键值时自动调用，见下一条）。
 - **默认字符串表示**：未定义 `__string__` 的对象输出 `<name at 0xADDR>`；函数输出 `<function "name" at 0xADDR>`；类输出 `<class "name">`；类实例输出 `<Name instance at 0xADDR>`；模块输出 `<module "name">`。匿名函数 / 匿名类沿用各自格式，仅名字位置为内部名 `@anonymous`，即 `<function "@anonymous" at 0xADDR>` / `<class "@anonymous">`（其类实例为 `<@anonymous instance at 0xADDR>`）。
-- **原始字符串（`__raw_string__`，对应 Python 的 `__repr__`）与容器渲染**：`list` / `FixedList` / `Map` 渲染元素与键值时调用元素的 `__raw_string__`——字符串带双引号并完整转义（`\\`、`\"`、`\n` / `\r` / `\t`，其余控制字节为 `\xHH`），数值 / 布尔 / None 不带引号，嵌套容器保持自身形状（形如 `[1, "a", None]` / `("a",)` / `{'k': "v"}`）。未显式定义时输出固定形式 `<name at 0xADDR>`，且与 `__string__` 相互独立（覆写 `__string__` 不影响 repr）；该类实例输出 `<Name instance at 0xADDR>`，类 / 函数 / 模块 / 文件沿用各自既有形式。`obj.__raw_string__()` 可直接调用，并出现在 `__inspect__` / `pycp.insp` 结果中。
+- **原始字符串（`__raw_string__`，对应 Python 的 `__repr__`）与容器渲染**：`list` / `FixedList` / `Map` 渲染元素与键值时调用元素的 `__raw_string__`——字符串带双引号并完整转义（`\\`、`\"`、`\n` / `\r` / `\t`，其余控制字节为 `\xHH`），数值 / 布尔 / None 不带引号，嵌套容器保持自身形状（形如 `[1, "a", None]` / `Fixed["a",]` / `{'k': "v"}`）。未显式定义时输出固定形式 `<name at 0xADDR>`，且与 `__string__` 相互独立（覆写 `__string__` 不影响 repr）；该类实例输出 `<Name instance at 0xADDR>`，类 / 函数 / 模块 / 文件沿用各自既有形式。`obj.__raw_string__()` 可直接调用，并出现在 `__inspect__` / `pycp.insp` 结果中。
 - **运算符重载**（魔术方法）：`__addition__` / `__subtraction__` / `__multiplication__` / `__division__` / `__power__` / `__negation__`，及比较 `__less_than__` / `__less_equal__` / `__equal__` / `__not_equal__` / `__greater_than__` / `__greater_equal__`。
 - **装饰器语法糖**：`@decorator` 把被装饰对象（函数或任意对象）作为参数传给装饰器函数，用返回值替换原对象。
 - **叠加装饰器**：同一目标可连续书写多个装饰器（`@d1` 换行 `@d2` 换行 目标），
@@ -932,7 +932,7 @@ cmake --build build -j
 - **文件级导出**：模块顶层符号默认 public；`@private func foo(){}` 的顶层符号对其他文件 `import` 时不可见。
 - **内置库**（`stdlib/` 目录，C++ 原生实现）：
   - `io`：`io.stdin` / `io.stdout` / `io.stderr` 文件对象（`write` / `readline` 方法），以及 `io.print(value)`（输出内容后自动换行）与 `io.input(prompt)`（打印提示后读取一行）。
-  - `pycp`：`pycp.String(x)` / `pycp.Integer(x)` 类型转换类、`pycp.Object` 基类，以及 `pycp.public` / `pycp.private` 可见性装饰器函数。
+  - `pycp`：`pycp.String(x)` / `pycp.Integer(x)` 类型转换类、`pycp.Object` 基类，以及 `pycp.public` / `pycp.private` 可见性装饰器函数。所有内置类型均支持**无参构造空白对象**（`pycp.String()` → `""`、`pycp.Integer()` → `0`、`pycp.Boolean()` → `False`、`pycp.List()` → `[]`、`pycp.FixedList()` → `Fixed[]`、`pycp.Map()` → `{}`），因此 `pycp.typeof(x)()` 也可用于构造同类型的空白对象（`io.File` 例外，`path` 仍必填）。
     - **`pycp.argv`**：命令行参数列表（`List[String]`），语义对齐 Python 的 `sys.argv`。
       - 解释运行（如 `pycp test.pycp arg1 arg2`）：`pycp.argv == ["test.pycp", "arg1", "arg2"]`——
         列表**不含 `pycp` 可执行文件本身**，仅含脚本名与传入参数。

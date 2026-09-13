@@ -89,9 +89,10 @@ check_err() {
 	fi
 }
 
-# --- 1) 内置函数 / 实例方法正常路径 ---
-check_ok "内置构造器与实例方法（String/Integer/Boolean/List/FixedList/Map/insp/typeof）" \
-	ok_builtin.pycp "NATIVE OK" "<class \"Integer\">" "(1, 2)" "{}" '("k",)'
+# --- 1) 内置函数 / 实例方法正常路径（含 0 参空白构造）---
+check_ok "内置构造器与实例方法（String/Integer/Boolean/List/FixedList/Map/insp/typeof + 0 参空白构造）" \
+	ok_builtin.pycp "NATIVE OK" "<class \"Integer\">" "Fixed[1, 2]" "{}" 'Fixed["k",]' \
+	"typeof-list=[]" "typeof-string-empty=True" "typeof-map={}"
 
 # --- 2) File 方法与 Optional 默认值 ---
 check_ok "File 方法与 Optional 默认值（mode 省略 / read(n)）" \
@@ -99,7 +100,8 @@ check_ok "File 方法与 Optional 默认值（mode 省略 / read(n)）" \
 
 # --- 3) *rest / **kw（可变参数与关键字参数规范）---
 check_ok "*rest 收集与默认值分拣（零个 -> 空元组；**kw 恒空）" \
-	ok_rest.pycp "REST OK" "0" "6" "(1, 0, ())" "(1, 2, ())" "(1, 2, (3, 4))" "((), {})"
+	ok_rest.pycp "REST OK" "0" "6" "Fixed[1, 0, Fixed[]]" "Fixed[1, 2, Fixed[]]" \
+	"Fixed[1, 2, Fixed[3, 4]]" "Fixed[Fixed[], {}]"
 
 # --- 4) 参数个数错误（统一消息：函数名 + 参数名）---
 check_err "参数不足：append() missing required argument: 'item'." \

@@ -1,7 +1,7 @@
 import io
 import pycp
 
-// 构造器（必填 1 参，个数由框架校验）
+// 构造器（1 参转换，个数由框架校验）
 io.print(pycp.String(123))
 io.print(pycp.Integer("42"))
 io.print(pycp.Boolean(1))
@@ -12,6 +12,20 @@ io.print(pycp.FixedList())
 io.print(pycp.FixedList([1, 2]))
 io.print(pycp.Map())
 io.print(pycp.Map([["a", 1]]))
+
+// 0 参构造：空白对象（对应 Python 的 str() / int() / bool() / list()）
+io.print(pycp.String() == "")
+io.print(pycp.Integer() == 0)
+io.print(pycp.Boolean() == False)
+io.print(pycp.Boolean() == True)
+io.print(pycp.List())
+io.print(pycp.List().length())
+
+// 经类型类 0 参实例化：pycp.typeof(x)()
+b = [1, 2]
+io.print("typeof-list=" + pycp.String(pycp.typeof(b)()))
+io.print("typeof-string-empty=" + pycp.String(pycp.typeof("s")() == ""))
+io.print("typeof-map=" + pycp.String(pycp.typeof(pycp.Map())()))
 
 // insp / typeof（必填 1 参）
 io.print(pycp.insp([1, 2]))

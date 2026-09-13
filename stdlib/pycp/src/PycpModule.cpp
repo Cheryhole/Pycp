@@ -30,12 +30,17 @@ std::string require_string(const char* fn, const char* param, Object* v) {
 	return AsString(v);
 }
 
-// String(x)：String 类型构造器。调用对象的 __string__ 转换为字符串，
-// 返回内置 String 对象。语义对齐 Python 的 str(x)。
+// String([x])：String 类型构造器。语义对齐 Python 的 str(x)。
+//   0 参：空白串 ""（对应 str()）。
+//   1 参：调用对象的 __string__ 转换为字符串。
+// 参数声明为 Optional + given 判断：省略 -> 空串；显式 None -> 走转换（"None"）。
 Object* _builtin_string_ctor(Object*, FixedList* args, Map* kwargs) {
 	static const Extension::ArgTable spec = Extension::CompileArgs(
-		"String", { Extension::Arg::Required("value") });
+		"String", { Extension::Arg::Optional("value") });
 	Extension::ArgResult r = spec.Bind(args, kwargs);
+	if (!r.given("value")) {
+		return String::FromCString("");
+	}
 	Object* src = r["value"];
 	if (src == nullptr) throw TypeError("String() argument is null.");
 	Object* s = src->__string__();
@@ -46,36 +51,53 @@ Object* _builtin_string_ctor(Object*, FixedList* args, Map* kwargs) {
 	return s;
 }
 
-// Integer(x)：Integer 类型构造器。复用 Integer(Object*) 构造：
-// Integer 传入返回自身；String 传入解析为整数（String::__integer__，
-// 非法抛 ValueError）；其他对象调 __integer__。语义对齐 Python 的 int(x)。
+// Integer([x])：Integer 类型构造器。语义对齐 Python 的 int(x)。
+//   0 参：整数 0（对应 int()）。
+//   1 参：复用 Integer(Object*) 构造 —— Integer 传入返回自身；String 传入
+//         解析为整数（非法抛 ValueError）；其他对象调 __integer__。
 Object* _builtin_integer_ctor(Object*, FixedList* args, Map* kwargs) {
 	static const Extension::ArgTable spec = Extension::CompileArgs(
-		"Integer", { Extension::Arg::Required("value") });
+		"Integer", { Extension::Arg::Optional("value") });
 	Extension::ArgResult r = spec.Bind(args, kwargs);
+	if (!r.given("value")) {
+		return Integer::FromLong(0);
+	}
 	Object* src = r["value"];
 	if (src == nullptr) throw TypeError("Integer() argument is null.");
 	return New<Integer>(src);
 }
 
-// Boolean(x)：Boolean 类型构造器。复用 Boolean(Object*) 构造。
-// Integer 传入（0/非0）转换为 False/True；String 按 Python 规则
-// ("", "False", "0" 为 False，其余 True) 由 String::__integer__ 还原。
+// Boolean([x])：Boolean 类型构造器。语义对齐 Python 的 bool(x)。
+//   0 参：False（对应 bool()）。
+//   1 参：复用 Boolean(Object*) 构造 —— Integer 传入（0/非0）转换为
+//         False/True；String 按 Python 规则（"", "False", "0" 为 False，
+//         其余 True）由 String::__integer__ 还原。
 Object* _builtin_boolean_ctor(Object*, FixedList* args, Map* kwargs) {
 	static const Extension::ArgTable spec = Extension::CompileArgs(
-		"Boolean", { Extension::Arg::Required("value") });
+		"Boolean", { Extension::Arg::Optional("value") });
 	Extension::ArgResult r = spec.Bind(args, kwargs);
+	if (!r.given("value")) {
+		// 新建 Owned 的 False，而非返回常驻单例 Boolean::False()：后者是
+		// PERMANENT + GC_AddRoot 的共享实例，调用方会按「持有 1 份引用」
+		// Decref 返回值，直接返回单例会把 Decref 打到常驻对象上。
+		return New<Boolean>(0);
+	}
 	Object* src = r["value"];
 	if (src == nullptr) throw TypeError("Boolean() argument is null.");
 	return New<Boolean>(src);
 }
 
-// List(x)：List 类型构造器。调用对象的 __list__ 转换，返回内置 List。
-// 本版仅 list -> list 幂等（返回自身）；其他类型抛 TypeError。
+// List([x])：List 类型构造器。语义对齐 Python 的 list(x)。
+//   0 参：空列表 []（对应 list()）。
+//   1 参：调用对象的 __list__ 转换；本版仅 list -> list 幂等（返回自身），
+//         其他类型抛 TypeError。
 Object* _builtin_list_ctor(Object*, FixedList* args, Map* kwargs) {
 	static const Extension::ArgTable spec = Extension::CompileArgs(
-		"List", { Extension::Arg::Required("value") });
+		"List", { Extension::Arg::Optional("value") });
 	Extension::ArgResult r = spec.Bind(args, kwargs);
+	if (!r.given("value")) {
+		return List::New();
+	}
 	Object* src = r["value"];
 	if (src == nullptr) throw TypeError("List() argument is null.");
 	Object* out = src->__list__();

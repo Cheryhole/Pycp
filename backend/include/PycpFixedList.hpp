@@ -9,7 +9,7 @@
 //   - 只读下标 self[key]（__get_item__），支持负索引
 //   - length() 方法获取元素个数
 //   - "+" 拼接（FixedList + FixedList -> 新 FixedList）
-//   - 字符串表示 "(a, b, c)"（单元素 "(a,)"，对齐 Python tuple repr；
+//   - 字符串表示 "Fixed[a, b, c]"（单元素 "Fixed[a,]"、空表 "Fixed[]"；
 //     元素经各自的 __raw_string__ 渲染，字符串元素带引号并转义）
 //   - 可哈希（元素可哈希时，对齐 Python tuple）
 //   - for 迭代（FixedListIterator）
