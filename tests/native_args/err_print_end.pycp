@@ -1,0 +1,4 @@
+import io
+
+// end 非 String -> TypeError
+io.print(1, end = [1])

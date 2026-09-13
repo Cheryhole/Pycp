@@ -79,8 +79,12 @@ public:
     Object* readline();
     // 读取所有行（返回 List）
     Object* readlines();
-    // 写入内容（返回 None）
-    Object* write(Object* arg);
+    // 写入内容（返回 None）；flush_after 控制「写后立即刷出底层流」——
+    // 公开 write() 方法保持默认 true（写后即刷）；io.print 的内部路径传
+    // false，由 flush 参数决定是否刷出。
+    Object* write(Object* arg, bool flush_after = true);
+    // 刷出底层输出流（对齐 Python file.flush()）；未打开时抛 ValueError。
+    void flush();
 
     // ---------- Object 虚方法重写 ----------
 

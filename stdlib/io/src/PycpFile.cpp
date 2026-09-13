@@ -334,34 +334,43 @@ Object* File::readlines() {
     return lines;
 }
 
-Object* File::write(Object* arg) {
+Object* File::write(Object* arg, bool flush_after) {
     EnsureWritable();
-    
+
     if (arg == nullptr) {
         throw TypeError("write() argument is null.");
     }
-    
+
     Object* s = arg->__string__();
     if (s == nullptr || !s->is_type("String")) {
         if (s != arg) Decref(s);
         throw TypeError("__string__ did not return a String.");
     }
-    
+
     if (owns_stream_) {
         file_ << static_cast<String*>(s)->get_value();
-        file_.flush();
+        if (flush_after) file_.flush();
     } else if (out_stream_ != nullptr) {
         *out_stream_ << static_cast<String*>(s)->get_value();
-        out_stream_->flush();
+        if (flush_after) out_stream_->flush();
     } else {
         if (s != arg) Decref(s);
         throw TypeError("file '" + name_ + "' not writable.");
     }
-    
+
     if (s != arg) {
         Decref(s);
     }
     return None::instance;
+}
+
+void File::flush() {
+    EnsureOpen();
+    if (owns_stream_) {
+        file_.flush();
+    } else if (out_stream_ != nullptr) {
+        out_stream_->flush();
+    }
 }
 
 // =============================================================
@@ -428,6 +437,15 @@ namespace {
         return None::instance;
     }
 
+    // flush 方法原生实现（无参；对齐 Python file.flush()）
+    Object* _file_flush(Object* self, FixedList* args, Map* kwargs) {
+        static const Extension::ArgTable spec = Extension::CompileArgs("flush", {});
+        spec.Bind(args, kwargs);
+        File* f = static_cast<File*>(self);
+        f->flush();
+        return None::instance;
+    }
+
     // open 方法原生实现：path 必填且须为 String；mode 可选，省略时默认 "r"。
     Object* _file_open(Object* self, FixedList* args, Map* kwargs) {
         static const Extension::ArgTable spec = Extension::CompileArgs(
@@ -463,6 +481,7 @@ const std::vector<MethodEntry>& File_method_table() {
 		{"readline",             _file_readline},
 		{"readlines",            _file_readlines},
 		{"close",                _file_close},
+		{"flush",                _file_flush},
 		{"open",                 _file_open},
 		{"__string__",           nullptr},
 		{"__raw_string__",       nullptr},
@@ -549,6 +568,12 @@ Object* File::__get_attribute__(const std::string& attr_name) {
     }
     if (attr_name == "open") {
         Function* fn = New<Function>("open", _file_open);
+        Incref(fn);
+        return fn;
+    }
+    if (attr_name == "flush") {
+        // 照 open 的模式每次新建（flush 调用频率低，无需懒缓存成员）。
+        Function* fn = New<Function>("flush", _file_flush);
         Incref(fn);
         return fn;
     }

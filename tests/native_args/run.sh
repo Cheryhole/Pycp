@@ -130,6 +130,17 @@ check_err "类型错误：open() 的 path 须为字符串" \
 check_err "类型错误：*rest 元素由业务函数判型" \
 	err_rest_type.pycp "TypeError: sum_rest(): arguments must be integers."
 
+# --- 5) io.print Python 签名（print(*args, sep, end, file, flush)）---
+check_ok "io.print Python 签名（多参/sep/end/None/file=stderr/flush/鸭子对象）" \
+	ok_print.pycp "PRINT OK" "1 a [1, 2]" "1-2-3" "1 2" "ABC" "D" \
+	"to stderr" "flushed" "duck:hello" "duck:flush"
+check_err "print sep 类型错误：" \
+	err_print_sep.pycp "TypeError: print(): argument 'sep' expects a string, got 'Integer'."
+check_err "print end 类型错误：" \
+	err_print_end.pycp "TypeError: print(): argument 'end' expects a string, got 'List'."
+check_err "print file 鸭子类型缺 write -> AttributeError" \
+	err_print_nowrite.pycp "AttributeError"
+
 echo "==================================="
 echo "PASS=$pass  FAIL=$fail"
 if [[ $fail -gt 0 ]]; then

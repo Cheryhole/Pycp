@@ -5,6 +5,7 @@
 #include "PycpFunction.hpp"
 #include "PycpString.hpp"
 #include "PycpInteger.hpp"
+#include "PycpBoolean.hpp"
 #include "PycpNone.hpp"
 #include "PycpGC.hpp"
 #include "PycpException.hpp"
@@ -34,20 +35,106 @@ std::string require_string(const char* fn, const char* param, Object* v) {
 }
 
 // =============================================================
-// print(value)：单参数，输出内容后自动附加换行符（对齐 Python3 print）。
-// 暂不实现可变参数 / sep / end。
+// print(*args, sep=" ", end="\n", file=io.stdout, flush=False)
+// 对齐 Python 内建 print：
+//   - 位置实参逐个经 __string__ 转字符串（对齐 str()），sep 连接、end 结尾；
+//     允许 0 参（输出 end 本身）。
+//   - sep / end：String 或 None（None = 恢复默认 " " / "\n"）。
+//   - file：鸭子类型——任何有 write 方法的对象均可（经属性查找调其 write）；
+//     显式传 None 时回退 io.stdout（对齐 CPython 哨兵语义）。
+//   - flush：经 __boolean__ 真值化；print 走「不自动 flush 的写入」路径，
+//     仅 flush 为真时调 file 的 flush（鸭子对象无 flush 属性则 AttributeError，
+//     对齐 CPython）。
+// sep/end/file/flush 写在 Arg::Rest 之后 => 位置隐含为可选关键字-only
+// （只能按关键字传参，与 Python 签名一致）。
 // =============================================================
-// 保持单参数语义（对齐 Python3 print 的最小实现），不做可变参数。
 Object* _builtin_print(Object*, FixedList* args, Map* kwargs) {
-	static const Extension::ArgTable spec = Extension::CompileArgs(
-		"print", { Extension::Arg::Required("value") });
+	static const Extension::ArgTable spec = Extension::CompileArgs("print", {
+		Extension::Arg::Rest("args"),
+		Extension::Arg::Optional("sep", String::FromCString(" ")),
+		Extension::Arg::Optional("end", String::FromCString("\n")),
+		Extension::Arg::Optional("file", g_io_stdout),
+		Extension::Arg::Optional("flush", New<Boolean>(0)),
+	});
 	Extension::ArgResult r = spec.Bind(args, kwargs);
-	// 写入内容（File::write 内部经 __string__ 转字符串并 flush）。
-	g_io_stdout->write(r["value"]);
-	// 追加换行符。
-	Object* nl = String::FromCString("\n");
-	g_io_stdout->write(nl);
-	Decref(nl);
+
+	// sep / end：String 直用；None 恢复默认；其他类型报 TypeError。
+	std::string sep = " ";
+	Object* sep_o = r["sep"];
+	if (sep_o != nullptr && sep_o != None::instance) {
+		if (!IsString(sep_o)) {
+			throw TypeError("print(): argument 'sep' expects a string, got '" +
+			                sep_o->type_name() + "'.");
+		}
+		sep = static_cast<String*>(sep_o)->get_value();
+	}
+	std::string end = "\n";
+	Object* end_o = r["end"];
+	if (end_o != nullptr && end_o != None::instance) {
+		if (!IsString(end_o)) {
+			throw TypeError("print(): argument 'end' expects a string, got '" +
+			                end_o->type_name() + "'.");
+		}
+		end = static_cast<String*>(end_o)->get_value();
+	}
+
+	// flush：经 __boolean__ 真值化（对齐 Python 任意 truthy）。
+	bool do_flush = false;
+	Object* flush_o = r["flush"];
+	if (flush_o != nullptr && flush_o != None::instance) {
+		Object* bt = flush_o->__boolean__();
+		if (bt == nullptr || !bt->is_type("Boolean")) {
+			if (bt != flush_o) Decref(bt);
+			throw TypeError("print(): argument 'flush' expects a boolean-compatible value, got '" +
+			                flush_o->type_name() + "'.");
+		}
+		do_flush = static_cast<Boolean*>(bt)->get_value() != 0;
+		if (bt != flush_o) Decref(bt);
+	}
+
+	// file：None 哨兵回退 io.stdout（对齐 CPython）。
+	Object* file = r["file"];
+	if (file == nullptr || file == None::instance) {
+		file = g_io_stdout;
+	}
+
+	// 组装完整输出（sep 连接 + end 结尾），一次写入。
+	FixedList* values = static_cast<FixedList*>(r["args"]);
+	std::string out;
+	const std::size_t n = values->size();
+	for (std::size_t i = 0; i < n; ++i) {
+		if (i > 0) out += sep;
+		Object* v = values->at(i);
+		Object* s = v->__string__();
+		if (s == nullptr || !s->is_type("String")) {
+			if (s != v) Decref(s);
+			throw TypeError("print(): __string__ did not return a String.");
+		}
+		out += static_cast<String*>(s)->get_value();
+		if (s != v) Decref(s);
+	}
+	out += end;
+
+	Object* content = String::FromCString(out.c_str());   // Owned
+	if (IsExact<File>(file)) {
+		// 快速路径：io.File 走「不自动 flush 的写入」，按 flush 参数刷出。
+		File* f = static_cast<File*>(file);
+		f->write(content, /*flush_after=*/false);
+		if (do_flush) f->flush();
+	} else {
+		// 鸭子类型：经属性查找调其 write（无 write 属性则 AttributeError，
+		// 对齐 Python）。
+		Object* wfn = GetAttr(file, "write");
+		Object* rc = Call(wfn, &content, 1);
+		Decref(rc);
+		if (do_flush) {
+			Object* ffn = GetAttr(file, "flush");
+			Object* empty[1] = {nullptr};
+			Object* rf = Call(ffn, empty, 0);
+			Decref(rf);
+		}
+	}
+	Decref(content);
 	return None::instance;
 }
 
@@ -79,8 +166,8 @@ Object* _builtin_file_ctor(Object*, FixedList* args, Map* kwargs) {
 }
 
 // io.stdout / io.stdin / io.stderr 为 File，
-// 支持 .write（仅字符串）、.readline 方法；
-// print / input 为模块级函数。
+// 支持 .write（仅字符串）、.flush、.readline 方法；
+// print（对齐 Python print(*args, sep, end, file, flush)）/ input 为模块级函数。
 Module* make_io_module() {
 	Module* mod = Module::New(MODULE_NAME);
 
@@ -109,8 +196,8 @@ Module* make_io_module() {
 	mod->set_variable("stdout", g_io_stdout);
 	mod->set_variable("stderr", g_io_stderr);
 
-	// 模块级函数：print / input（对齐 Python3 单参数语义）。
-	mod->set_function("print", _builtin_print);
+	// 模块级函数：print（Python 签名）/ input。
+	mod->set_function("print", _builtin_print, /*with_keywords=*/true);
 	mod->set_function("input", _builtin_input);
 
 	// File 类型类：io.File(path [, mode]) 打开文件并返回 File 对象。

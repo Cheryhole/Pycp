@@ -387,15 +387,24 @@ io.print(pycp.argv[0])                       # "args.pycp"（不含 pycp 可执�
 
 **6. 标准输入输出与可见性装饰器示例**
 
-`io.print` / `io.input`（对齐 Python3 单参数语义）：
+`io.print`（对齐 Python 内建 print）/ `io.input`：
 
 ```
 import io
 
-io.print("hello")           # 输出 "hello" 并自动换行
-name = io.input("Enter: ")  # 打印提示（不换行）后读取一行
+io.print("hello")                    # 输出 "hello" 并换行（end 默认 "\n"）
+io.print(1, "a", [1, 2])             # 多参数以 sep（默认 " "）连接
+io.print(1, 2, 3, sep = "-")         # 自定义分隔符 -> "1-2-3"
+io.print("no newline", end = "")     # 自定义结尾（None 恢复默认）
+io.print("to stderr", file = io.stderr, flush = True)
+name = io.input("Enter: ")           # 打印提示（不换行）后读取一行
 io.print("Hello " + name)
 ```
+
+`print` 签名：`print(*args, sep = " ", end = "\n", file = io.stdout, flush = False)`。
+`file` 为任何有 `write` 方法的对象（鸭子类型，`None` 回退 `io.stdout`）；`sep`/`end`
+接受 String 或 `None`；`flush` 为真时调用 `file.flush()` 强制刷出（对齐 Python，
+`io.File` 同样新增公开 `flush()` 方法）。
 
 装饰器与成员可见性（`public` / `private` 可从 `pycp` 或 `classtools` 导入）：
 
