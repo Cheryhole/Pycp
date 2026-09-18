@@ -1,0 +1,50 @@
+// 类对象（Class）相等性回归：对齐 Python 的 type(x) is y 语义。
+import io
+import pycp
+
+class Box {
+	v = 1
+}
+
+class Box2 {
+	v = 1
+}
+
+func main() {
+	// 内置类型类：typeof(x) 与 pycp.Xxx 是同一对象
+	io.print("int-eq=" + pycp.String(pycp.typeof(42) == pycp.Integer))
+	io.print("int-ne=" + pycp.String(pycp.typeof(42) != pycp.Integer))
+	io.print("str-ne=" + pycp.String(pycp.typeof("abc") != pycp.Integer))
+	io.print("bool-ne=" + pycp.String(pycp.typeof(True) != pycp.Integer))
+	io.print("none-ne=" + pycp.String(pycp.typeof(None) != pycp.Integer))
+	io.print("list-eq=" + pycp.String(pycp.typeof([1, 2]) == pycp.List))
+
+	// 用户类：同一类对象自比较
+	io.print("box-eq=" + pycp.String(pycp.typeof(Box()) == Box))
+	io.print("box-self-eq=" + pycp.String(Box == Box))
+	io.print("box-self-ne=" + pycp.String(Box != Box))
+	// 不同类（即使成员同形）判不等
+	io.print("box2-ne=" + pycp.String(Box != Box2))
+	io.print("box-obj-ne=" + pycp.String(Box != pycp.Object))
+
+	// 类对象与非类对象比较
+	io.print("cls-int-ne=" + pycp.String(pycp.Integer != 1))
+	io.print("cls-str-ne=" + pycp.String(pycp.Integer != pycp.String))
+
+	// 分支可用性：module_example 的 method_b 写法
+	v = 42
+	if pycp.typeof(v) != pycp.Integer {
+		io.print("branch=Non-Integer")
+	}
+	else {
+		io.print("branch=Integer")
+	}
+	v = "abc"
+	if pycp.typeof(v) != pycp.Integer {
+		io.print("branch=Non-Integer")
+	}
+	else {
+		io.print("branch=Integer")
+	}
+}
+main()

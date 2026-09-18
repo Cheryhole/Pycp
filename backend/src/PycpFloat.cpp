@@ -239,7 +239,8 @@ Object* Float::__not_equal__(Object* other){
 	if (!float_operand(other, &r)){
 		throw TypeError("Unsupported to compare.");
 	}
-	return this->_value != r ? Integer::instances[1] : Integer::instances[0];
+	// NE 与 __equal__ 一致返回 Boolean（旧实现返回 Integer 1/0）。
+	return this->_value != r ? Boolean::True() : Boolean::False();
 }
 
 Object* Float::__greater_than__(Object* other){

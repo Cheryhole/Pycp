@@ -1,0 +1,49 @@
+/*
+使用 pycp -m/--module <folder_name> 执行模块
+默认直接执行文件夹下 pycp.mpycp 文件
+或在别的 pycp 文件中 import <folder_name>
+*/
+
+import io
+import pycp
+// 新增 moduletools 模块
+import moduletools
+// moduletools.this 为该模块对象自己
+
+// 可以直接使用 import PycpTestModule.objA，类似 Python
+from obj_a import objA
+
+// 模块的配置文件
+
+__name__ = "PycpTestModule"
+
+// 可以重写模块的方法
+func __get_attribute__(name){
+	io.print("get attribute: " + name)
+	v = moduletools.this()[name]
+	return v
+}
+
+// 使用 module.a = xxx 时便可以使用 __set_attribute__ 方法
+func __set_attribute__(name, value){
+	io.print("set attribute: " + name + " = " + value)
+	return None
+}
+
+func __string__(){
+	// 也可以使用 moduletools.this()["__name__"]
+	return __name__
+}
+
+// 指定 Codegen 时，编译链接状态
+// 优先级低于命令行指定
+// 如遇 static/shared 冲突，应报错
+func __codegen__(){
+	proj = moduletools.Project()
+	// 编译完可执行文件名称
+	proj.set_executable_name("ptm_codegen")
+	proj["obj_a"].static()
+	proj["method_b"].shared()
+
+	return proj // 生成格式对象
+}

@@ -442,20 +442,21 @@ Object* Decimal::__equal__(Object* other){
 Object* Decimal::__not_equal__(Object* other){
 	const mpd_t* d; int64_t i;
 	switch (classify_rhs(other, &d, &i)){
+		// NE 与 __equal__ 一致返回 Boolean（旧实现返回 Integer 1/0）。
 		case DecRhs::kDecimal: {
 			uint32_t status = 0;
-			return mpd_qcmp(this->_value, d, &status) != 0 ? Integer::instances[1] : Integer::instances[0];
+			return mpd_qcmp(this->_value, d, &status) != 0 ? Boolean::True() : Boolean::False();
 		}
 		case DecRhs::kInteger: {
 			uint32_t status = 0;
 			mpd_t* b = dec_from_i64(i);
 			bool r = (mpd_qcmp(this->_value, b, &status) != 0);
 			dec_free(b);
-			return r ? Integer::instances[1] : Integer::instances[0];
+			return r ? Boolean::True() : Boolean::False();
 		}
 		case DecRhs::kFloat:
 			return this->to_double() != static_cast<Float*>(other)->get_value()
-				? Integer::instances[1] : Integer::instances[0];
+				? Boolean::True() : Boolean::False();
 		default:
 			throw TypeError("Unsupported to compare.");
 	}

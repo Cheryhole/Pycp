@@ -1,0 +1,11 @@
+import io
+
+class objA{
+	func __initialize__(self){
+		io.print("objA initialized.")
+	}
+
+	func method1(self, v = "default"){
+		io.print(v)
+	}
+}

@@ -126,6 +126,16 @@ public:
 	// repr：与 __string__ 同形（<class "name">）。
 	Object* __raw_string__() override;
 
+	// 类对象的相等性：身份语义（对齐 Python 的 `type(x) is y` / 类对象默认
+	// 比较）。类型类按名登记进全局注册表（RegisterTypeClass / LookupTypeClass），
+	// 同一类型名对应同一对象，故「同一指针」即「同一类型」；两个模块各自
+	// 定义的同名类仍是不同对象，判不等（与 Python 一致）。
+	//   pycp.typeof(42) != pycp.Integer   -> False
+	//   pycp.typeof("a") != pycp.Integer  -> True
+	// 大小比较（< <= > >=）不提供：沿用 Object 默认实现抛 TypeError。
+	Object* __equal__(Object* other) override;
+	Object* __not_equal__(Object* other) override;
+
 	// 属性名枚举：返回类的方法名 + 通用成员。
 	Object* __inspect__() override;
 

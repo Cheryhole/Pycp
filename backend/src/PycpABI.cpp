@@ -4,6 +4,7 @@
 #include "PycpFunction.hpp"
 #include "PycpFloat.hpp"
 #include "PycpDecimal.hpp"
+#include "PycpBoolean.hpp"   // Boolean::True/False（EQ/NE 的统一结果类型）
 #include "PycpExtension.hpp"  // Extension::Invoke（装饰器调用）
 #include "PycpNativeExt.hpp"
 #include <map>
@@ -263,13 +264,32 @@ Object* Compare(Object* lhs, Object* rhs, int op){
 	if (lhs == nullptr || rhs == nullptr)
 		throw TypeError("Cannot compare null object.");
 
+	// 身份短路（对齐 Python：同一对象恒相等，x == x 永不为假）。
+	// 必须置于 comparable 判定【之前】：List/Map/Instance/None 等未被
+	// comparable 覆盖的组合，否则会把「同一对象自比较」误判为不等
+	// （曾出现 `None == None` -> 0、`a == a` -> 0）。
+	if ((op == 2 || op == 3) && lhs == rhs) {
+		return (op == 2) ? Boolean::True() : Boolean::False();
+	}
+
 	// 数值族（Integer/Boolean/Float/Decimal）可跨类型参与真正的值比较
 	//（提升规则见各类型魔术方法）；其余组合（含 None、跨类型）与 VM
-	// COMPARE_OP 语义一致：EQ → 0（false）、NE → 1（true）、其余抛
-	// TypeError。Boolean 继承 Integer，与 Integer 互通比较（True==1 / False==0）。
+	// COMPARE_OP 语义一致：EQ → false、NE → true、其余抛 TypeError。
+	// 结果统一为 Boolean（曾返回 Integer 0/1，与 comparable 路径不一致）。
 	bool both_int_like =
 		(dynamic_cast<Integer*>(lhs) != nullptr) &&
 		(dynamic_cast<Integer*>(rhs) != nullptr);
+	// 类对象 vs 类对象：走 Class::__equal__/__not_equal__ 的身份比较。
+	// 必须显式放行——否则类名非 Integer/String 时（如 `Box == Box`）会被
+	// 下面的 comparable 判为「不可比较」，EQ 恒为 false、NE 恒为 true，
+	// 连同一对象自比较都得到不等。
+	const bool both_class =
+		IsType(lhs, PycpTypeId::Class) && IsType(rhs, PycpTypeId::Class);
+	// 实例 vs 实例（同类）：放行到 Instance::__equal__/__not_equal__，
+	// 使类中用户定义的 __equal__ 真正生效；未定义时由 Instance 回退
+	// Python 默认的身份语义（而非抛 TypeError）。
+	const bool both_instance =
+		IsType(lhs, PycpTypeId::Instance) && IsType(rhs, PycpTypeId::Instance);
 	auto is_numeric = [](Object* o){
 		return dynamic_cast<Integer*>(o) != nullptr ||
 		       dynamic_cast<Float*>(o) != nullptr ||
@@ -279,6 +299,8 @@ Object* Compare(Object* lhs, Object* rhs, int op){
 		((lhs->type_name() == rhs->type_name()) &&
 		 (lhs->is_type("Integer") || lhs->is_type("String"))) ||
 		both_int_like ||
+		both_class ||
+		both_instance ||
 		(is_numeric(lhs) && is_numeric(rhs));
 
 	if (comparable) {
@@ -293,8 +315,8 @@ Object* Compare(Object* lhs, Object* rhs, int op){
 		}
 	} else {
 		switch (op) {
-			case 2: return Integer::instances[0]; // EQ -> false
-			case 3: return Integer::instances[1]; // NE -> true
+			case 2: return Boolean::False(); // EQ -> false
+			case 3: return Boolean::True();  // NE -> true
 			default: break;
 		}
 	}

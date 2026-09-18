@@ -1,0 +1,11 @@
+import io
+import pycp
+
+func a_implemented_method(value){
+	if pycp.typeof(value) != pycp.Integer{
+		io.print("Non-Integer object.")
+	}
+	else{
+		io.print("Integer object.")
+	}
+}

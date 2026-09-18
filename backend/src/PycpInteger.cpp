@@ -284,8 +284,10 @@ Object* Integer::__equal__(Object* other){
 Object* Integer::__not_equal__(Object* other){
 	if (other == nullptr) throw TypeError("Unsupported to compare.");
 	if (Float* f = as_float(other)){
+		// EQ / NE 统一返回 Boolean（与 __equal__ 一致）：旧实现返回小整数
+		// 池的 1/0，导致同一类型内 == 得 False、!= 得 1 的混搭结果。
 		return static_cast<double>(this->_value) != f->get_value()
-			? instances[1] : instances[0];
+			? Boolean::True() : Boolean::False();
 	}
 	if (Decimal* d = as_decimal(other)){
 		return int_op_decimal(this->_value, d, &Decimal::__not_equal__);
@@ -294,7 +296,7 @@ Object* Integer::__not_equal__(Object* other){
 		throw TypeError("Unsupported to compare.");
 	}
 	return this->_value != static_cast<Integer*>(other)->_value
-		? instances[1] : instances[0];
+		? Boolean::True() : Boolean::False();
 }
 
 Object* Integer::__greater_than__(Object* other){

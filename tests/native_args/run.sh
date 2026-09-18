@@ -95,6 +95,21 @@ check_ok "内置构造器与实例方法（String/Integer/Boolean/List/FixedList
 	ok_builtin.pycp "NATIVE OK" "<class \"Integer\">" "Fixed[1, 2]" "{}" 'Fixed["k",]' \
 	"typeof-list=[]" "typeof-string-empty=True" "typeof-map={}"
 
+# --- 1b) 类对象（Class）相等性：typeof(x) 与 pycp.Xxx 的比较 ---
+check_ok "类对象相等性（typeof(x) ==/!= 类型类，身份语义）" \
+	ok_typeof_class_cmp.pycp "int-eq=True" "int-ne=False" "str-ne=True" "bool-ne=True" \
+	"list-eq=True" "box-eq=True" "box-self-eq=True" "box-self-ne=False" \
+	"box2-ne=True" "box-obj-ne=True" "cls-int-ne=True" "cls-str-ne=True" \
+	"branch=Integer" "branch=Non-Integer"
+
+# --- 1c) 相等性语义：EQ/NE 统一 Boolean + 身份语义默认 ---
+check_ok "相等性语义（EQ/NE 返回 Boolean、None==None、实例身份/用户 __equal__）" \
+	ok_equality_semantics.pycp "int-eq=True" "int-ne=True" "int-ne-same=False" \
+	"float-ne=True" "none-eq-none=True" "none-ne-int=True" "str-eq-int=False" \
+	"user-eq-1=True" "user-eq-2=False" "user-ne=True" \
+	"plain-eq-other=False" "plain-eq-self=True" "plain-ne-other=True" \
+	"onlyne-ne-same=False" "onlyne-ne-diff=True" "onlyne-eq-fallback=False"
+
 # --- 2) File 方法与 Optional 默认值 ---
 check_ok "File 方法与 Optional 默认值（mode 省略 / read(n)）" \
 	ok_file.pycp "FILE OK" '["hello"]'

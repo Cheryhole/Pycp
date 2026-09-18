@@ -2,6 +2,8 @@
 #include "PycpException.hpp"
 #include "PycpGC.hpp"
 #include "PycpString.hpp"
+#include "PycpInteger.hpp"   // Integer::get_value（读取 __equal__ 结果）
+#include "PycpBoolean.hpp"   // Boolean::True/False（相等性结果）
 #include "PycpConfig.hpp"
 #include "PycpMagic.hpp"
 #include "PycpFunction.hpp"
@@ -296,6 +298,21 @@ Object* Class::__string__() {
 Object* Class::__raw_string__() {
 	// repr 与 str 同形：<class "name">。
 	return __string__();
+}
+
+Object* Class::__equal__(Object* other) {
+	// 身份语义：类对象按「是否为同一个对象」判等（对齐 Python 对类对象与
+	// type(x) is y 的默认比较）。类型类在全局注册表里按名唯一，故同一类型
+	// 名解析出的类对象指针相同；同名但不同对象（两个模块各自定义）判不等。
+	return (other != nullptr && this == other) ? Boolean::True()
+	                                           : Boolean::False();
+}
+
+Object* Class::__not_equal__(Object* other) {
+	// 与 __equal__ 严格互补（不做「不同类型即不等」的短路，避免同一对象
+	// 自比较得到 True）。
+	return (other != nullptr && this == other) ? Boolean::False()
+	                                           : Boolean::True();
 }
 
 Object* Class::__inspect__() {
@@ -674,11 +691,33 @@ Object* Instance::__less_equal__(Object* other) {
 }
 
 Object* Instance::__equal__(Object* other) {
-	return dispatch_magic("__equal__", other);
+	// 类定义了 __equal__ 时转发；否则回退 Python 的 object 默认 ——
+	// 身份语义（同一对象才相等），而不是抛 TypeError（旧行为）。
+	// 注意：与 __string__ 等一致，默认行为不参与 dispatch_magic 的
+	// 「未定义即报错」路径，使 `a == b` 对普通类也有确定语义。
+	if (cls_ != nullptr && cls_->find_method("__equal__") != nullptr) {
+		return dispatch_magic("__equal__", other);
+	}
+	return (other != nullptr && this == other) ? Boolean::True()
+	                                           : Boolean::False();
 }
 
 Object* Instance::__not_equal__(Object* other) {
-	return dispatch_magic("__not_equal__", other);
+	if (cls_ != nullptr && cls_->find_method("__not_equal__") != nullptr) {
+		return dispatch_magic("__not_equal__", other);
+	}
+	// Python 语义：未定义 __not_equal__ 时，!= 取 __equal__ 的否定
+	//（而非各自独立回退，避免两个钩子只定义一个时结果自相矛盾）。
+	if (cls_ != nullptr && cls_->find_method("__equal__") != nullptr) {
+		Object* r = dispatch_magic("__equal__", other);   // Owned
+		const bool eq = (dynamic_cast<Integer*>(r) != nullptr) &&
+		                (static_cast<Integer*>(r)->get_value() != 0);
+		Decref(r);
+		return eq ? Boolean::False() : Boolean::True();
+	}
+	// 两者都未定义：Python 的 object 默认 —— 身份语义。
+	return (other != nullptr && this == other) ? Boolean::False()
+	                                           : Boolean::True();
 }
 
 Object* Instance::__greater_than__(Object* other) {
