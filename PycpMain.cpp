@@ -47,6 +47,7 @@
 #include "PycpCodegen.hpp"
 #include "aot/PycpAot.hpp"
 #include "aot/PycpAotProject.hpp"
+#include "aot/PycpScriptCodegen.hpp"  // 包清单求值（__codegen__ / 角色）
 #include "aot/PycpAotSdkLocator.hpp" // LocateSdk：过滤内置扩展名的 unresolved 提示
 #include "PycpModuleLoader.hpp"
 #include "preprocessor/PycpPreprocessor.hpp"
@@ -57,6 +58,7 @@
 #include "PycpBytecodeVM.hpp"// VM 执行
 #include "PycpNativeExt.hpp" // 原生扩展加载 / 源码模块编译器钩子
 #include "PycpString.hpp"    // REPL 回显：String::get_value()
+#include "PycpFixedList.hpp" // main(argv) 的实参容器
 #include "PycpException.hpp"
 #include "PycpConfig.hpp"    // 集中管理的常量（扩展名/输出命名/版本等）
 
@@ -90,6 +92,9 @@ struct Options {
 	bool dump = false;       // -d / --dump
 	bool preprocess = false; // -p / --preprocess
 	bool show_help = false;
+	// -m / --module：把位置参数当作【模块文件夹】（目录 + pycp.mpycp 清单）
+	// 执行。默认角色为「程序」（解释执行语义），AOT 下默认仍为「库」。
+	bool module_mode = false;
 
 	// ---- --emit-cpp 的模块形态与运行时形态 ----
 	// 依赖模块（.pycp 转译产物）的全局默认形态：默认 kShared（编成模块
@@ -114,6 +119,11 @@ void print_help(const char* prog) {
 		<< "Usage:\n"
 		<< "  " << prog << " [options] <input_file>\n\n"
 		<< "Options:\n"
+		<< "  -m, --module      Treat <input_file> as a module folder (a directory\n"
+		<< "                    containing pycp.mpycp); runs it as a program by\n"
+		<< "                    default (its manifest must define func main(argv)).\n"
+		<< "                    With --emit-cpp the folder defaults to a library\n"
+		<< "                    unless the manifest calls moduletools.as_program().\n"
 		<< "  -h, --help        Show this help message\n"
 		<< "  -i, --interpret   Interpret & execute (default); accepts .pycp or .cpycp\n"
 		<< "  -c, --compile     Compile <input_file> (.pycp) to bytecode (.cpycp)\n"
@@ -302,6 +312,9 @@ bool parse_args(int argc, char** argv, Options& opt) {
 			opt.preprocess = true;
 			opt.compile = false;
 			opt.interpret = false;
+		} else if (arg == "-m" || arg == "--module") {
+			// 模块文件夹模式：位置参数指向目录（内含 pycp.mpycp 清单）。
+			opt.module_mode = true;
 		} else if (!arg.empty() && arg[0] == '-') {
 			std::cerr << "Error: unknown option '" << arg << "'." << std::endl;
 			return false;
@@ -361,6 +374,56 @@ Pycp::BC::Module compile_source(const std::string& path) {
 	return Pycp::ModuleLoader::compile_file(path);
 }
 
+// 计算文件 basename（去扩展名），用于从入口路径得到入口模块名（定义见下）。
+std::string entry_module_name(const std::string& path);
+
+// =============================================================
+// 模块文件夹（package）入口解析
+// =============================================================
+// 目录（内含 pycp.mpycp 清单）与清单文件本身都解析为「包入口」：
+//   entry_file : 实际要编译执行的源文件（清单路径）
+//   entry_name : 入口模块名（包取包名，普通文件取 basename）
+struct EntryResolution {
+	std::string entry_file;
+	std::string entry_name;
+	bool is_package = false;   // 入口是否为模块文件夹
+};
+
+// 去掉路径结尾的目录分隔符（便于取目录自身的名字）。
+std::string trim_trailing_separators(const std::string& path) {
+	std::string p = path;
+	while (p.size() > 1 && (p.back() == '/' || p.back() == '\\')) p.pop_back();
+	return p;
+}
+
+EntryResolution resolve_entry_path(const std::string& input) {
+	EntryResolution r;
+	namespace fs = std::filesystem;
+	std::error_code ec;
+	if (fs::is_directory(input, ec)) {
+		const std::string dir = trim_trailing_separators(input);
+		r.entry_file = (fs::path(dir) / Pycp::MODULE_MANIFEST_FILENAME).string();
+		r.entry_name = fs::path(dir).filename().string();
+		r.is_package = true;
+		return r;
+	}
+	const std::string base = fs::path(input).filename().string();
+	if (base == Pycp::MODULE_MANIFEST_FILENAME) {
+		// 直接指向清单：包名取所在目录名。
+		const std::string dir = trim_trailing_separators(input);
+		fs::path parent = fs::path(dir).parent_path();
+		r.entry_file = dir;
+		r.entry_name = parent.empty() ? fs::path(dir).filename().string()
+		                              : parent.filename().string();
+		r.is_package = true;
+		return r;
+	}
+	r.entry_file = input;
+	r.entry_name = entry_module_name(input);
+	r.is_package = false;
+	return r;
+}
+
 // 计算文件 basename（去扩展名），用于从入口路径得到入口模块名。
 std::string entry_module_name(const std::string& path) {
 	std::size_t slash = path.find_last_of("/\\");
@@ -386,10 +449,18 @@ void initialize_runtime() {
 }
 
 // 执行入口模块及其 import 依赖（构造带模块注册表的 VM 并 run）。
-//   modules : ModuleLoader::load_all 产出的「模块名 -> Module」映射，
-//             entry_name 为入口模块名（其 basename）。
+//   modules       : ModuleLoader::load_all 产出的「模块名 -> Module」映射
+//   entry_name    : 入口模块名（包为包名，普通文件为 basename）
+//   package_names : 包对象名集合（供 VM 标记包模块）
+//   module_mode   : 是否以 `-m`（程序角色）运行
+//   cli_argv      : 传给程序入口 main(argv) 的参数（同 pycp.argv）
+// 返回进程退出码：非程序角色恒为 0；程序角色取 main(argv) 返回值
+// （经 __integer__ 宽松转换，None 转换为 0）。
 int execute_program(std::map<std::string, Pycp::BC::Module>& modules,
-                    const std::string& entry_name) {
+                    const std::string& entry_name,
+                    const std::set<std::string>& package_names,
+                    bool module_mode,
+                    const std::vector<std::string>& cli_argv) {
 	// 构建模块注册表（模块名 -> Module*），供 VM 的 LOAD_MODULE 使用。
 	std::map<std::string, Pycp::BC::Module*> registry;
 	for (auto& kv : modules) {
@@ -398,11 +469,67 @@ int execute_program(std::map<std::string, Pycp::BC::Module>& modules,
 
 	Pycp::BC::Module* entry = &modules[entry_name];
 	Pycp::BC::VM vm(entry, &registry, entry_name);
+	vm.set_package_names(package_names);
+
+	// 程序角色（`-m` 直接执行一个模块文件夹）：入口 __name__ 固定
+	// "__main__" 且只读，角色默认 program（清单可用 as_library() 覆盖）。
+	const bool as_program = module_mode;
+	if (as_program) {
+		Pycp::ResetPackageRole();
+		Pycp::SetPackageRole(Pycp::PackageRole::kProgram, /*declared=*/false);
+		vm.freeze_entry_name_main();
+	}
+
 	Pycp::Object* result = vm.run();
 	if (result != nullptr) {
 		Pycp::Decref(result);
 	}
-	return 0;
+
+	if (!as_program) return 0;
+
+	// ---- 角色校验 ----
+	if (Pycp::GetPackageRole() == Pycp::PackageRole::kLibrary) {
+		throw Pycp::RuntimeError(
+			"module '" + entry_name + "' is declared as a library "
+			"(moduletools.as_library()) and has no program entry; use "
+			"'import " + entry_name + "' instead, or declare "
+			"moduletools.as_program().");
+	}
+
+	// ---- 调用程序入口 main(argv) ----
+	auto* ns = vm.get_entry_module()->get_namespace();
+	auto it = ns->find("main");
+	if (it == ns->end() || it->second == nullptr ||
+	    !it->second->is_type("Function")) {
+		throw Pycp::RuntimeError("program '" + entry_name +
+			"' does not define func main(argv) in its manifest (" +
+			Pycp::MODULE_MANIFEST_FILENAME + ").");
+	}
+
+	// main 只接收【一个】argv（内容同 pycp.argv），故把命令行参数打包成
+	// 一个 FixedList 再作为唯一实参传入。FixedList::New 接管元素所有权
+	// （构造不 Incref），故元素用后只需释放容器本身。
+	std::vector<Pycp::Object*> argv_objs;
+	argv_objs.reserve(cli_argv.size());
+	for (const std::string& a : cli_argv) {
+		argv_objs.push_back(Pycp::String::FromCString(a.c_str())); // Owned
+	}
+	Pycp::Object* argv_list = Pycp::FixedList::New(argv_objs);      // Owned
+	Pycp::Object* r = Pycp::Call(it->second, &argv_list, 1);
+	Pycp::Decref(argv_list);
+
+	long long code = 0;
+	if (r != nullptr) {
+		Pycp::Object* iv = r->__integer__();   // Owned；不支持转换时抛 TypeError
+		if (iv != nullptr) {
+			if (Pycp::Integer* in = dynamic_cast<Pycp::Integer*>(iv)) {
+				code = in->get_value();
+			}
+			Pycp::Decref(iv);
+		}
+		Pycp::Decref(r);
+	}
+	return static_cast<int>(code);
 }
 
 // =============================================================
@@ -712,9 +839,22 @@ int main(int argc, char** argv) {
 			// 形态决策（ModulePlan）与渲染构建脚本。
 			//   -o <dir> 指定整个项目目录（默认 ./<入口名>/）。
 			std::vector<Pycp::ImportResolution> resolutions;
+			// 入口解析同样支持模块文件夹：-m 与 --emit-cpp 可组合，目录入口
+			// 的清单即被转译的入口模块。
+			const EntryResolution er_aot = resolve_entry_path(opt.input_file);
+			if (opt.module_mode && !er_aot.is_package) {
+				std::cerr << "Error: -m/--module expects a module folder: <dir> "
+				             "containing " << Pycp::MODULE_MANIFEST_FILENAME
+				          << " (got '" << opt.input_file << "')." << std::endl;
+				ret = 2;
+				Pycp::Finalize();
+				return ret;
+			}
+			std::set<std::string> package_names_aot;
 			std::map<std::string, Pycp::BC::Module> modules =
-				Pycp::ModuleLoader::load_all(opt.input_file, &resolutions);
-			std::string entry_name = entry_module_name(opt.input_file);
+				Pycp::ModuleLoader::load_all(er_aot.entry_file, &resolutions,
+				                             &package_names_aot);
+			std::string entry_name = er_aot.entry_name;
 
 			// 未解析 import 的提示：无法 resolve 到 .pycp 的依赖会被转译产物
 			// 当作「运行期加载的动态库」处理；若本意是静态链接的源码模块，
@@ -756,10 +896,51 @@ int main(int argc, char** argv) {
 				? entry_name
 				: opt.output_file;
 
+			// 包清单求值（仅模块文件夹入口）：用独立 VM 执行清单顶层一趟，
+			// 读出角色与 __codegen__ 的项目描述。失败即中止转译。
+			Pycp::AOT::ScriptCodegenPlan cg;
+			bool have_cg = false;
+			if (er_aot.is_package) {
+				std::vector<std::string> translated;
+				for (const auto& kv : modules) {
+					if (kv.first != entry_name) translated.push_back(kv.first);
+				}
+				std::string cg_err;
+				if (!Pycp::AOT::EvalPackageManifest(modules, entry_name,
+				                                    package_names_aot,
+				                                    translated, &cg, &cg_err)) {
+					throw Pycp::Exception(cg_err);
+				}
+				have_cg = true;
+			}
+
 			Pycp::AOT::AotProjectOptions aopt;
 			aopt.default_module_kind = opt.compile_modules;
 			aopt.runtime_link = opt.compile_runtime;
 			aopt.overrides = opt.module_overrides;
+			if (have_cg) {
+				// __codegen__ 的配置（命令行 overrides 已在上面写入，优先级更高）。
+				aopt.executable_name = cg.executable_name;
+				aopt.script_kinds = cg.kinds;
+				for (const auto& kv : cg.kinds) aopt.strict_names.insert(kv.first);
+				aopt.program_entry = (cg.role == Pycp::PackageRole::kProgram);
+				if (!cg.role_declared) {
+					std::cerr
+						<< "note: 模块 '" << entry_name
+						<< "' 未声明角色，已按【库】生成（无可执行文件）；"
+						   "如需可执行项目，请在 "
+						<< Pycp::MODULE_MANIFEST_FILENAME
+						<< " 中调用 moduletools.as_program() 并定义 "
+						   "func main(argv)。\n";
+				}
+				if (opt.show_imports) {
+					std::cout << "Package: " << entry_name << "  role="
+					          << (aopt.program_entry ? "program" : "library")
+					          << (cg.role_declared ? "  <- declared in manifest"
+					                               : "  <- default (AOT)")
+					          << "\n";
+				}
+			}
 
 			std::vector<std::string> written;
 			std::string emsg;
@@ -884,16 +1065,40 @@ int main(int argc, char** argv) {
 			cli_argv.insert(cli_argv.end(), opt.script_args.begin(),
 			                opt.script_args.end());
 			Pycp::SetArgv(cli_argv);
-			if (has_suffix(opt.input_file, Pycp::EXT_CPYCP)) {
-				std::vector<uint8_t> bytes = read_file_bytes(opt.input_file);
+			// 入口解析：模块文件夹（目录 / 清单）或普通源文件。
+			const EntryResolution er = resolve_entry_path(opt.input_file);
+			if (opt.module_mode) {
+				// -m 只接受模块文件夹；给出可操作的报错而非「打不开文件」。
+				if (!er.is_package) {
+					std::cerr << "Error: -m/--module expects a module folder: <dir> "
+					             "containing " << Pycp::MODULE_MANIFEST_FILENAME
+					          << " (got '" << opt.input_file << "')." << std::endl;
+					ret = 2;
+					Pycp::Finalize();
+					return ret;
+				}
+				std::error_code ec;
+				if (!std::filesystem::is_regular_file(er.entry_file, ec)) {
+					std::cerr << "Error: module folder '" << opt.input_file
+					          << "' has no " << Pycp::MODULE_MANIFEST_FILENAME
+					          << " manifest." << std::endl;
+					ret = 2;
+					Pycp::Finalize();
+					return ret;
+				}
+			}
+			if (has_suffix(er.entry_file, Pycp::EXT_CPYCP)) {
+				std::vector<uint8_t> bytes = read_file_bytes(er.entry_file);
 				Pycp::BC::Module module = Pycp::BC::Deserialize(bytes.data(), bytes.size());
 				Pycp::BC::VM vm(&module); // 无注册表：.cpycp 内 import 会在运行时报 ImportError
 				Pycp::Object* result = vm.run();
 				if (result != nullptr) Pycp::Decref(result);
 			} else {
+				std::set<std::string> package_names;
 				std::map<std::string, Pycp::BC::Module> modules =
-					Pycp::ModuleLoader::load_all(opt.input_file);
-				execute_program(modules, entry_module_name(opt.input_file));
+					Pycp::ModuleLoader::load_all(er.entry_file, nullptr, &package_names);
+				ret = execute_program(modules, er.entry_name, package_names,
+				                      opt.module_mode, cli_argv);
 			}
 		}
 

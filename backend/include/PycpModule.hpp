@@ -46,6 +46,12 @@ private:
 	// 绑定级访问属性：name -> {priv, readonly}。由顶层声明装饰器登记，
 	// 为模块符号可见性 / 常量绑定的权威来源。
 	std::unordered_map<std::string, AccessAttrs> binding_attrs_;
+	// 是否「包模块」（模块文件夹的清单及其子模块）。仅包模块启用脚本层
+	// 属性钩子（见 __get_attribute__ 等）与下标协议。
+	bool package_ = false;
+	// 脚本钩子重入深度：>0 表示正处于钩子函数体内，此期间一切属性/下标
+	// 访问走 C++ 原生路径，避免 `this()[name]` 再次触发钩子造成无限递归。
+	int hook_depth_ = 0;
 
 public:
 	explicit Module(const std::string& name);
@@ -67,6 +73,12 @@ public:
 
 	// 设置 __name__ 规范值（入口模块设为 "__main__"，其余保持模块名）。
 	void set_module_name(const std::string& n) { module_name_ = n; }
+
+	// 包模块标记：由 VM / 宿主在构造包（模块文件夹）对象时设置。
+	// 仅包模块会分派脚本层属性钩子（__get_attribute__ / __set_attribute__ /
+	// __string__ / __raw_string__），普通模块保持既有 C++ 行为（零回归）。
+	void set_package(bool v) { package_ = v; }
+	bool is_package() const { return package_; }
 
 	// 读取/写入命名空间（供 VM / AOT 填充与查询）。
 	// 注意：直接操作裸指针，引用计数由调用方管理。扩展作者应优先使用下面
@@ -131,6 +143,22 @@ public:
 	// 供 __get_attribute__("__name__") / __string__ / GetCurrentModuleName 共用。
 	Object* resolve_name_value();
 
+	// =============================================================
+	// 脚本层属性钩子（仅包模块）
+	// =============================================================
+	// 包模块可在清单里定义同名函数覆写属性访问 / 字符串化：
+	//   __get_attribute__(name)            -> 返回属性值
+	//   __set_attribute__(name, value)     -> 属性赋值（返回值被忽略）
+	//   __string__() / __raw_string__()    -> 字符串化
+	// 分派条件：is_package() && 钩子未重入 && 命名空间中存在同名 Function。
+	// 不满足任一条件即回退 C++ 原生实现。
+	//   返回 Owned；未定义钩子时返回 nullptr（调用方走原生路径）。
+	Object* dispatch_package_hook(const std::string& name,
+	                              const std::vector<Object*>& argv);
+
+	// 下标协议：moduletools.this()[name]，转发属性访问（含钩子分派）。
+	Object* __get_item__(Object* key) override;
+
 	// 属性访问：namespace_ 中查 name，未找到抛 AttributeError。
 	Object* __get_attribute__(const std::string& name) override;
 
@@ -157,6 +185,35 @@ PYCP_API extern Module* current_module_;
 // 获取当前模块名（pycp.__name__ 的来源）：取 current_module_->resolve_name_value()，
 // current_module_ 为空时回退 "__main__"。返回 Owned。
 PYCP_API Object* GetCurrentModuleName();
+
+// =============================================================
+// 包（模块文件夹）运行期状态（进程级，宿主与脚本层之间的约定通道）
+//
+// 与 SetArgv / SetModuleSearchDir 同类：宿主（PycpMain / AOT 求值器）在
+// 执行包清单顶层【之前】写入默认角色，清单内的 moduletools.as_program() /
+// as_library() 可显式声明并覆盖。全部为「写一次读多次」的进程级状态。
+// =============================================================
+
+// 包角色：库（可被 import）/ 程序（可独立执行、AOT 可编译为可执行文件）。
+enum class PackageRole {
+	kLibrary, // 作为模块被 import（默认）
+	kProgram, // 作为程序入口（含 main(argv)）
+};
+
+// 设置当前包角色。declared=true 表示来自清单的显式声明（覆盖宿主默认值）。
+PYCP_API void SetPackageRole(PackageRole role, bool declared);
+// 读取当前包角色。
+PYCP_API PackageRole GetPackageRole();
+// 角色是否由清单显式声明（false 表示宿主按用途推断的默认值）。
+PYCP_API bool IsPackageRoleDeclared();
+// 重置为「库 + 未声明」。每次包求值（解释执行 / AOT 转译期求值）前调用，
+// 避免同一进程内跨包或跨趟求值互相污染。
+PYCP_API void ResetPackageRole();
+
+// 当前包模块对象（moduletools.this() 的来源）：由 VM 在执行包清单顶层
+// （及其属性钩子、main 调用）期间设置，退出时恢复。
+PYCP_API void SetCurrentPackage(Module* pkg);
+PYCP_API Module* GetCurrentPackage();
 
 // 类型萃取特化：Module。
 template <> struct TypeTraits<Module> {

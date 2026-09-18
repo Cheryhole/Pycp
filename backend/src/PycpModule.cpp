@@ -4,6 +4,8 @@
 #include "PycpFixedList.hpp"
 #include "PycpMagic.hpp"
 #include "PycpClass.hpp"
+#include "PycpFunction.hpp"
+#include "PycpABI.hpp"     // Pycp::Call（脚本钩子调用）
 #include "PycpGC.hpp"
 
 namespace Pycp {
@@ -113,6 +115,33 @@ Object* GetCurrentModuleName() {
 	return current_module_->resolve_name_value(); // 无递归（resolve 不走 pycp 回退）
 }
 
+// =============================================================
+// 包（模块文件夹）运行期状态
+// =============================================================
+namespace {
+PackageRole g_package_role = PackageRole::kLibrary;
+bool g_package_role_declared = false;
+Module* g_current_package = nullptr;
+} // anonymous namespace
+
+void SetPackageRole(PackageRole role, bool declared) {
+	g_package_role = role;
+	g_package_role_declared = declared;
+}
+
+PackageRole GetPackageRole() { return g_package_role; }
+
+bool IsPackageRoleDeclared() { return g_package_role_declared; }
+
+void ResetPackageRole() {
+	g_package_role = PackageRole::kLibrary;
+	g_package_role_declared = false;
+}
+
+void SetCurrentPackage(Module* pkg) { g_current_package = pkg; }
+
+Module* GetCurrentPackage() { return g_current_package; }
+
 Class* Module::get_type_class() {
 	// Module 的 type_name_ 是模块名，不能按名查表，固定使用 "Module" 类型类。
 	return LookupTypeClass("Module");
@@ -149,6 +178,53 @@ Object* Module::resolve_name_value() {
 	return String::FromCString(module_name_.c_str()); // Owned
 }
 
+// =============================================================
+// 脚本层属性钩子（仅包模块）
+// =============================================================
+// 分派条件：包模块 && 未重入 && 命名空间中存在同名 Function。
+// 返回 Owned（可能为 None）；不满足条件或未定义时返回 nullptr。
+//
+// 重入保护：钩子函数体内的一切属性 / 下标访问都会再次进入
+// __get_attribute__，若无守卫会无限递归（典型场景：钩子内用
+// moduletools.this()[name] 取真实值）。
+Object* Module::dispatch_package_hook(const std::string& name,
+                                      const std::vector<Object*>& argv) {
+	if (!package_ || hook_depth_ > 0) return nullptr;
+	auto it = namespace_.find(name);
+	if (it == namespace_.end() || it->second == nullptr) return nullptr;
+	if (!it->second->is_type("Function")) return nullptr;
+
+	Object* fn = it->second;
+	// 模块命名空间里的函数是普通函数（不带 self，与 io.print 一致），
+	// 故直接按实参调用。argv 为借用：元素由调用方持有。
+	// 钩子执行期间把「当前包」切换为自身：钩子可能在包顶层执行【之后】
+	// （如外部访问 module.x）才被触发，此时 GetCurrentPackage() 已恢复为
+	// 上层值，this() 会拿到错误的模块。
+	Module* saved_package = GetCurrentPackage();
+	SetCurrentPackage(this);
+	++hook_depth_;
+	Object* result = nullptr;
+	try {
+		result = Pycp::Call(fn, const_cast<Object**>(argv.data()), argv.size());
+	} catch (...) {
+		--hook_depth_;
+		SetCurrentPackage(saved_package);
+		throw;
+	}
+	--hook_depth_;
+	SetCurrentPackage(saved_package);
+	return result; // Owned
+}
+
+// 下标协议：moduletools.this()[name]，语义与属性访问完全一致
+// （含钩子分派与 private 过滤）。非字符串键报 TypeError。
+Object* Module::__get_item__(Object* key) {
+	if (key == nullptr || !IsString(key)) {
+		throw TypeError("module indices must be strings.");
+	}
+	return __get_attribute__(AsString(key)); // 已 Owned
+}
+
 Object* Module::__get_attribute__(const std::string& name) {
 	// 0) __name__：members_ / namespace_ 命中即用；都不命中回退全局当前模块名
 	//    （即 pycp.__name__，对应规则 1：入口文件经回退得 "__main__"）。
@@ -176,6 +252,13 @@ Object* Module::__get_attribute__(const std::string& name) {
 	if (itm != members_.end() && itm->second != nullptr) {
 		Incref(itm->second);
 		return itm->second;
+	}
+	// 1.1) 包模块的脚本层 __get_attribute__ 钩子（重入时自动跳过）。
+	{
+		std::vector<Object*> argv{ String::FromCString(name.c_str()) }; // Owned
+		Object* hooked = dispatch_package_hook("__get_attribute__", argv);
+		Decref(argv[0]);
+		if (hooked != nullptr) return hooked; // Owned，钩子完全接管
 	}
 	// 2) 从模块命名空间中查找。
 	auto it = namespace_.find(name);
@@ -214,6 +297,20 @@ void Module::__set_attribute__(const std::string& name, Object* value) {
 		if (value != nullptr) Decref(value); // 消费待写引用（对齐 STORE_ATTR）
 		throw AttributeError("cannot reassign read-only binding '" + name + "'.");
 	}
+	// 包模块的脚本层 __set_attribute__ 钩子：命中即完全接管（钩子自行决定
+	// 是否落值），未定义时回退通用动态成员写入。
+	{
+		std::vector<Object*> argv{ String::FromCString(name.c_str()), value };
+		Object* hooked = dispatch_package_hook("__set_attribute__", argv);
+		Decref(argv[0]);
+		if (hooked != nullptr) {
+			// 钩子接管：消费 value 的待写引用（与 Object::__set_attribute__
+			// 的增持相对）。
+			Decref(hooked);
+			if (value != nullptr) Decref(value);
+			return;
+		}
+	}
 	Object::__set_attribute__(name, value);
 }
 
@@ -239,6 +336,10 @@ Object* Module::__inspect__() {
 }
 
 Object* Module::__string__(){
+	// 包模块的脚本层 __string__ 钩子（重入时自动跳过）。
+	if (Object* hooked = dispatch_package_hook("__string__", {})) {
+		return hooked;
+	}
 	// 用 __name__ 渲染：值为 String 直接嵌入；否则调用其 __string__()。
 	Object* no = resolve_name_value();
 	std::string repr;
@@ -253,7 +354,11 @@ Object* Module::__string__(){
 }
 
 Object* Module::__raw_string__(){
-	// repr 与 str 同形：<module "name">。
+	// 包模块的脚本层 __raw_string__ 钩子；未定义时与 __string__ 同形
+	// （<module "name">，可能已被 __string__ 钩子改写）。
+	if (Object* hooked = dispatch_package_hook("__raw_string__", {})) {
+		return hooked;
+	}
 	return __string__();
 }
 

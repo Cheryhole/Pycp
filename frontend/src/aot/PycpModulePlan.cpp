@@ -20,6 +20,7 @@ ModulePlan PlanModuleKinds(
 	const std::string& entry,
 	ModuleKind default_kind,
 	const std::map<std::string, ModuleKind>& overrides,
+	const std::set<std::string>& strict_names,
 	std::string* err) {
 	ModulePlan plan;
 	if (err != nullptr) err->clear();
@@ -109,6 +110,26 @@ ModulePlan PlanModuleKinds(
 		for (const std::string& n : dep_names) {
 			if (plan.kinds.at(n) != ModuleKind::kStatic) continue;
 			if (host[n].size() < 2) continue;
+			// 脚本（__codegen__）显式指定的形态不允许被静默提升：
+			// 静默改变用户意图最难排查，按约定直接报错中止。
+			if (strict_names.find(n) != strict_names.end()) {
+				if (err != nullptr) {
+					std::ostringstream es;
+					es << "模块 '" << n << "' 由 __codegen__ 指定为 "
+					   << kind_name(plan.kinds.at(n))
+					   << "，但被 " << host[n].size() << " 个链接目标引用（";
+					bool first = true;
+					for (const std::string& t : host[n]) {
+						if (!first) es << ", ";
+						es << t;
+						first = false;
+					}
+					es << "）：同一模块被复制进多个目标会出现两份模块对象。"
+					   << "请改为 shared，或调整依赖使其只被单一目标引用。";
+					*err = es.str();
+				}
+				return ModulePlan();
+			}
 			plan.kinds[n] = ModuleKind::kShared;
 
 			std::ostringstream oss;

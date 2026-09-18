@@ -1,0 +1,23 @@
+// 程序角色的模块文件夹：显式 as_program + main(argv) + __codegen__。
+import io
+import moduletools
+
+from obj_a import objA
+
+moduletools.as_program()
+
+func __codegen__() {
+	proj = moduletools.Project()
+	proj.set_executable_name("prog_app")
+	proj["prog_pkg.obj_a"].static()
+	return proj
+}
+
+func main(argv) {
+	io.print("PROG MAIN")
+	io.print(argv)
+	o = objA()
+	o.method1("from-main")
+	io.print("role=" + moduletools.role())
+	return 3
+}

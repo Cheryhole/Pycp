@@ -1,0 +1,5 @@
+import io
+
+func ping() {
+	io.print("util.ping")
+}

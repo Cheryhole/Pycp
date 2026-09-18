@@ -60,8 +60,10 @@ std::string cmake_path(const std::string& s) {
 
 // 依赖模块的 CMake target 名。入口模块恒编进主程序（target 名即 project 名），
 // 且不出现在 spec.modules 中，故二者不可能重名。
+// 模块名含 '.'（包内子模块 pkg.obj_a）时 sanitize：CMake target 名允许点号，
+// 但与「符号/target 同源映射」保持一致更不易出错（亦便于与 exe 名区分）。
 std::string module_target(const std::string& name) {
-	return "pycp_mod_" + name;
+	return "pycp_mod_" + Pycp::SanitizeModuleName(name);
 }
 
 // 计算某链接目标（入口或模块）的「静态依赖闭包」：需要链入该目标的静态

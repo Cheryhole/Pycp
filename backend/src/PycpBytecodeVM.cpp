@@ -25,6 +25,12 @@ VM::VM(Module* module, std::map<std::string, Module*>* registry,
 		// 入口模块 __name__ 规范值为 "__main__"（命名空间不注入 __name__，
 		// 裸名经 LOAD_VAR 回退到 pycp.__name__ 即当前模块名）。
 		entry_mod_->set_module_name("__main__");
+		// 入口本身是包（`pycp -m pkg`）：标记包模块并登记为当前包，
+		// 使清单顶层执行期间的 moduletools.this() 指向它。
+		if (package_names_.find(entry_name) != package_names_.end()) {
+			entry_mod_->set_package(true);
+			Pycp::SetCurrentPackage(entry_mod_);
+		}
 		module_cache_[entry_name] = entry_mod_;
 		global_env_->globals = entry_mod_->get_namespace();
 		// 入口函数调用时的 globals = 入口模块命名空间（与 global_env_ 同一 map）。
@@ -317,6 +323,25 @@ Pycp::Module* VM::load_module(const std::string& name) {
 	return load_from_bc_module(name, mit->second);
 }
 
+// 程序角色：把入口 __name__ 固定为 "__main__" 并冻结为只读绑定。
+//   与 AOT 入口（PycpAot.cpp 注入 __name__）保持同形，避免解释态「靠
+//   pycp.__name__ 回退」与 AOT「已注入 globals」两条路径在入口赋值
+//   __name__ 时行为分叉。
+//   只读经绑定级属性承载：Environment_Store（顶层赋值）与
+//   Module::__set_attribute__（module.__name__ = v）都会拦截。
+void VM::freeze_entry_name_main() {
+	if (entry_mod_ == nullptr) return;
+	auto* ns = entry_mod_->get_namespace();
+	auto it = ns->find("__name__");
+	if (it != ns->end() && it->second != nullptr) {
+		Decref(it->second);
+		it->second = nullptr;
+	}
+	(*ns)["__name__"] = Pycp::String::FromCString("__main__");
+	entry_mod_->set_module_name("__main__");
+	entry_mod_->mark_readonly_binding("__name__");
+}
+
 // 执行字节码模块的顶层并构造其模块对象（registry 子模块与 .pycp 源码模块共用）。
 Pycp::Module* VM::load_from_bc_module(const std::string& name, Module* bc) {
 	// 先占坑：创建 Pycp::Module 并放入缓存（支持循环导入——执行子模块时
@@ -331,7 +356,14 @@ Pycp::Module* VM::load_from_bc_module(const std::string& name, Module* bc) {
 
 	// 规则 2：import 后自动在该模块命名空间注入 __name__ = 模块名，
 	// 使模块内裸名 __name__ 直接可用（refcount 1，命名空间为唯一持有者）。
+	// 包模块的 __name__ 即包限定名（如 pkg 或 pkg.sub），且【不】冻结为
+	// 只读——清单可用 `__name__ = "..."` 自定义模块名。
 	(*modobj->get_namespace())["__name__"] = Pycp::String::FromCString(name.c_str());
+
+	// 包模块：启用脚本属性钩子 / 下标协议，并在其顶层执行期间成为
+	// moduletools.this() 的返回对象（退出时恢复上一个包上下文）。
+	const bool is_pkg = (package_names_.find(name) != package_names_.end());
+	if (is_pkg) modobj->set_package(true);
 
 	// 为子模块构造执行环境：其顶层 globals 指向 Module 的命名空间。
 	// 本版起不注入任何内建函数。
@@ -349,6 +381,15 @@ Pycp::Module* VM::load_from_bc_module(const std::string& name, Module* bc) {
 	// 执行期间：当前模块 = 被导入模块，供 pycp.__name__ 回退。
 	Pycp::Module* saved_current = Pycp::current_module_;
 	set_current_module(modobj);
+	// 执行期间：当前包 = 本模块（若为包），供 moduletools.this() 解析。
+	Pycp::Module* saved_package = Pycp::GetCurrentPackage();
+	// 角色状态按包隔离：执行本包顶层前重置，退出后恢复上层状态。
+	const bool saved_declared = Pycp::IsPackageRoleDeclared();
+	const Pycp::PackageRole saved_role = Pycp::GetPackageRole();
+	if (is_pkg) {
+		Pycp::SetCurrentPackage(modobj);
+		Pycp::ResetPackageRole();
+	}
 	try {
 		if (bc->code_objects.empty()) {
 			throw VMError("empty imported module: " + name);
@@ -391,6 +432,8 @@ Pycp::Module* VM::load_from_bc_module(const std::string& name, Module* bc) {
 		// 失败回滚：从缓存移除并释放，避免留下坏模块。
 		module_ = saved_module;
 		set_current_module(saved_current);
+		Pycp::SetCurrentPackage(saved_package);
+		Pycp::SetPackageRole(saved_role, saved_declared);
 		module_cache_.erase(name);
 		GC_RemoveRoot(modobj);
 		Decref(modobj);
@@ -398,6 +441,21 @@ Pycp::Module* VM::load_from_bc_module(const std::string& name, Module* bc) {
 	}
 	module_ = saved_module;
 	set_current_module(saved_current);
+	Pycp::SetCurrentPackage(saved_package);
+
+	// 角色校验：被显式声明为「程序」的包不可被 import
+	//（对齐用途约定：程序只能经 `pycp -m <pkg>` 或 AOT 编译为可执行文件运行）。
+	if (is_pkg) {
+		const bool declared = Pycp::IsPackageRoleDeclared();
+		const Pycp::PackageRole role = Pycp::GetPackageRole();
+		Pycp::SetPackageRole(saved_role, saved_declared); // 先恢复，再抛错
+		if (declared && role == Pycp::PackageRole::kProgram) {
+			throw ImportError("module '" + name +
+			                  "' is declared as a program (moduletools.as_program()); "
+			                  "run it with 'pycp -m " + name +
+			                  "' instead of importing it.");
+		}
+	}
 
 	return modobj;
 }

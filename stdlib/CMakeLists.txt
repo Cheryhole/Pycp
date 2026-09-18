@@ -11,3 +11,4 @@
 add_subdirectory(io)
 add_subdirectory(pycp)
 add_subdirectory(classtools)
+add_subdirectory(moduletools)

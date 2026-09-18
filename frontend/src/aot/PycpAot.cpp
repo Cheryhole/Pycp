@@ -104,8 +104,11 @@ std::string sanitize_identifier(const std::string& s) {
 // 模块初始化函数符号名（无哈希，按模块名唯一）。Pycp::ImportModule 经
 // dlsym(RTLD_DEFAULT, "PycpModule_<name>") 链接，使解释器与 AOT 共用
 // 统一导入入口。
+// 模块名含 '.'（包内子模块 pkg.obj_a）时须 sanitize：C 标识符不允许点号。
+// 运行时侧（PycpNativeExt）用同一个 Pycp::SanitizeModuleName 解析，两边
+// 必须同源，否则 dlsym 找不到符号。
 std::string module_init_symbol(const std::string& name) {
-	return std::string(Pycp::AOT_MODULE_INIT_PREFIX) + name;
+	return std::string(Pycp::AOT_MODULE_INIT_PREFIX) + Pycp::SanitizeModuleName(name);
 }
 
 // 计算单个代码对象指令流的最大可能栈深（保守顺序扫描）。
@@ -911,7 +914,8 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
                             bool is_entry,
                             const std::string& entry_name,
                             const std::vector<std::string>& deps = {},
-                            const std::map<std::string, ModuleKind>* kinds = nullptr) {
+                            const std::map<std::string, ModuleKind>* kinds = nullptr,
+                            bool program_entry = false) {
 	if (module.code_objects.empty()) {
 		throw std::runtime_error("AOT: empty module (no code objects).");
 	}
@@ -943,6 +947,7 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	os << "#include \"PycpClass.hpp\"\n";
 	os << "#include \"PycpList.hpp\"\n";
 	os << "#include \"PycpMap.hpp\"\n";
+	os << "#include \"PycpFixedList.hpp\"\n";
 	os << "#include \"PycpBytecodeVM.hpp\"\n";
 	os << "#include \"PycpNativeExt.hpp\"\n";
 	os << "#include \"PycpException.hpp\"\n";
@@ -1102,6 +1107,11 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	if (is_entry) {
 		os << "        mod->set_module_name(\"__main__\");\n";
 		os << "        (*g_mod_ns)[\"__name__\"] = Pycp::String::FromCString(\"__main__\");\n";
+		// 程序角色：入口 __name__ 冻结为只读绑定（与解释态 -m 一致），
+		// 顶层赋值与 module.__name__ = v 都会被拦截。
+		if (program_entry) {
+			os << "        mod->mark_readonly_binding(\"__name__\");\n";
+		}
 	} else {
 		os << "        (*g_mod_ns)[\"__name__\"] = Pycp::String::FromCString("
 		   << cpp_string_literal(modname) << ");\n";
@@ -1121,16 +1131,49 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	if (is_entry) {
 		os << "int " << entry_name << "(int argc, char** argv) {\n";
 		os << "    Pycp::Initialize();\n";
+		os << "    int pycp_exit_code = 0;\n";
 		os << "    try {\n";
 		os << "        // 注入命令行参数：pycp.argv == [程序完整路径, 程序参数...]，\n";
 		os << "        // 对齐 Python sys.argv（argv[0] 为程序路径）。须在模块初始化\n";
 		os << "        // 之前写入，供 pycp 内置模块构造时读取快照。\n";
 		os << "        std::vector<std::string> pycp_argv(argv, argv + argc);\n";
 		os << "        Pycp::SetArgv(pycp_argv);\n";
-		os << "        " << module_init_symbol(modname) << "();\n";
+		os << "        Pycp::Module* entry_mod = " << module_init_symbol(modname) << "();\n";
+		if (program_entry) {
+			// 程序角色：入口为清单顶层定义的 main(argv)。返回值经
+			// __integer__ 宽松转换后作为进程退出码（None -> 0）。
+			os << "        // 程序角色：调用清单的 main(argv)（argv 同 pycp.argv）。\n";
+			os << "        // 直接查命名空间而非 GetAttr：包可能覆写 __get_attribute__\n";
+			os << "        // （钩子未代理到命名空间时 GetAttr 会取不到 main）。\n";
+			os << "        Pycp::Object* main_fn = nullptr;\n";
+			os << "        {\n";
+			os << "            auto* ns = entry_mod->get_namespace();\n";
+			os << "            auto it = ns->find(\"main\");\n";
+			os << "            if (it != ns->end()) main_fn = it->second;  // Borrowed\n";
+			os << "        }\n";
+			os << "        if (main_fn == nullptr || !main_fn->is_type(\"Function\")) {\n";
+			os << "            std::cerr << \"Error: program has no func main(argv) in its manifest.\" << std::endl;\n";
+			os << "            return 1;\n";
+			os << "        }\n";
+			os << "        std::vector<Pycp::Object*> argv_objs;\n";
+			os << "        for (int i = 0; i < argc; ++i) {\n";
+			os << "            argv_objs.push_back(Pycp::String::FromCString(argv[i]));\n";
+			os << "        }\n";
+			os << "        Pycp::Object* argv_list = Pycp::FixedList::New(argv_objs);\n";
+			os << "        Pycp::Object* r = Pycp::Call(main_fn, &argv_list, 1);\n";
+			os << "        Pycp::Decref(argv_list);\n";
+			os << "        if (r != nullptr) {\n";
+			os << "            Pycp::Object* iv = r->__integer__();\n";
+			os << "            if (iv != nullptr) {\n";
+			os << "                pycp_exit_code = static_cast<int>(static_cast<Pycp::Integer*>(iv)->get_value());\n";
+			os << "                Pycp::Decref(iv);\n";
+			os << "            }\n";
+			os << "            Pycp::Decref(r);\n";
+			os << "        }\n";
+		}
 		os << "        pycp_fini_consts();\n";
 		os << "        Pycp::Finalize();\n";
-		os << "        return 0;\n";
+		os << "        return pycp_exit_code;\n";
 		os << "    } catch (const Pycp::Exception& e) {\n";
 		os << "        std::cerr << e.format() << std::endl;\n";
 		os << "        return 1;\n";
@@ -1172,7 +1215,8 @@ std::string EmitCpp(const Pycp::BC::Module& module,
 std::map<std::string, std::string> EmitCppAll(
     const std::map<std::string, Pycp::BC::Module>& modules,
     const std::string& entry_name,
-    const std::map<std::string, ModuleKind>* kinds) {
+    const std::map<std::string, ModuleKind>* kinds,
+    bool program_entry) {
 	std::map<std::string, std::string> result;
 	for (const auto& kv : modules) {
 		const std::string& modname = kv.first;
@@ -1180,7 +1224,7 @@ std::map<std::string, std::string> EmitCppAll(
 		result[modname] = emit_module_cpp(kv.second, modname, is_entry,
 		                                  Pycp::AOT_ENTRY_FN_NAME,
 		                                  resolve_deps(modules, kv.second),
-		                                  kinds);
+		                                  kinds, program_entry);
 	}
 	return result;
 }

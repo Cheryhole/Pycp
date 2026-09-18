@@ -41,11 +41,16 @@ std::string EmitCpp(const Pycp::BC::Module& module,
 //                对其不生成「链接拉入桩」（符号在独立 DLL 中，extern 引用会
 //                制造无法解析的外部符号）；nullptr 表示全部按静态处理。
 //   被导入模块生成的源码仅含初始化函数（无 main），供入口链接调用。
+//   program_entry : 入口为「程序角色」的包（清单定义了 func main(argv)）。
+//                   生成的 main() 会在顶层执行后调用该 main(argv)，
+//                   并把其返回值（经 __integer__ 转换）作为进程退出码；
+//                   同时把入口 __name__ 冻结为只读绑定。
 //   返回 map<模块名, 源码>；每个值的文件名由调用方决定（如 <name>.gen.cpp）。
 std::map<std::string, std::string> EmitCppAll(
     const std::map<std::string, Pycp::BC::Module>& modules,
     const std::string& entry_name,
-    const std::map<std::string, ModuleKind>* kinds = nullptr);
+    const std::map<std::string, ModuleKind>* kinds = nullptr,
+    bool program_entry = false);
 
 // 将生成结果写入磁盘文件（path 为 .cpp 输出路径）。
 //   返回 true 表示写入成功。

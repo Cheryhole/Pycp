@@ -1,0 +1,12 @@
+// 以库方式使用模块文件夹：import 后取模块名 / 字符串化 / 调子模块函数。
+import io
+import pycp
+import lib_pkg
+
+func main() {
+	io.print("name=" + lib_pkg.__name__)
+	io.print("str=" + pycp.String(lib_pkg))
+	lib_pkg.ping()
+	lib_pkg.helper("x")
+}
+main()

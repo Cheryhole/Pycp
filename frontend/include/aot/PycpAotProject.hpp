@@ -18,6 +18,7 @@
 #include "aot/PycpProjectSpec.hpp" // LinkMode / ModuleKind
 
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -35,6 +36,19 @@ struct AotProjectOptions {
 	// 或内置扩展（io / Pycp / classtools）。内置扩展无覆盖时默认跟随
 	// runtime_link（static -> SDK 静态库链入；shared -> stdlib/ 加载）。
 	std::map<std::string, ModuleKind> overrides;
+
+	// ---- 以下由包清单的 __codegen__（PycpScriptCodegen）回填 ----
+	// proj.set_executable_name()：可执行文件名 / CMake project 名。
+	// 空表示未指定（沿用入口模块名）。库角色下不允许指定（求值期已报错）。
+	std::string executable_name;
+	// proj["<模块名>"].static()/shared() 指定的形态。命令行 overrides 优先。
+	std::map<std::string, ModuleKind> script_kinds;
+	// 脚本显式指定过形态的模块名：这些模块若因「被 ≥2 个链接目标引用」
+	// 必须提升为 shared，则【报错中止】而非静默提升（用户约定）。
+	std::set<std::string> strict_names;
+	// 入口是否为「程序角色」的包：生成的 main() 会调用清单的 main(argv)
+	// 并把其返回值作为进程退出码，同时冻结入口 __name__。
+	bool program_entry = false;
 };
 
 // --emit-cpp 的决策回执：把编排层内部的形态决策结果带回 CLI 供可观测输出

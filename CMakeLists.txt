@@ -127,6 +127,7 @@ set(AOT_SOURCES
     ${PYCP_FRONTEND_DIR}/src/aot/PycpBuildScriptGenerator.cpp
     ${PYCP_FRONTEND_DIR}/src/aot/PycpCMakeGenerator.cpp
     ${PYCP_FRONTEND_DIR}/src/aot/PycpAotProject.cpp
+    ${PYCP_FRONTEND_DIR}/src/aot/PycpScriptCodegen.cpp
 )
 
 set(LOADER_SOURCES

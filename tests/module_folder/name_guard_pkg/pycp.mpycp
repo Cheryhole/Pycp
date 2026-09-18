@@ -1,0 +1,12 @@
+// 用途错误用例：程序角色的入口 __name__ 冻结为 "__main__" 且只读，
+// 清单里的赋值应被拒绝（AttributeError: read-only binding）。
+import io
+import moduletools
+
+moduletools.as_program()
+
+__name__ = "Nope"
+
+func main(argv) {
+	return 0
+}

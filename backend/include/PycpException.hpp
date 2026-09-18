@@ -98,6 +98,16 @@ class VMError : public Exception {
 				: Exception(file_, lineno_, "VMError: " + msg) {}
 };
 
+// 通用运行期错误：语义层面「用法不匹配」但不属于上述任何具体类别。
+// 例：以 `pycp -m pkg` 直接运行一个被声明为库（as_library）的包。
+class RuntimeError : public Exception {
+	public:
+		explicit RuntimeError(const std::string& msg)
+				: Exception("RuntimeError: " + msg) {}
+		RuntimeError(const std::string& file_, int lineno_, const std::string& msg)
+				: Exception(file_, lineno_, "RuntimeError: " + msg) {}
+};
+
 // 导入错误：import 目标模块不存在或加载失败
 class ImportError : public Exception {
 	public:

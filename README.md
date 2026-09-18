@@ -512,6 +512,10 @@ readonly(CONST)        # 等价于 @readonly CONST = 3（不可重赋值）
 | 4 | 可执行文件所在目录的 `stdlib/` | `xxx.pycp` → `xxx.so` |
 | — | 全部未命中 | 抛 `ImportError`（附各层候选目录诊断） |
 
+> 上表是**运行期**查找。编译期（`ModuleLoader`）解析 import 时同样按 cwd → 入口目录查找，
+> 并额外支持两种形态：**模块文件夹**（`xxx/pycp.mpycp`，见下文
+> [模块文件夹（package）](#模块文件夹package)）与**包内兄弟子模块**（`pkg.sub`，在包目录内优先于 cwd）。
+
 说明：
 
 - **本地优先 + 源码优先**：文件系统层（2/3/4）由近及远，且每层内 **`.pycp` 源码优先于
@@ -532,6 +536,70 @@ readonly(CONST)        # 等价于 @readonly CONST = 3（不可重赋值）
   明确的链接意图，静默回退会掩盖「静态库成员被链接器丢弃」这类问题。
 
 > **关于静态库**：把 `b.gen.cpp` 编成 `.a` 再链接时，生成代码会自动为依赖模块插入**链接拉入桩**（在入口翻译单元显式引用 `PycpModule_b`），强制链接器拉入对应目标文件。否则未被引用的成员会被整体丢弃，表现为「编译链接全部成功，运行时却报 `ImportError`」。因此**无需** `-Wl,--whole-archive`；若把多个依赖分别编成静态库，仍须遵守静态库的标准链接顺序（依赖方在前、被依赖方在后）。
+
+### 模块文件夹（package）
+
+一个**目录**即一个模块：目录下的 `pycp.mpycp` 是清单（普通 `.pycp` 源码），其余 `.pycp` 是包内子文件（子模块，模块名为点号全名 `pkg.sub`，对齐 Python）。
+
+```
+module_example/
+├── pycp.mpycp      # 清单：import、模块名、属性钩子、__codegen__、main
+├── obj_a.pycp      # 子模块，模块名 module_example.obj_a
+└── method_b.pycp
+```
+
+两种用法：
+
+```bash
+# 1) 作为程序直接执行：默认程序角色，入口为清单的 main(argv)
+pycp -m module_example arg1 arg2      # 也可写 --module
+
+# 2) 作为库被导入（在任意 .pycp 中）
+import module_example                 # module_example.__name__ 为模块名
+from module_example import objA       # 子模块同理
+```
+
+**角色区分**：清单里用 `moduletools.as_program()` / `as_library()` 显式声明；未声明时按下表推断，**声明与用途冲突即报错**：
+
+| 使用方式 | 未声明 | `as_library()` | `as_program()` |
+|----------|--------|----------------|----------------|
+| `pycp -m <pkg>`（解释执行） | 程序 | ❌ RuntimeError | 程序 |
+| `import <pkg>` | 库 | 库 | ❌ ImportError |
+| `--emit-cpp -m <pkg>`（AOT） | 库（打印 note） | 库 | 程序（生成可执行文件） |
+
+**程序入口**为清单里的 `func main(argv)`：`argv` 同 `pycp.argv`，返回值经 `__integer__` 宽松转换后作为**进程退出码**（不写 `return` 即 0）。
+
+**`__name__` 语义**：作为程序执行时固定为 `"__main__"` 且**只读**（清单里赋值会抛 `AttributeError`）；作为库导入时为模块名（默认包目录名，清单里可显式 `__name__ = "..."` 覆盖）。
+
+**包属性钩子**（仅包模块生效，普通模块保持原行为）：清单可定义 `__get_attribute__(name)` / `__set_attribute__(name, value)` / `__string__()` / `__raw_string__()`，钩子内用 `moduletools.this()` 取当前包模块对象（钩子有重入守卫，`moduletools.this()[name]` 不会递归）。
+
+**`moduletools` 工具库**（新增内置扩展，与 `io`/`pycp`/`classtools` 同构）：
+
+| API | 说明 |
+|-----|------|
+| `moduletools.this()` | 当前包模块对象 |
+| `moduletools.as_program()` / `as_library()` | 声明角色 |
+| `moduletools.role()` / `is_program()` / `is_library()` | 查询角色 |
+| `moduletools.Project()` | AOT 配置对象（见下） |
+
+**AOT 形态声明**：清单里的 `func __codegen__()` 在 `--emit-cpp` 期被求值一次（用独立 VM 执行清单顶层；清单既无 `__codegen__` 也未声明角色时完全不执行），返回 `moduletools.Project()`：
+
+```pycp
+func __codegen__() {
+	proj = moduletools.Project()
+	proj.set_executable_name("my_app")        // 可执行文件名 / CMake 目标名
+	proj["module_example.obj_a"].static()     // 子模块链接形态
+	proj["module_example.method_b"].shared()
+	return proj
+}
+```
+
+- 优先级：**命令行 > `__codegen__` > 默认**（`--compile-module:<name>=`、`--compile-modules=`）。
+- `__codegen__` 指定的 `static` 若因**被 ≥2 个链接目标引用**必须提升为 `shared`，则**报错中止**（附宿主演算明细），不静默改写脚本意图。
+- 库角色下写 `set_executable_name()` → **报错中止**（可执行名由入口项目决定）。
+- `--show-imports` 会额外打印 `Package: <pkg>  role=program|library  <- declared|default`。
+
+> `-m` 的默认角色与 AOT 不同（解释态默认程序、AOT 默认库），这是刻意设计：AOT 下"库"是更安全的默认，要生成可执行文件请显式 `as_program()`。
 
 ## 配置说明
 

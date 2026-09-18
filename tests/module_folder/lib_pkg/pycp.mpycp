@@ -1,0 +1,23 @@
+// 库角色的模块文件夹：不声明角色（被 import 时即库），可用 __name__ 自定义
+// 模块名，并可覆写包属性钩子（仅包模块生效）。
+import io
+import moduletools
+
+from util import ping
+
+__name__ = "CustomLibName"
+
+func helper(x) {
+	io.print("helper: " + x)
+}
+
+// 包属性钩子：仅包模块生效，且内部用 this()[name] 取真实值（重入守卫保证
+// 不会再次进入本钩子）。
+func __get_attribute__(name) {
+	io.print("hook get: " + name)
+	return moduletools.this()[name]
+}
+
+func __string__() {
+	return "LIBPKG<" + moduletools.this()["__name__"] + ">"
+}

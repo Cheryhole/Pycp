@@ -457,6 +457,15 @@ void Environment_Store(BC::Environment* env, const std::string& name,
 			if (it->second) Decref(it->second);
 			it->second = value;
 		} else {
+			// 新名字分支：同样要查绑定级只读（此前仅「已存在」分支校验，
+			// 导致宿主预先标记为只读、但尚未写入 globals 的名字——如入口
+			// 模块的 __name__ —— 可以被脚本覆盖）。
+			Module* owner = LookupGlobalsModule(env->globals);
+			if (owner != nullptr && owner->is_readonly_binding(name)) {
+				Decref(value);
+				throw AttributeError("cannot reassign read-only binding '" +
+				                     name + "'.");
+			}
 			(*env->globals)[name] = value;
 		}
 		return;

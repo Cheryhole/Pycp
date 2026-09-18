@@ -172,7 +172,9 @@ Module* call_module_init(NativeModuleInitFn init, const std::string& symbol,
 // 从确定的动态库路径加载模块（dlopen + 解析入口 + 调用 + 记录句柄）。
 // 调用方须先确认 path 存在。失败时已关闭句柄，不残留。
 Module* load_native_from_path(const std::string& path, const std::string& name) {
-	const std::string entry_symbol = std::string(Pycp::AOT_MODULE_INIT_PREFIX) + name;
+	// 与 AOT 生成端同源 sanitize（说明见 LoadLinkedModule）。
+	const std::string entry_symbol =
+		std::string(Pycp::AOT_MODULE_INIT_PREFIX) + Pycp::SanitizeModuleName(name);
 
 	void* handle = nullptr;
 #if defined(_WIN32)
@@ -231,7 +233,10 @@ Module* load_native_from_path(const std::string& path, const std::string& name) 
 }
 
 Module* LoadLinkedModule(const std::string& name) {
-	const std::string entry_symbol = std::string(Pycp::AOT_MODULE_INIT_PREFIX) + name;
+	// 与 AOT 生成端（PycpAot.cpp::module_init_symbol）同源 sanitize：
+	// 包内子模块名含 '.'（pkg.obj_a），而 C 标识符不允许点号。
+	const std::string entry_symbol =
+		std::string(Pycp::AOT_MODULE_INIT_PREFIX) + Pycp::SanitizeModuleName(name);
 
 	NativeModuleInitFn init = nullptr;
 #if defined(_WIN32)

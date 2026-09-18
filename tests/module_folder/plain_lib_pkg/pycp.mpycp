@@ -1,0 +1,8 @@
+// 普通库包：未声明角色、无 main、不改 __name__。
+// 用途：验证 `pycp -m <pkg>`（默认程序角色）缺少 main 时报 RuntimeError。
+import io
+import moduletools
+
+func helper(x) {
+	io.print("plain helper: " + x)
+}

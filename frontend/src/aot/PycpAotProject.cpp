@@ -121,7 +121,11 @@ bool EmitProject(
 	try {
 		// 组装项目描述（纯数据）。
 		ProjectSpec spec;
-		spec.name         = entry_name;
+		// 可执行名：脚本（__codegen__ 的 set_executable_name）优先，未指定
+		// 时沿用入口模块名。注意 spec.name 同时是 CMake project 名与依赖图
+		// 入口 token，唯一性由 PycpScriptCodegen 校验。
+		spec.name         = options.executable_name.empty()
+		                        ? entry_name : options.executable_name;
 		spec.output_dir   = output_dir;
 		spec.source_pycp  = source_pycp;
 		spec.pycp_version = Pycp::PYCP_VERSION;
@@ -165,13 +169,23 @@ bool EmitProject(
 		}
 
 		// 6) 模块形态决策（不动点：被 ≥2 个链接目标引用的 static 提升 shared）。
+		//    脚本（__codegen__）显式指定的形态并入 overrides，命令行优先；
+		//    并把脚本指定过的名字登记为 strict —— 它们不允许被静默提升。
+		std::map<std::string, ModuleKind> overrides = module_overrides;
+		for (const auto& kv : options.script_kinds) {
+			if (overrides.find(kv.first) == overrides.end()) {
+				overrides[kv.first] = kv.second;
+			}
+		}
 		ModulePlan plan = PlanModuleKinds(
 			all_names, deps, entry_name, options.default_module_kind,
-			module_overrides, err);
+			overrides, options.strict_names, err);
+		if (err != nullptr && !err->empty()) return false;
 
 		// 6b) 翻译字节码 -> C++ 源码（全模块）。需在形态决策之后进行：
 		//     对 kShared 依赖不生成链接拉入桩（其符号在独立 DLL 中）。
-		auto sources = Pycp::AOT::EmitCppAll(modules, entry_name, &plan.kinds);
+		auto sources = Pycp::AOT::EmitCppAll(modules, entry_name, &plan.kinds,
+		                                     options.program_entry);
 
 		// 7) 内置扩展分组：无覆盖时默认跟随 runtime_link。
 		for (const std::string& b : spec.sdk.builtin_modules) {

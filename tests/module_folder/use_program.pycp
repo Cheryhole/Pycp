@@ -1,0 +1,5 @@
+// 用途错误用例：program 角色的包不可被 import（应为 ImportError）。
+import io
+import prog_pkg
+
+io.print("SHOULD NOT REACH HERE")

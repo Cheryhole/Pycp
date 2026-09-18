@@ -1,49 +1,66 @@
 /*
-使用 pycp -m/--module <folder_name> 执行模块
-默认直接执行文件夹下 pycp.mpycp 文件
-或在别的 pycp 文件中 import <folder_name>
+模块文件夹（package）示例：一个目录即一个模块，pycp.mpycp 是清单。
+
+用法：
+	pycp -m module_example      // 作为程序直接执行（调用清单的 main(argv)）
+	import module_example       // 作为库导入（module_example.__name__ 为模块名）
+
+角色：
+	moduletools.as_program() / as_library() 显式声明；未声明时——`-m` 直接
+	执行按「程序」、被 import 按「库」、AOT（--emit-cpp）默认按「库」。
+	声明与用途冲突即报错（program 不可被 import；library 无 main）。
 */
 
 import io
 import pycp
-// 新增 moduletools 模块
+// 新增 moduletools 模块：this() 取当前包模块对象，as_* 声明角色，
+// Project() 供 __codegen__ 声明 AOT 链接形态。
 import moduletools
-// moduletools.this 为该模块对象自己
 
-// 可以直接使用 import PycpTestModule.objA，类似 Python
+// 包内子文件即子模块（点号全名 module_example.obj_a），可直接 from 导入。
 from obj_a import objA
+from method_b import a_implemented_method
 
-// 模块的配置文件
+moduletools.as_program()
 
-__name__ = "PycpTestModule"
-
-// 可以重写模块的方法
-func __get_attribute__(name){
+// 可以重写模块的属性钩子（仅包模块生效；钩子内 this()[name] 走原生路径）
+func __get_attribute__(name) {
 	io.print("get attribute: " + name)
-	v = moduletools.this()[name]
-	return v
+	return moduletools.this()[name]
 }
 
-// 使用 module.a = xxx 时便可以使用 __set_attribute__ 方法
-func __set_attribute__(name, value){
-	io.print("set attribute: " + name + " = " + value)
+// 使用 module.a = xxx 时便会调用本方法
+func __set_attribute__(name, value) {
+	io.print("set attribute: " + name)
 	return None
 }
 
-func __string__(){
-	// 也可以使用 moduletools.this()["__name__"]
-	return __name__
+func __string__() {
+	// 也可以用 moduletools.this()["__name__"]
+	return "PycpTestModule<" + moduletools.this()["__name__"] + ">"
 }
 
-// 指定 Codegen 时，编译链接状态
-// 优先级低于命令行指定
-// 如遇 static/shared 冲突，应报错
-func __codegen__(){
+// 指定 Codegen 时的编译链接状态
+// 优先级低于命令行指定；如遇 static/shared 冲突（如被多个链接目标引用）
+// 按约定报错中止，而非静默提升。
+func __codegen__() {
 	proj = moduletools.Project()
 	// 编译完可执行文件名称
 	proj.set_executable_name("ptm_codegen")
-	proj["obj_a"].static()
-	proj["method_b"].shared()
+	// 子模块使用点号全名
+	proj["module_example.obj_a"].static()
+	proj["module_example.method_b"].shared()
 
 	return proj // 生成格式对象
+}
+
+// 程序角色的入口：argv 同 pycp.argv；返回值经 __integer__ 作为进程退出码。
+func main(argv) {
+	io.print("PycpTestModule main()")
+	io.print(argv)
+	b = objA()
+	b.method1("hello from main")
+	a_implemented_method(42)
+	a_implemented_method("a string")
+	return 0
 }

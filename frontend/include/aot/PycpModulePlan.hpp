@@ -31,6 +31,7 @@
 #include "aot/PycpProjectSpec.hpp" // ModuleKind
 
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -49,13 +50,19 @@ struct ModulePlan {
 //   entry        : 入口模块名（恒编进主程序，从不提升为 shared）
 //   default_kind : 来自 --compile-modules 的全局默认
 //   overrides    : 来自 --compile-module:<name> 的按模块覆盖
-//   err          : 输出参数（当前无失败路径，恒空；保留供未来冲突校验）
+//                  （含 __codegen__ 指定的形态，命令行优先）
+//   strict_names : 由包清单 __codegen__ 显式指定过形态的模块名。这些模块
+//                  若因「被 ≥2 个链接目标引用」必须提升为 shared，则【报错
+//                  中止】而非静默提升（用户约定：脚本的显式意图不得被
+//                  静默改写；命令行指定的覆盖仍按既有行为提升并标注原因）。
+//   err          : 输出参数（冲突中止时填可操作原因，plan 内容无效）
 ModulePlan PlanModuleKinds(
 	const std::vector<std::string>& modules,
 	const std::map<std::string, std::vector<std::string>>& deps,
 	const std::string& entry,
 	ModuleKind default_kind,
 	const std::map<std::string, ModuleKind>& overrides,
+	const std::set<std::string>& strict_names,
 	std::string* err);
 
 } // namespace Pycp::AOT

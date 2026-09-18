@@ -1,0 +1,9 @@
+// 用途错误用例：库角色（AOT 默认）下指定可执行名 → 转译期报错中止。
+import io
+import moduletools
+
+func __codegen__() {
+	proj = moduletools.Project()
+	proj.set_executable_name("badgen_app")
+	return proj
+}

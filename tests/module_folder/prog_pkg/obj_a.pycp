@@ -1,0 +1,7 @@
+import io
+
+class objA {
+	func method1(self, v = "default") {
+		io.print("objA.method1: " + v)
+	}
+}

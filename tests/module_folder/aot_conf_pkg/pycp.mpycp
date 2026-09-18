@@ -1,0 +1,21 @@
+// 形态冲突用例：__codegen__ 把 obj_a 指定为 static，但它同时被主程序与
+// 动态模块 lib_b 引用（≥2 个链接目标）→ 必须报错中止，而非静默提升。
+import io
+import moduletools
+
+import obj_a
+import lib_b
+
+moduletools.as_program()
+
+func __codegen__() {
+	proj = moduletools.Project()
+	proj["aot_conf_pkg.obj_a"].static()
+	proj["aot_conf_pkg.lib_b"].shared()
+	return proj
+}
+
+func main(argv) {
+	io.print("conf main")
+	return 0
+}

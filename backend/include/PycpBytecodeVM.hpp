@@ -35,6 +35,7 @@
 
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -94,6 +95,22 @@ public:
 		return global_env_->globals;
 	}
 
+	// 入口模块对象（其 namespace 即顶层 globals）。宿主（PycpMain）据此
+	// 注入 / 冻结入口 __name__，或标记入口为包模块。Borrowed。
+	Pycp::Module* get_entry_module() const { return entry_mod_; }
+
+	// 登记「包名集合」：这些模块名对应模块文件夹（package）的清单，
+	// 其模块对象会被标记为包模块（启用脚本属性钩子 / 下标协议），
+	// 且执行其顶层期间成为 moduletools.this() 的返回对象。
+	// 须在 run() 之前调用。
+	void set_package_names(const std::set<std::string>& names) {
+		package_names_ = names;
+	}
+
+	// 程序角色：入口 __name__ 注入 "__main__" 并冻结为只读绑定。
+	// 须在 run() 之前调用（仅 `pycp -m <pkg>` 的程序角色启用）。
+	void freeze_entry_name_main();
+
 private:
 	Module* module_;
 	std::shared_ptr<Environment> global_env_; // 持有 globals map
@@ -117,6 +134,9 @@ private:
 	// 由 exec_module 提交、本 VM 负责释放的 Module 列表（REPL 场景）。
 	// 这些 Module 被 BytecodeFunction 闭包引用，须存活至 VM 析构。
 	std::vector<Module*> owned_modules_;
+
+	// 包名集合（见 set_package_names）：模块名命中即视为包模块。
+	std::set<std::string> package_names_;
 
 	// 执行单个代码对象（共享执行循环核心）
 	Object* execute(CodeObject* co,

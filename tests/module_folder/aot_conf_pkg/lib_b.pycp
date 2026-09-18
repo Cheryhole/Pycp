@@ -1,0 +1,7 @@
+import io
+
+import obj_a
+
+func b() {
+	io.print("b")
+}

@@ -9,6 +9,7 @@
 // =============================================================
 
 #include <cstdint>
+#include <string>
 
 namespace Pycp {
 
@@ -22,6 +23,27 @@ constexpr const char* EXT_PYCP  = ".pycp";    // Pycp 源文件
 constexpr const char* EXT_CPYCP = ".cpycp";   // 序列化字节码
 constexpr const char* EXT_CPP   = ".cpp";     // AOT 生成的 C++ 源码
 constexpr const char* EXT_PP_PYCP = ".pp.pycp"; // 预处理输出的源文件
+
+// 模块文件夹（package）的清单文件名：目录下存在该文件即为「包」。
+// 不新增后缀：清单本身是普通 .pycp 源（可被既有解析/预处理链路处理），
+// 只是文件名固定，便于「目录 -> 入口」的解析。
+constexpr const char* MODULE_MANIFEST_FILENAME = "pycp.mpycp";
+// 包内子模块的限定名分隔符（对齐 Python 的 pkg.sub）。
+constexpr char MODULE_NAME_SEPARATOR = '.';
+
+// 模块名 -> 可安全用于 C 标识符的名字（'.' 替换为 "__"）。
+// 用途：AOT 生成的模块初始化符号 `PycpModule_<sanitized>` 与 CMake target
+// 名。模块名本身（import 缓存键 / __name__ / CLI 覆盖键）保持原名，
+// 仅生成层做映射；符号拼接与 dlsym 必须共用本函数，否则对不上。
+inline std::string SanitizeModuleName(const std::string& name) {
+	std::string out;
+	out.reserve(name.size());
+	for (char c : name) {
+		if (c == MODULE_NAME_SEPARATOR) out += "__";
+		else out += c;
+	}
+	return out;
+}
 
 // =============================================================
 // AOT 输出命名约定

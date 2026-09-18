@@ -20,6 +20,7 @@
 #include "PycpBytecode.hpp"
 
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -42,16 +43,25 @@ struct ImportResolution {
 
 class ModuleLoader {
 public:
-	// 加载入口文件及其全部 import 依赖。
-	//   entry_path  : 入口 .pycp 文件路径（相对或绝对均可）
+	// 加载入口及其全部 import 依赖。
+	//   entry_path  : 入口路径。可以是 .pycp 文件，也可以是【模块文件夹】
+	//                 （目录下含 pycp.mpycp 清单，此时入口即该清单）。
 	//   resolutions : 可选输出；按 import 语句出现的模块名逐条记录
 	//                 kTranslated / kUnresolved（按名去重，稳定顺序），
 	//                 供 AOT 闭包校验与 --show-imports 诊断使用。
-	// 返回按「模块名」索引的编译结果表（含入口模块，入口模块名为 ""）。
+	//   package_names: 可选输出；本次加载中「包对象」的模块名集合
+	//                 （清单模块名，如 "pkg"；嵌套包为 "pkg.sub"）。
+	//                 供宿主标记包模块（启用脚本属性钩子）。
+	//
+	// 模块名规则：包内子模块使用点号全名（pkg.obj_a，对齐 Python），
+	// 包外模块沿用 basename。import 语句的名字会被就地改写为限定名，
+	// 使 VM 的 LOAD_MODULE / AOT 的模块表按同一套键寻址。
+	// 返回按「模块名」索引的编译结果表（含入口模块）。
 	// 任何模块找不到 / 语法错误时抛 Pycp::Exception。
 	static std::map<std::string, BC::Module> load_all(
 		const std::string& entry_path,
-		std::vector<ImportResolution>* resolutions = nullptr);
+		std::vector<ImportResolution>* resolutions = nullptr,
+		std::set<std::string>* package_names = nullptr);
 
 	// 编译单个源文件为 BC::Module（parsef + Codegen::Compile）。
 	// 供 load_all 内部使用，也供 PycpMain 复用。
