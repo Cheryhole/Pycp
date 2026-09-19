@@ -387,6 +387,11 @@ struct EntryResolution {
 	std::string entry_file;
 	std::string entry_name;
 	bool is_package = false;   // 入口是否为模块文件夹
+	// 命中包所在目录（报错文案定位用）；字面文件入口为空。
+	std::string found_dir;
+	// `-m <name>` 按名查找未命中：tried_paths 为尝试过的候选清单路径。
+	bool name_lookup_miss = false;
+	std::vector<std::string> tried_paths;
 };
 
 // 去掉路径结尾的目录分隔符（便于取目录自身的名字）。
@@ -396,7 +401,37 @@ std::string trim_trailing_separators(const std::string& path) {
 	return p;
 }
 
-EntryResolution resolve_entry_path(const std::string& input) {
+// 按名查找模块文件夹（包）：候选目录顺序 cwd -> exe 同级 stdlib/。
+// 点号名映射为目录层级（a.b -> a/b），与运行期的模块名 -> 路径规则一致。
+//   name       : 包名（可含点号，如 a.b）
+//   candidates : 非空时回填全部尝试过的候选清单路径（供报错展示）
+// 返回命中的清单路径；空字符串表示未找到。
+std::string find_package_manifest(const std::string& name,
+                                  std::vector<std::string>* candidates) {
+	namespace fs = std::filesystem;
+	std::string rel = name;
+	for (char& c : rel) {
+		if (c == Pycp::MODULE_NAME_SEPARATOR) c = '/';
+	}
+	const std::string tail = rel + "/" + Pycp::MODULE_MANIFEST_FILENAME;
+
+	std::vector<std::string> dirs;
+	dirs.push_back(".");   // 当前工作目录（本地优先，可覆盖 stdlib）
+	const std::string& stdlib = Pycp::GetStdlibDir();
+	if (!stdlib.empty()) dirs.push_back(stdlib);
+
+	std::error_code ec;
+	for (const std::string& dir : dirs) {
+		const std::string path =
+			(dir == ".") ? ("./" + tail) : (dir + "/" + tail);
+		if (candidates != nullptr) candidates->push_back(path);
+		if (fs::is_regular_file(path, ec)) return path;
+	}
+	return "";
+}
+
+EntryResolution resolve_entry_path(const std::string& input,
+                                   bool allow_name_lookup) {
 	EntryResolution r;
 	namespace fs = std::filesystem;
 	std::error_code ec;
@@ -404,6 +439,7 @@ EntryResolution resolve_entry_path(const std::string& input) {
 		const std::string dir = trim_trailing_separators(input);
 		r.entry_file = (fs::path(dir) / Pycp::MODULE_MANIFEST_FILENAME).string();
 		r.entry_name = fs::path(dir).filename().string();
+		r.found_dir = dir;
 		r.is_package = true;
 		return r;
 	}
@@ -415,13 +451,64 @@ EntryResolution resolve_entry_path(const std::string& input) {
 		r.entry_file = dir;
 		r.entry_name = parent.empty() ? fs::path(dir).filename().string()
 		                              : parent.filename().string();
+		r.found_dir = parent.empty() ? std::string(".") : parent.string();
 		r.is_package = true;
 		return r;
+	}
+	if (!fs::exists(input, ec) && allow_name_lookup) {
+		// `-m <name>`：字面路径不存在时按名查找模块文件夹。
+		// 仅 -m 启用（普通用法仍要求写路径，行为零变更）。
+		std::vector<std::string> tried;
+		const std::string manifest = find_package_manifest(input, &tried);
+		if (!manifest.empty()) {
+			r.entry_file = manifest;
+			// entry_name 用【用户原始名】（点号保留）：包内子模块的限定名
+			// （pkg.sub）与 package_names / AOT 目录布局都以此为准。
+			r.entry_name = input;
+			r.found_dir = fs::path(manifest).parent_path().string();
+			r.is_package = true;
+			r.name_lookup_miss = false;
+			r.tried_paths = tried;
+			return r;
+		}
+		r.tried_paths = tried;
+		r.name_lookup_miss = true;
 	}
 	r.entry_file = input;
 	r.entry_name = entry_module_name(input);
 	r.is_package = false;
 	return r;
+}
+
+// 校验 `-m/--module` 的入口解析结果，失败时打印可操作错误并返回 false。
+//   ctx_hint : 追加上下文提示（如 --emit-cpp 需要源码清单），可为 nullptr。
+bool validate_module_entry(const EntryResolution& er, const std::string& input,
+                           const char* ctx_hint) {
+	auto list_tried = [&]() {
+		if (er.tried_paths.empty()) return;
+		std::cerr << "  已尝试的候选：\n";
+		for (const std::string& p : er.tried_paths) {
+			std::cerr << "    " << p << "\n";
+		}
+	};
+	if (!er.is_package) {
+		std::cerr << "Error: -m/--module expects a module folder (a directory "
+		             "containing " << Pycp::MODULE_MANIFEST_FILENAME
+		          << "): '" << input << "' 未找到。\n";
+		list_tried();
+		std::cerr << "  提示：-m 只接受模块文件夹；普通模块请写成文件路径"
+		             "（如 " << "pycp foo.pycp" << "）。\n";
+		if (ctx_hint != nullptr) std::cerr << "  提示：" << ctx_hint << "\n";
+		return false;
+	}
+	std::error_code ec;
+	if (!std::filesystem::is_regular_file(er.entry_file, ec)) {
+		std::cerr << "Error: module folder '" << er.found_dir << "' has no "
+		          << Pycp::MODULE_MANIFEST_FILENAME << " manifest。\n";
+		if (ctx_hint != nullptr) std::cerr << "  提示：" << ctx_hint << "\n";
+		return false;
+	}
+	return true;
 }
 
 // 计算文件 basename（去扩展名），用于从入口路径得到入口模块名。
@@ -460,7 +547,8 @@ int execute_program(std::map<std::string, Pycp::BC::Module>& modules,
                     const std::string& entry_name,
                     const std::set<std::string>& package_names,
                     bool module_mode,
-                    const std::vector<std::string>& cli_argv) {
+                    const std::vector<std::string>& cli_argv,
+                    const std::string& entry_dir = std::string()) {
 	// 构建模块注册表（模块名 -> Module*），供 VM 的 LOAD_MODULE 使用。
 	std::map<std::string, Pycp::BC::Module*> registry;
 	for (auto& kv : modules) {
@@ -488,12 +576,18 @@ int execute_program(std::map<std::string, Pycp::BC::Module>& modules,
 	if (!as_program) return 0;
 
 	// ---- 角色校验 ----
+	// 报错统一说明「这是库 / 没有程序入口，不可运行」，并给出两条出路：
+	// 用 import 引用，或定义 main(argv) + as_program() 使其可运行。
+	const std::string where =
+		entry_dir.empty() ? std::string()
+		                  : ("\n  包目录：" + entry_dir);
 	if (Pycp::GetPackageRole() == Pycp::PackageRole::kLibrary) {
 		throw Pycp::RuntimeError(
-			"module '" + entry_name + "' is declared as a library "
-			"(moduletools.as_library()) and has no program entry; use "
-			"'import " + entry_name + "' instead, or declare "
-			"moduletools.as_program().");
+			"'" + entry_name + "' 是库（清单声明了 moduletools.as_library()），"
+			"不可作为程序运行。" + where +
+			"\n  - 作为库使用：import " + entry_name +
+			"\n  - 改为可运行：在 " + Pycp::MODULE_MANIFEST_FILENAME +
+			" 中定义 func main(argv) 并调用 moduletools.as_program()。");
 	}
 
 	// ---- 调用程序入口 main(argv) ----
@@ -501,9 +595,12 @@ int execute_program(std::map<std::string, Pycp::BC::Module>& modules,
 	auto it = ns->find("main");
 	if (it == ns->end() || it->second == nullptr ||
 	    !it->second->is_type("Function")) {
-		throw Pycp::RuntimeError("program '" + entry_name +
-			"' does not define func main(argv) in its manifest (" +
-			Pycp::MODULE_MANIFEST_FILENAME + ").");
+		throw Pycp::RuntimeError(
+			"'" + entry_name + "' 没有程序入口：清单中未定义 func main(argv)，"
+			"不可作为程序运行。" + where +
+			"\n  - 作为库使用：import " + entry_name +
+			"\n  - 改为可运行：在 " + Pycp::MODULE_MANIFEST_FILENAME +
+			" 中定义 func main(argv) 并调用 moduletools.as_program()。");
 	}
 
 	// main 只接收【一个】argv（内容同 pycp.argv），故把命令行参数打包成
@@ -841,11 +938,12 @@ int main(int argc, char** argv) {
 			std::vector<Pycp::ImportResolution> resolutions;
 			// 入口解析同样支持模块文件夹：-m 与 --emit-cpp 可组合，目录入口
 			// 的清单即被转译的入口模块。
-			const EntryResolution er_aot = resolve_entry_path(opt.input_file);
-			if (opt.module_mode && !er_aot.is_package) {
-				std::cerr << "Error: -m/--module expects a module folder: <dir> "
-				             "containing " << Pycp::MODULE_MANIFEST_FILENAME
-				          << " (got '" << opt.input_file << "')." << std::endl;
+			const EntryResolution er_aot =
+				resolve_entry_path(opt.input_file, opt.module_mode);
+			if (opt.module_mode &&
+			    !validate_module_entry(er_aot, opt.input_file,
+			                           "AOT 转译需要包的源码（"
+			                           "pycp.mpycp 清单文件）。")) {
 				ret = 2;
 				Pycp::Finalize();
 				return ret;
@@ -1068,27 +1166,15 @@ int main(int argc, char** argv) {
 			cli_argv.insert(cli_argv.end(), opt.script_args.begin(),
 			                opt.script_args.end());
 			Pycp::SetArgv(cli_argv);
-			// 入口解析：模块文件夹（目录 / 清单）或普通源文件。
-			const EntryResolution er = resolve_entry_path(opt.input_file);
-			if (opt.module_mode) {
-				// -m 只接受模块文件夹；给出可操作的报错而非「打不开文件」。
-				if (!er.is_package) {
-					std::cerr << "Error: -m/--module expects a module folder: <dir> "
-					             "containing " << Pycp::MODULE_MANIFEST_FILENAME
-					          << " (got '" << opt.input_file << "')." << std::endl;
-					ret = 2;
-					Pycp::Finalize();
-					return ret;
-				}
-				std::error_code ec;
-				if (!std::filesystem::is_regular_file(er.entry_file, ec)) {
-					std::cerr << "Error: module folder '" << opt.input_file
-					          << "' has no " << Pycp::MODULE_MANIFEST_FILENAME
-					          << " manifest." << std::endl;
-					ret = 2;
-					Pycp::Finalize();
-					return ret;
-				}
+			// 入口解析：模块文件夹（目录 / 清单 / `-m <name>` 按名查找）或
+			// 普通源文件。
+			const EntryResolution er =
+				resolve_entry_path(opt.input_file, opt.module_mode);
+			if (opt.module_mode &&
+			    !validate_module_entry(er, opt.input_file, nullptr)) {
+				ret = 2;
+				Pycp::Finalize();
+				return ret;
 			}
 			if (has_suffix(er.entry_file, Pycp::EXT_CPYCP)) {
 				std::vector<uint8_t> bytes = read_file_bytes(er.entry_file);
@@ -1101,7 +1187,7 @@ int main(int argc, char** argv) {
 				std::map<std::string, Pycp::BC::Module> modules =
 					Pycp::ModuleLoader::load_all(er.entry_file, nullptr, &package_names);
 				ret = execute_program(modules, er.entry_name, package_names,
-				                      opt.module_mode, cli_argv);
+				                      opt.module_mode, cli_argv, er.found_dir);
 			}
 		}
 

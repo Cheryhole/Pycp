@@ -18,6 +18,9 @@
 #      子模块 .gen.cpp），并一起 cmake 编译运行（包钩子与解释态一致）。
 #   7) .cpycp 与运行期解析：脚本编译为 .cpycp 后删源码，import 全靠运行期
 #      （目录即包 + 点号子模块）；仅存在 .cpycp 的模块也能被 import。
+#   8) `pycp -m <name>` 按名查找包：cwd → exe 同级 stdlib/（沙箱 dist 内放
+#      夹具包）；程序角色可直接运行并传递退出码，库角色给出「是库、不可
+#      运行」的明确报错，未命中列出候选路径，cwd 同名包优先于 stdlib。
 #
 # 用法：bash tests/module_folder/run.sh
 # =====================================================================
@@ -91,7 +94,7 @@ check "program 被 import → ImportError" 1 \
 	"ImportError|declared as a program" \
 	-- "$PYCP" use_program.pycp
 check "-m 一个未声明程序的包 → RuntimeError（无 main）" 1 \
-	"RuntimeError|does not define func main(argv)" \
+	"RuntimeError|没有程序入口|不可作为程序运行|import plain_lib_pkg" \
 	-- "$PYCP" -m plain_lib_pkg
 check "入口 __name__ 可写（清单可覆盖为自定义模块名）" 0 \
 	"name=RenamedByManifest" \
@@ -195,6 +198,74 @@ if [[ -d "$DIST/include" && -d "$DIST/lib" ]]; then
 	check_in "仅 .cpycp 存在的模块可被 import" 0 \
 		"mod_only.ping" \
 		"$WORK" -- "$PYCP" use_mod_only.pycp
+
+	echo "== 8) pycp -m 按名查找 stdlib 包 =="
+	if [[ -d "$DIST/include" && -d "$DIST/lib" ]]; then
+		# 沙箱 dist：可搬迁（pycp + libPycpRuntime.so + stdlib/），
+		# 这样 GetStdlibDir() 指向沙箱内的 stdlib，不污染 build/stdlib。
+		rm -rf "$WORK/dist"
+		mkdir -p "$WORK/dist"
+		cp -r "$DIST"/. "$WORK/dist"/
+		mkdir -p "$WORK/dist/stdlib/stdpkg" "$WORK/dist/stdlib/stdlib_lib"
+
+		cat > "$WORK/dist/stdlib/stdpkg/pycp.mpycp" <<'EOF'
+import io
+import moduletools
+
+moduletools.as_program()
+
+func main(argv) {
+	io.print("STDPKG MAIN")
+	io.print(argv)
+	return 5
+}
+EOF
+
+		cat > "$WORK/dist/stdlib/stdlib_lib/pycp.mpycp" <<'EOF'
+import io
+import moduletools
+
+func helper() {
+	io.print("stdlib_lib.helper")
+}
+EOF
+
+		check_in "stdlib 包可直接运行（-m 按名查找 + main 退出码）" 5 \
+			'STDPKG MAIN|Fixed["stdpkg", "a", "b"]' \
+			"$WORK" -- "$WORK/dist/pycp" -m stdpkg a b
+
+		check_in "stdlib 里的库 → 明确报错「是库、不可运行」" 1 \
+			"没有程序入口|不可作为程序运行|import stdlib_lib|main(argv)" \
+			"$WORK" -- "$WORK/dist/pycp" -m stdlib_lib
+
+		check_in "-m 未命中 → 列出候选路径与用法提示" 2 \
+			"未找到|./no_such_pkg/pycp.mpycp|只接受模块文件夹" \
+			"$WORK" -- "$WORK/dist/pycp" -m no_such_pkg
+
+		# cwd 同名包优先于 stdlib（本地优先）
+		mkdir -p "$WORK/stdpkg"
+		cat > "$WORK/stdpkg/pycp.mpycp" <<'EOF'
+import io
+import moduletools
+
+moduletools.as_program()
+
+func main(argv) {
+	io.print("LOCAL STDPKG")
+	return 0
+}
+EOF
+		check_in "cwd 同名包覆盖 stdlib（本地优先）" 0 \
+			"LOCAL STDPKG" \
+			"$WORK" -- "$WORK/dist/pycp" -m stdpkg
+
+		check_in "--emit-cpp 也可从 stdlib 找到包并转译" 0 \
+			"Package: stdpkg|role=program" \
+			"$WORK" -- "$WORK/dist/pycp" --emit-cpp -m stdpkg \
+			-o "$WORK/stdpkg_aot" --show-imports
+	else
+		echo "[SKIP] 缺少 $DIST（先执行 cmake --build build --target pycp-dist）"
+	fi
 else
 	echo "[SKIP] 缺少 $DIST（先执行 cmake --build build --target pycp-dist）"
 fi

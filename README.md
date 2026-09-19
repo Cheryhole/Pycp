@@ -552,12 +552,22 @@ module_example/
 
 ```bash
 # 1) 作为程序直接执行：默认程序角色，入口为清单的 main(argv)
-pycp -m module_example arg1 arg2      # 也可写 --module
+pycp -m module_example arg1 arg2      # 也可写 --module；也接受路径（-m ./dir、-m dir/pycp.mpycp）
 
 # 2) 作为库被导入（在任意 .pycp 中）
 import module_example                 # module_example.__name__ 为模块名
 from module_example import objA       # 子模块同理
 ```
+
+`-m` 的目标既可以是路径，也可以是**包名**：字面路径不存在时按 `cwd → 可执行文件同级 stdlib/`
+查找 `<name>/pycp.mpycp`（点号名映射为目录层级，如 `a.b` → `a/b`），因此可以像
+`python -m` 一样直接运行标准库里的包；`cwd` 下的同名包优先，便于本地覆盖 stdlib。
+
+- `-m` 只接受**模块文件夹**；普通模块仍须写成文件路径（如 `pycp foo.pycp`）。
+- 找不到时的报错会列出尝试过的候选路径。
+- 找到的包若是**库**（显式 `as_library()`，或清单没有 `main`），报错会点明「是库、不可运行」
+  并给出两条出路：用 `import <name>` 引用，或在清单中定义 `func main(argv)` 并调用
+  `moduletools.as_program()` 使其可运行。
 
 **角色区分**：清单里用 `moduletools.as_program()` / `as_library()` 显式声明；未声明时按下表推断，**声明与用途冲突即报错**：
 
