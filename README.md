@@ -569,7 +569,7 @@ from module_example import objA       # 子模块同理
 
 **程序入口**为清单里的 `func main(argv)`：`argv` 同 `pycp.argv`，返回值经 `__integer__` 宽松转换后作为**进程退出码**（不写 `return` 即 0）。
 
-**`__name__` 语义**：作为程序执行时固定为 `"__main__"` 且**只读**（清单里赋值会抛 `AttributeError`）；作为库导入时为模块名（默认包目录名，清单里可显式 `__name__ = "..."` 覆盖）。
+**`__name__` 语义**：作为程序执行时默认注入 `"__main__"`，作为库导入时为模块名（默认包目录名）；两者都**可写**——清单里可用 `__name__ = "..."` 覆盖为自定义模块名。只读只由 `@readonly` 装饰器显式声明产生。
 
 **包属性钩子**（仅包模块生效，普通模块保持原行为）：清单可定义 `__get_attribute__(name)` / `__set_attribute__(name, value)` / `__string__()` / `__raw_string__()`，钩子内用 `moduletools.this()` 取当前包模块对象（钩子有重入守卫，`moduletools.this()[name]` 不会递归）。
 
@@ -600,6 +600,23 @@ func __codegen__() {
 - `--show-imports` 会额外打印 `Package: <pkg>  role=program|library  <- declared|default`。
 
 > `-m` 的默认角色与 AOT 不同（解释态默认程序、AOT 默认库），这是刻意设计：AOT 下"库"是更安全的默认，要生成可执行文件请显式 `as_program()`。
+
+**运行期查找与 `.cpycp`**：`import` 在运行期按下列顺序探测每个候选目录（与编译期规则一致）：
+`<name>/pycp.mpycp`（模块文件夹）→ `<name>.pycp`（源码）→ `<name>.cpycp`（字节码）→ `<name>.so`（原生扩展）。
+点号全名会映射为目录层级（`pkg.sub` → `pkg/sub`），因此包内子模块可按需加载——这也是 `pycp foo.cpycp`（无编译期依赖收集）仍能 `import` 到包的原因。
+
+`.cpycp` 与 `.pycp` **语义等价**：`.pycp` 执行时同样要先编译为字节码再交给 VM，`.cpycp` 只是省去了这一步（预先 `pycp -c` 的产物）。`.cpycp` 的反序列化由运行时自身完成，**不依赖前端解析器**，因此 AOT 生成的独立程序同样能加载 `.cpycp` 模块。
+
+**AOT 生成的目录布局**：被导入的包会集中生成到 `<pkg_name>/` 子目录，与磁盘上的包布局同构，并由同一份 `CMakeLists.txt` 一起编译：
+
+```
+<生成目录>/
+├── CMakeLists.txt
+├── __pycp_main.gen.cpp        # 入口
+└── lib_pkg/                   # 被 import 的模块文件夹
+    ├── pycp.gen.cpp           # 包清单
+    └── util.gen.cpp           # 子模块 lib_pkg.util
+```
 
 ## 配置说明
 

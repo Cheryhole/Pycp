@@ -1,0 +1,4 @@
+// 导入仅以 .cpycp 形式存在的模块（运行期探测命中字节码模块）。
+import mod_only
+
+mod_only.ping()

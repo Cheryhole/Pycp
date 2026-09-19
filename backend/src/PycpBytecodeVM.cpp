@@ -298,17 +298,23 @@ Pycp::Module* VM::load_module(const std::string& name) {
 	// 未注册源码编译器钩子，对仅有 .pycp 源码的模块会在此全部落空）。
 	Module* src = nullptr;
 	std::string diag;
-	Pycp::Module* imported = Pycp::ImportModule(name, &src, &diag);
+	// src_is_package：命中形式是「模块文件夹清单」（运行期探测所得）。
+	// 登记到 package_names_，使后续按「包名集合」的判定路径（包模块标记、
+	// 角色校验）对运行期加载的包同样生效。
+	bool src_is_package = false;
+	Pycp::Module* imported =
+		Pycp::ImportModule(name, &src, &diag, &src_is_package);
 	if (imported != nullptr) {
 		return imported;
 	}
 
-	// 命中 .pycp 源码模块：已编译为字节码，尚未执行顶层。
+	// 命中源码 / 字节码 / 包清单模块：已备好字节码，尚未执行顶层。
 	// 接管其生命周期——registry 中的模块由调用方持有，而源码模块是本次
-	// import 临时编译所得，须加入 owned_modules_ 才能被 ~VM 清理
-	// runtime_consts 并释放。
+	// import 临时编译（或反序列化）所得，须加入 owned_modules_ 才能被 ~VM
+	// 清理 runtime_consts 并释放。
 	if (src != nullptr) {
 		owned_modules_.push_back(src);
+		if (src_is_package) package_names_.insert(name);
 		return load_from_bc_module(name, src);
 	}
 
@@ -323,13 +329,12 @@ Pycp::Module* VM::load_module(const std::string& name) {
 	return load_from_bc_module(name, mit->second);
 }
 
-// 程序角色：把入口 __name__ 固定为 "__main__" 并冻结为只读绑定。
+// 程序角色：把入口 __name__ 设为 "__main__"（可写）。
 //   与 AOT 入口（PycpAot.cpp 注入 __name__）保持同形，避免解释态「靠
-//   pycp.__name__ 回退」与 AOT「已注入 globals」两条路径在入口赋值
-//   __name__ 时行为分叉。
-//   只读经绑定级属性承载：Environment_Store（顶层赋值）与
-//   Module::__set_attribute__（module.__name__ = v）都会拦截。
-void VM::freeze_entry_name_main() {
+//   pycp.__name__ 回退」与 AOT「已注入 globals」两条路径不一致。
+//   __name__ **不是**只读绑定：包清单可写 `__name__ = "..."` 覆盖为
+//   自定义模块名；真正的只读只由 @readonly 装饰器显式声明产生。
+void VM::set_entry_name_main() {
 	if (entry_mod_ == nullptr) return;
 	auto* ns = entry_mod_->get_namespace();
 	auto it = ns->find("__name__");
@@ -339,7 +344,6 @@ void VM::freeze_entry_name_main() {
 	}
 	(*ns)["__name__"] = Pycp::String::FromCString("__main__");
 	entry_mod_->set_module_name("__main__");
-	entry_mod_->mark_readonly_binding("__name__");
 }
 
 // 执行字节码模块的顶层并构造其模块对象（registry 子模块与 .pycp 源码模块共用）。

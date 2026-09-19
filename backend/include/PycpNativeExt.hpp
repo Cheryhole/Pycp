@@ -82,14 +82,22 @@ Module* LoadLinkedModule(const std::string& name);
 
 // 单目录探测原语：仅在 dir 指定的单一目录下查找模块，不跨目录回退。
 //   dir 为空时表示当前工作目录。
-// 先找 <dir>/<name><suffix>（原生动态库，入口符号 PycpModule_<name>），
-// 未找到再找 <dir>/<name>.pycp（源码，经 SourceModuleCompiler 编译）。
+// 同一目录内的探测顺序（源码形态优先于原生扩展，包优先于同名文件）：
+//   ① <dir>/<name（点号转目录）>/pycp.mpycp  ：模块文件夹的清单
+//   ② <dir>/<name（点号转目录）>.pycp        ：源码（经 SourceModuleCompiler）
+//   ③ <dir>/<name（点号转目录）>.cpycp       ：已编译字节码（运行时自身
+//      反序列化，【不】依赖宿主编译器钩子，AOT 独立程序同样可用）
+//   ④ <dir>/<name><suffix>                   ：原生动态库（文件名用原点号名，
+//      与 AOT 产物的 OUTPUT_NAME 一致）
 //   返回非 nullptr          : 已初始化完成的模块对象（Owned）。
-//   返回 nullptr 且 *out_source 非 nullptr : 命中 .pycp 源码，已编译为
-//                            字节码但尚未执行顶层，交由 VM 完成执行。
+//   返回 nullptr 且 *out_source 非 nullptr : 命中源码 / 字节码 / 包清单，
+//                            已备好字节码但尚未执行顶层，交由 VM 完成执行。
 //   二者皆 nullptr          : 本目录下不存在该模块的任何形式。
+//   *out_source_is_package  : 命中形式是否为「模块文件夹清单」（供 VM 把该
+//                            模块标记为包模块，启用脚本属性钩子与角色校验）。
 Module* LoadNativeModuleFrom(const std::string& dir, const std::string& name,
-                             BC::Module** out_source = nullptr);
+                             BC::Module** out_source = nullptr,
+                             bool* out_source_is_package = nullptr);
 
 // 兼容旧入口：等价于按既有顺序（cwd -> search_dir -> stdlib）依次调用
 // LoadNativeModuleFrom。新代码应直接使用 LoadNativeModuleFrom 自行编排，

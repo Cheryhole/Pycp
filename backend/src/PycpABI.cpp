@@ -574,9 +574,10 @@ void SetModuleSearchDir(const std::string& dir) {
 // diagnostics 非空时，逐层记录未命中的候选，供 ImportError 展示。
 // =============================================================
 Module* ImportModule(const std::string& name, BC::Module** out_source,
-                     std::string* diagnostics) {
+                     std::string* diagnostics, bool* out_source_is_package) {
 	if (out_source != nullptr) *out_source = nullptr;
 	if (diagnostics != nullptr) diagnostics->clear();
+	if (out_source_is_package != nullptr) *out_source_is_package = false;
 
 	// 进程级缓存（跨 VM 实例、跨 AOT 调用共享）。
 	static std::map<std::string, Module*> g_import_cache;
@@ -602,20 +603,25 @@ Module* ImportModule(const std::string& name, BC::Module** out_source,
 	// kNative 命中原生动态库（*out 为已缓存的 Module*）。
 	enum class Probe { kMiss, kSource, kNative };
 
-	// 在单个候选目录内按「.pycp 源码 → 同名动态库」探测；未命中时把该层
-	// 记入 diagnostics，便于 ImportError 直接列出全部尝试过的候选。
+	// 在单个候选目录内按「包目录 → .pycp → .cpycp → 同名动态库」探测；
+	// 未命中时把该层记入 diagnostics，便于 ImportError 直接列出全部候选。
 	auto probe_dir = [&](const std::string& dir, const char* label,
 	                     Module** out) -> Probe {
-		Module* r = LoadNativeModuleFrom(dir, name, out_source);
+		bool is_pkg = false;
+		Module* r = LoadNativeModuleFrom(dir, name, out_source, &is_pkg);
 		if (r != nullptr) {
 			*out = cached(r);
 			return Probe::kNative;
 		}
-		if (source_hit()) return Probe::kSource;
+		if (source_hit()) {
+			if (out_source_is_package != nullptr) *out_source_is_package = is_pkg;
+			return Probe::kSource;
+		}
 		if (diagnostics != nullptr) {
 			const std::string shown = dir.empty() ? std::string("./") : dir;
 			*diagnostics += "\n  - " + std::string(label) + ": " + shown +
-			                name + Pycp::EXT_PYCP + " 或同名动态库均未找到";
+			                name + Pycp::EXT_PYCP + "/" + Pycp::EXT_CPYCP +
+			                " 或同名动态库均未找到";
 		}
 		return Probe::kMiss;
 	};

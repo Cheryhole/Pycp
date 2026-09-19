@@ -915,7 +915,9 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
                             const std::string& entry_name,
                             const std::vector<std::string>& deps = {},
                             const std::map<std::string, ModuleKind>* kinds = nullptr,
-                            bool program_entry = false) {
+                            bool program_entry = false,
+                            bool library_package_entry = false,
+                            bool is_package_module = false) {
 	if (module.code_objects.empty()) {
 		throw std::runtime_error("AOT: empty module (no code objects).");
 	}
@@ -1099,19 +1101,25 @@ std::string emit_module_cpp(const Pycp::BC::Module& module,
 	os << "    if (!done) {\n";
 	os << "        pycp_init_consts();\n";
 	os << "        mod = Pycp::Module::New(" << cpp_string_literal(modname) << ");\n";
+	// 模块文件夹（包）：标记包模块，启用脚本层属性钩子（__get_attribute__
+	// 等）与下标协议，与解释态 package_names_ 的标记保持同形。
+	if (is_package_module) {
+		os << "        mod->set_package(true);\n";
+	}
 	os << "        Pycp::GC_AddRoot(mod);\n";
 	os << "        g_mod_ns = mod->get_namespace();\n";
 	os << "        Pycp::BindGlobalsModule((void*)g_mod_ns, mod);\n";
 	// __name__ 注入（规则 2/1）：入口模块 set_module_name(\"__main__\") 且不注入
 	// 命名空间（裸名经 pycp.__name__ 回退）；其余模块命名空间注入 __name__ = 模块名。
-	if (is_entry) {
+	// __name__ 注入（规则 2/1）：
+	//   - 程序入口（含普通单文件入口）：set_module_name("__main__") 且注入
+	//     "__main__"；**可写**，清单可用 `__name__ = "..."` 覆盖。
+	//   - 库角色的包入口（--emit-cpp -m <pkg> 且未声明 as_program）：不生成
+	//     main()，其身份仍是模块，故 __name__ 取模块名（与解释态 import 一致）。
+	//   - 其余模块：注入模块名。
+	if (is_entry && !library_package_entry) {
 		os << "        mod->set_module_name(\"__main__\");\n";
 		os << "        (*g_mod_ns)[\"__name__\"] = Pycp::String::FromCString(\"__main__\");\n";
-		// 程序角色：入口 __name__ 冻结为只读绑定（与解释态 -m 一致），
-		// 顶层赋值与 module.__name__ = v 都会被拦截。
-		if (program_entry) {
-			os << "        mod->mark_readonly_binding(\"__name__\");\n";
-		}
 	} else {
 		os << "        (*g_mod_ns)[\"__name__\"] = Pycp::String::FromCString("
 		   << cpp_string_literal(modname) << ");\n";
@@ -1216,15 +1224,20 @@ std::map<std::string, std::string> EmitCppAll(
     const std::map<std::string, Pycp::BC::Module>& modules,
     const std::string& entry_name,
     const std::map<std::string, ModuleKind>* kinds,
-    bool program_entry) {
+    bool program_entry,
+    bool library_package_entry,
+    const std::set<std::string>* package_names) {
 	std::map<std::string, std::string> result;
 	for (const auto& kv : modules) {
 		const std::string& modname = kv.first;
 		bool is_entry = (modname == entry_name);
+		const bool is_pkg = (package_names != nullptr) &&
+		                    (package_names->find(modname) != package_names->end());
 		result[modname] = emit_module_cpp(kv.second, modname, is_entry,
 		                                  Pycp::AOT_ENTRY_FN_NAME,
 		                                  resolve_deps(modules, kv.second),
-		                                  kinds, program_entry);
+		                                  kinds, program_entry,
+		                                  library_package_entry, is_pkg);
 	}
 	return result;
 }

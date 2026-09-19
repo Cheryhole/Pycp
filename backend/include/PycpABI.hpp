@@ -180,13 +180,16 @@ PYCP_API void KwargsSet(Map* kwargs, Object* name, Object* value);
 //
 // 返回值三态：
 //   非 nullptr                        : 已初始化完成的模块对象
-//   nullptr 且 *out_source 非 nullptr : 命中 .pycp 源码，已编译为字节码
-//                                       但尚未执行顶层，由 VM 执行并接管
+//   nullptr 且 *out_source 非 nullptr : 命中源码 / 字节码 / 模块文件夹清单，
+//                                       已备好字节码但尚未执行顶层，由 VM
+//                                       执行并接管
 //   二者皆 nullptr                    : 未命中，调用方应回退 registry_，
 //                                       仍无则抛出 ImportError
 //
-// out_source 默认 nullptr，保证 AOT 已生成的 ImportModule(dep) 调用点
-// 零改动（存量 .gen.cpp 无需重新生成即可编译）。
+// out_source / diagnostics / out_source_is_package 默认 nullptr，保证 AOT
+// 已生成的 ImportModule(dep) 调用点零改动（存量 .gen.cpp 无需重新生成即可
+// 编译）。
+// out_source_is_package：命中形式是否为模块文件夹清单（VM 据此标记包模块）。
 // diagnostics 非空时，逐层记录未命中的候选目录，供调用方拼进 ImportError。
 //
 // 模块对象经 GC_AddRoot + Incref 常驻进程，跨 VM 实例存活，由 Finalize
@@ -194,7 +197,8 @@ PYCP_API void KwargsSet(Map* kwargs, Object* name, Object* value);
 // 职责与 PyImport_ImportModule 对齐。
 PYCP_API Module* ImportModule(const std::string& name,
                               BC::Module** out_source = nullptr,
-                              std::string* diagnostics = nullptr);
+                              std::string* diagnostics = nullptr,
+                              bool* out_source_is_package = nullptr);
 
 // 设置脚本所在目录（第 3 层的第二个候选目录），进程级。
 // 解释器在 VM 构造时按入口文件路径设置；AOT 生成的独立程序无需设置。

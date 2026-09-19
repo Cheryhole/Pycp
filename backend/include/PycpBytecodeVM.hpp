@@ -107,9 +107,12 @@ public:
 		package_names_ = names;
 	}
 
-	// 程序角色：入口 __name__ 注入 "__main__" 并冻结为只读绑定。
+	// 程序角色：入口 __name__ 注入 "__main__"（**可写** —— 清单可用
+	// `__name__ = "..."` 覆盖为自定义模块名，与 Python 一致）。
 	// 须在 run() 之前调用（仅 `pycp -m <pkg>` 的程序角色启用）。
-	void freeze_entry_name_main();
+	// 注：只读语义只由 @readonly 装饰器 / Module::mark_readonly_binding
+	// 显式声明产生，本方法不再对 __name__ 打只读标记。
+	void set_entry_name_main();
 
 private:
 	Module* module_;

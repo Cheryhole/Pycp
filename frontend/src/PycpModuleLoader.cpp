@@ -159,9 +159,11 @@ bool is_manifest(const std::string& path) {
 	return last_segment(path) == Pycp::MODULE_MANIFEST_FILENAME;
 }
 
-// 在单一目录下按「包优先、其次源码」解析模块名。
+// 在单一目录下按「包优先、其次源码、再次字节码」解析模块名。
 //   <dir>/<name>/pycp.mpycp  -> 包（模块名不变，pkg = 限定名）
 //   <dir>/<name>.pycp        -> 普通源码模块
+//   <dir>/<name>.cpycp       -> 已编译字节码模块（与 .pycp 等价，只是省去
+//                               编译步骤；加载时反序列化而非解析源码）
 bool resolve_in_dir(const std::string& dir, const std::string& name,
                     ModuleRef* out) {
 	const std::string pkg_dir = join_path(dir, name);
@@ -181,7 +183,33 @@ bool resolve_in_dir(const std::string& dir, const std::string& name,
 		out->pkg_dir.clear();
 		return true;
 	}
+	const std::string bc = join_path(dir, name + Pycp::EXT_CPYCP);
+	if (file_exists(bc)) {
+		out->name = name;
+		out->path = bc;
+		out->pkg.clear();
+		out->pkg_dir.clear();
+		return true;
+	}
 	return false;
+}
+
+// 按扩展名加载模块：.pycp 走「解析 + Codegen」，.cpycp 走反序列化。
+// 两者产出等价的 BC::Module（.cpycp 只是省去源码 -> 字节码这一步）。
+BC::Module load_module_file(const std::string& path) {
+	if (path.size() >= std::string(Pycp::EXT_CPYCP).size() &&
+	    path.compare(path.size() - std::string(Pycp::EXT_CPYCP).size(),
+	                 std::string(Pycp::EXT_CPYCP).size(),
+	                 Pycp::EXT_CPYCP) == 0) {
+		std::ifstream f(path, std::ios::binary);
+		if (!f) throw Pycp::Exception("Cannot open file: " + path);
+		std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)),
+		                           std::istreambuf_iterator<char>());
+		BC::Module m = Pycp::BC::Deserialize(bytes.data(), bytes.size());
+		m.source_path = path;
+		return m;
+	}
+	return Pycp::ModuleLoader::compile_file(path);
 }
 
 } // anonymous namespace
@@ -239,8 +267,8 @@ std::map<std::string, BC::Module> ModuleLoader::load_all(
 	for (std::size_t qi = 0; qi < queue.size(); ++qi) {
 		const ModuleRef item = queue[qi];
 
-		// 编译该文件
-		BC::Module m = compile_file(item.path);
+		// 加载该文件（.pycp 编译 / .cpycp 反序列化）
+		BC::Module m = load_module_file(item.path);
 
 		// 收集其 import 依赖（Module.imports 已在 Codegen 填充模块名）
 		for (std::size_t ii = 0; ii < m.imports.size(); ++ii) {

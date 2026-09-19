@@ -477,7 +477,7 @@ int execute_program(std::map<std::string, Pycp::BC::Module>& modules,
 	if (as_program) {
 		Pycp::ResetPackageRole();
 		Pycp::SetPackageRole(Pycp::PackageRole::kProgram, /*declared=*/false);
-		vm.freeze_entry_name_main();
+		vm.set_entry_name_main();
 	}
 
 	Pycp::Object* result = vm.run();
@@ -918,6 +918,9 @@ int main(int argc, char** argv) {
 			aopt.default_module_kind = opt.compile_modules;
 			aopt.runtime_link = opt.compile_runtime;
 			aopt.overrides = opt.module_overrides;
+			// 包名集合（入口本身是包、或入口 import 了包，都会非空）：
+			// 决定 AOT 输出是否按包分目录（<pkg>/...）。
+			aopt.package_names = package_names_aot;
 			if (have_cg) {
 				// __codegen__ 的配置（命令行 overrides 已在上面写入，优先级更高）。
 				aopt.executable_name = cg.executable_name;

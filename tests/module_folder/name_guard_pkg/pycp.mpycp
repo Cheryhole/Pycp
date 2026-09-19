@@ -1,12 +1,13 @@
-// 用途错误用例：程序角色的入口 __name__ 冻结为 "__main__" 且只读，
-// 清单里的赋值应被拒绝（AttributeError: read-only binding）。
+// __name__ 可写用例：程序角色的入口默认 __name__ 为 "__main__"，但清单
+// 可用 `__name__ = "..."` 覆盖为自定义模块名（只读只由 @readonly 产生）。
 import io
 import moduletools
 
 moduletools.as_program()
 
-__name__ = "Nope"
+__name__ = "RenamedByManifest"
 
 func main(argv) {
+	io.print("name=" + __name__)
 	return 0
 }

@@ -3,9 +3,12 @@
 #include "PycpInteger.hpp"
 #include "PycpString.hpp"
 #include "PycpConfig.hpp"
+#include "PycpBytecode.hpp"   // BC::Module / BC::Deserialize（.cpycp 与包清单）
 
 #include <atomic>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -257,27 +260,88 @@ Module* LoadLinkedModule(const std::string& name) {
 	return call_module_init(init, entry_symbol, "linked symbol");
 }
 
+// 模块名 -> 目录相对路径：点号全名（包内子模块 pkg.obj_a）映射为目录层级
+// pkg/obj_a，与「目录即包」的磁盘布局一致（对齐 Python 的 pkg/sub.py）。
+static std::string module_rel_path(const std::string& name) {
+	std::string rel = name;
+	for (char& c : rel) {
+		if (c == Pycp::MODULE_NAME_SEPARATOR) c = '/';
+	}
+	return rel;
+}
+
+// 命中包清单后，把清单里对【包内兄弟文件】的 import 就地改写为点号全名
+// （pkg.sub），使子模块在运行期能经「点号 -> 目录层级」映射按需加载。
+// 规则与编译期 ModuleLoader::load_all 完全一致（兄弟优先于 cwd）。
+static void rewrite_package_imports(BC::Module* bc, const std::string& pkg,
+                                    const std::string& pkg_dir) {
+	if (bc == nullptr) return;
+	std::error_code ec;
+	for (std::string& dep : bc->imports) {
+		const std::string sibling = pkg_dir + "/" + dep + Pycp::EXT_PYCP;
+		const std::string sibling_bc = pkg_dir + "/" + dep + Pycp::EXT_CPYCP;
+		if (std::filesystem::is_regular_file(sibling, ec) ||
+		    std::filesystem::is_regular_file(sibling_bc, ec)) {
+			dep = pkg + Pycp::MODULE_NAME_SEPARATOR + dep;
+		}
+	}
+}
+
+// .cpycp -> 堆分配的 BC::Module（所有权交 VM，由 owned_modules_ 管理）。
+// 反序列化由运行时自身完成，故不依赖宿主的源码编译器钩子。
+static BC::Module* load_bytecode_module(const std::string& path) {
+	std::ifstream f(path, std::ios::binary);
+	if (!f) return nullptr;
+	std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)),
+	                           std::istreambuf_iterator<char>());
+	if (bytes.empty()) return nullptr;
+	return new BC::Module(BC::Deserialize(bytes.data(), bytes.size()));
+}
+
 Module* LoadNativeModuleFrom(const std::string& dir, const std::string& name,
-                             BC::Module** out_source) {
+                             BC::Module** out_source,
+                             bool* out_source_is_package) {
 	if (out_source != nullptr) *out_source = nullptr;
+	if (out_source_is_package != nullptr) *out_source_is_package = false;
 
 	const std::string fname = name + native_ext_suffix();
 	std::error_code ec;
 
-	// 源码优先：同层同时存在 <name>.pycp 与 <name>.so 时，优先按源码模块
-	// 加载（解释态语义）。与 Python 的「扩展模块优先」相反——Pycp 让
-	// 「所见即所得」的源码优先于同名动态库：改源码即生效，不被同名 .so
-	// 悄悄遮蔽；也允许在 stdlib/ 下放置与内置扩展同名的 .pycp 来覆盖它。
-	//
-	// 源码形式需调用方能接收 BC::Module（由其执行顶层），且宿主必须注册
-	// 了源码编译器钩子；否则本候选形式不可用（旧接口 LoadNativeModule
-	// 与 AOT 生成的独立程序即属此情形，自动降级到动态库）。
+	const std::string rel = module_rel_path(name);
+	auto dir_path = [&dir](const std::string& p) {
+		return dir.empty() ? ("./" + p) : (dir + "/" + p);
+	};
+
+	// ---- ① 模块文件夹：<dir>/<rel>/pycp.mpycp ----
+	// 命中即编译清单（需宿主编译器钩子；AOT 独立程序无钩子则继续下探），
+	// 并把清单里对兄弟文件的 import 改写为点号全名。
 	if (out_source != nullptr) {
-		const std::string src_path = dir.empty()
-			? ("./" + name + Pycp::EXT_PYCP)
-			: (dir + "/" + name + Pycp::EXT_PYCP);
-		if (std::filesystem::exists(src_path, ec)) {
-			// 未注册编译器钩子（AOT 生成的独立程序）：跳过源码形式。
+		const std::string manifest =
+			dir_path(rel + "/" + Pycp::MODULE_MANIFEST_FILENAME);
+		if (std::filesystem::is_regular_file(manifest, ec)) {
+			SourceModuleCompiler compiler = g_source_compiler.load();
+			if (compiler != nullptr) {
+				BC::Module* bc = compiler(manifest.c_str());
+				if (bc != nullptr) {
+					rewrite_package_imports(bc, name, dir_path(rel));
+					if (out_source_is_package != nullptr) {
+						*out_source_is_package = true;
+					}
+					*out_source = bc;
+					return nullptr;
+				}
+			}
+		}
+	}
+
+	// ---- ②/③ 源码形态优先于原生扩展 ----
+	// 同层同时存在 <name>.pycp 与 <name>.so 时优先按源码加载（解释态语义）：
+	// 与 Python 的「扩展模块优先」相反——Pycp 让「所见即所得」的源码优先于
+	// 同名动态库，改源码即生效，也允许在 stdlib/ 下放同名 .pycp 覆盖内置扩展。
+	// 顺序：.pycp（源码，需钩子）→ .cpycp（字节码，无需钩子）→ .so（原生）。
+	if (out_source != nullptr) {
+		const std::string src_path = dir_path(rel + Pycp::EXT_PYCP);
+		if (std::filesystem::is_regular_file(src_path, ec)) {
 			SourceModuleCompiler compiler = g_source_compiler.load();
 			if (compiler != nullptr) {
 				BC::Module* bc = compiler(src_path.c_str());
@@ -289,12 +353,21 @@ Module* LoadNativeModuleFrom(const std::string& dir, const std::string& name,
 				}
 			}
 		}
+
+		// .cpycp：与 .pycp 语义完全相同，只是省去「源码 -> 字节码」这一步。
+		const std::string bc_path = dir_path(rel + Pycp::EXT_CPYCP);
+		if (std::filesystem::is_regular_file(bc_path, ec)) {
+			BC::Module* bc = load_bytecode_module(bc_path);
+			if (bc != nullptr) {
+				*out_source = bc;
+				return nullptr;
+			}
+		}
 	}
 
-	// 其次同名动态库（原生扩展，类似 Python 的 .pyd）。
-	const std::string so_path = dir.empty()
-		? ("./" + fname) : (dir + "/" + fname);
-	if (std::filesystem::exists(so_path, ec)) {
+	// ---- ④ 同名动态库（原生扩展，类似 Python 的 .pyd）----
+	const std::string so_path = dir_path(fname);
+	if (std::filesystem::is_regular_file(so_path, ec)) {
 		return load_native_from_path(so_path, name);
 	}
 

@@ -1,0 +1,7 @@
+// 仅供测试：会被编译成 .cpycp 后删掉源码，用于验证「仅存在 .cpycp 的
+// 模块也能被 import」（.cpycp 与 .pycp 等价）。
+import io
+
+func ping() {
+	io.print("mod_only.ping")
+}

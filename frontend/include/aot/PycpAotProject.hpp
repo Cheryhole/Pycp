@@ -47,8 +47,13 @@ struct AotProjectOptions {
 	// 必须提升为 shared，则【报错中止】而非静默提升（用户约定）。
 	std::set<std::string> strict_names;
 	// 入口是否为「程序角色」的包：生成的 main() 会调用清单的 main(argv)
-	// 并把其返回值作为进程退出码，同时冻结入口 __name__。
+	// 并把其返回值作为进程退出码；入口模块注入 __name__ = "__main__"。
 	bool program_entry = false;
+	// 参与转译的「包对象」模块名集合（模块文件夹的清单）。
+	// 用于 AOT 输出的目录布局：包的文件集中到 <pkg>/ 子目录（清单为
+	// <pkg>/pycp.gen.cpp，子模块 pkg.sub 为 <pkg>/sub.gen.cpp），
+	// 与磁盘上的包布局同构，便于人读与按包取舍。
+	std::set<std::string> package_names;
 };
 
 // --emit-cpp 的决策回执：把编排层内部的形态决策结果带回 CLI 供可观测输出

@@ -184,8 +184,15 @@ bool EmitProject(
 
 		// 6b) 翻译字节码 -> C++ 源码（全模块）。需在形态决策之后进行：
 		//     对 kShared 依赖不生成链接拉入桩（其符号在独立 DLL 中）。
+		// 库角色的包入口：不生成 main()，且 __name__ 取模块名（而非
+		// "__main__"）—— 它在产物里的身份是被链接的模块，不是程序。
+		const bool library_package_entry =
+			!options.program_entry &&
+			(options.package_names.find(entry_name) != options.package_names.end());
 		auto sources = Pycp::AOT::EmitCppAll(modules, entry_name, &plan.kinds,
-		                                     options.program_entry);
+		                                     options.program_entry,
+		                                     library_package_entry,
+		                                     &options.package_names);
 
 		// 7) 内置扩展分组：无覆盖时默认跟随 runtime_link。
 		for (const std::string& b : spec.sdk.builtin_modules) {
@@ -212,11 +219,32 @@ bool EmitProject(
 		}
 
 		// 8) 源文件与模块清单：入口源码排首，随后依赖模块。
+		// 源文件相对路径（相对项目目录，CMake 直接引用）：
+		//   - 入口              : __pycp_main.gen.cpp（项目根）
+		//   - 包清单            : <pkg>/pycp.gen.cpp
+		//   - 包内子模块 pkg.sub: <pkg>/sub.gen.cpp（点号转目录层级）
+		//   - 其它模块          : <name>.gen.cpp
+		// 与磁盘上的包布局同构，生成目录更易读；落盘时由 write_file()
+		// 自动创建父目录。
+		auto module_rel_source = [&](const std::string& m) -> std::string {
+			if (m == entry_name) {
+				return std::string(Pycp::AOT_ENTRY_CPP_FILENAME);
+			}
+			std::string rel = m;
+			for (char& c : rel) {
+				if (c == Pycp::MODULE_NAME_SEPARATOR) c = '/';
+			}
+			if (options.package_names.find(m) != options.package_names.end()) {
+				rel += "/pycp";   // 包清单
+			}
+			return rel + Pycp::AOT_CPP_SUFFIX;
+		};
+
 		spec.sources.emplace_back(
 			std::string(Pycp::AOT_ENTRY_CPP_FILENAME), sources.at(entry_name));
 		for (const auto& kv : sources) {
 			if (kv.first == entry_name) continue;
-			const std::string fname = kv.first + Pycp::AOT_CPP_SUFFIX;
+			const std::string fname = module_rel_source(kv.first);
 			spec.sources.emplace_back(fname, kv.second);
 
 			ModuleTarget mt;

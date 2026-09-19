@@ -7,13 +7,17 @@
 #      返回值经 __integer__ 作为退出码；子模块用点号全名。
 #   2) 库角色（解释）：import <pkg>，__name__ 为模块名（可自定义），
 #      包属性钩子（__get_attribute__ / __string__）生效且不递归。
-#   3) 用途错误：program 被 import → ImportError；
-#      入口 __name__ 只读（清单赋值被拒）。
+#   3) 用途错误：program 被 import → ImportError；-m 一个库包 → RuntimeError；
+#      入口 __name__ 可写（清单可用 __name__ = "..." 覆盖为模块名）。
 #   4) AOT：--emit-cpp -m <pkg> 生成可执行项目（exe 名取自
 #      set_executable_name），构建运行与解释态输出/退出码一致。
 #   5) AOT 用途与形态错误：库角色写 set_executable_name → 中止；
 #      __codegen__ 指定的 static 被 ≥2 链接目标引用 → 报错中止；
 #      未声明角色 → 按库生成并打印 note。
+#   6) AOT 目录布局：被 import 的包生成到 <pkg>/（pycp.gen.cpp +
+#      子模块 .gen.cpp），并一起 cmake 编译运行（包钩子与解释态一致）。
+#   7) .cpycp 与运行期解析：脚本编译为 .cpycp 后删源码，import 全靠运行期
+#      （目录即包 + 点号子模块）；仅存在 .cpycp 的模块也能被 import。
 #
 # 用法：bash tests/module_folder/run.sh
 # =====================================================================
@@ -33,14 +37,14 @@ fi
 pass=0
 fail=0
 
-# 解释态用例：在用例目录内运行，校验退出码与输出片段（全部命中才算通过）。
-#   用法：check <名称> <期望退出码> <期望片段，'|' 分隔> -- <命令...>
-check() {
-	local name="$1" expect_rc="$2" expect_msgs="$3"
-	shift 3
+# 通用用例：在指定工作目录下运行，校验退出码与输出片段（全部命中才算通过）。
+#   用法：check_in <名称> <期望退出码> <期望片段，'|' 分隔> <工作目录> -- <命令...>
+check_in() {
+	local name="$1" expect_rc="$2" expect_msgs="$3" wd="$4"
+	shift 4
 	[[ "${1:-}" == "--" ]] && shift
 	local out rc ok=1 m
-	out="$(cd "$SCRIPT_DIR" && "$@" 2>&1)"
+	out="$(cd "$wd" && "$@" 2>&1)"
 	rc=$?
 	[[ "$rc" == "$expect_rc" ]] || ok=0
 	if [[ -n "$expect_msgs" ]]; then
@@ -57,6 +61,13 @@ check() {
 		echo "----- output -----"; echo "$out"; echo "------------------"
 		fail=$((fail + 1))
 	fi
+}
+
+# 解释态用例：在用例目录内运行。
+check() {
+	local name="$1" expect_rc="$2" expect_msgs="$3"
+	shift 3
+	check_in "$name" "$expect_rc" "$expect_msgs" "$SCRIPT_DIR" "$@"
 }
 
 # AOT 转译用例：只跑 --emit-cpp（不构建），校验退出码与输出片段。
@@ -82,8 +93,8 @@ check "program 被 import → ImportError" 1 \
 check "-m 一个未声明程序的包 → RuntimeError（无 main）" 1 \
 	"RuntimeError|does not define func main(argv)" \
 	-- "$PYCP" -m plain_lib_pkg
-check "程序角色入口 __name__ 只读" 1 \
-	"read-only binding '__name__'" \
+check "入口 __name__ 可写（清单可覆盖为自定义模块名）" 0 \
+	"name=RenamedByManifest" \
 	-- "$PYCP" -m name_guard_pkg
 
 echo "== 4) AOT：程序角色的包 → 可执行项目 =="
@@ -133,6 +144,57 @@ if [[ -d "$DIST/include" && -d "$DIST/lib" ]]; then
 	check_emit "未声明角色 → 按库生成并打印 note" 0 \
 		"未声明角色，已按【库】生成" \
 		-- "$PYCP" --emit-cpp -m lib_pkg -o "$WORK/lib_aot"
+
+	echo "== 6) AOT：包输出到 <pkg>/ 子目录并一起编译 =="
+	check_emit "AOT 转译导入了包的脚本" 0 "" \
+		-- "$PYCP" --emit-cpp use_lib.pycp -o "$WORK/pkg_aot"
+	if [[ -f "$WORK/pkg_aot/lib_pkg/pycp.gen.cpp" &&
+	      -f "$WORK/pkg_aot/lib_pkg/util.gen.cpp" ]]; then
+		echo "[PASS] 包文件集中生成到 lib_pkg/（pycp.gen.cpp + util.gen.cpp）"
+		pass=$((pass + 1))
+	else
+		echo "[FAIL] 未按包分目录生成（缺 lib_pkg/pycp.gen.cpp 或 lib_pkg/util.gen.cpp）"
+		find "$WORK/pkg_aot" -name '*.gen.cpp' 2>/dev/null
+		fail=$((fail + 1))
+	fi
+	if cmake -S "$WORK/pkg_aot" -B "$WORK/pkg_aot/build" -DPYCP_DIST="$DIST" >/dev/null 2>&1 &&
+	   cmake --build "$WORK/pkg_aot/build" -j"$(nproc)" >/dev/null 2>&1; then
+		out="$("$WORK/pkg_aot/build/use_lib" x 2>&1)"
+		rc=$?
+		if [[ $rc -eq 0 && "$out" == *"name=CustomLibName"* &&
+		      "$out" == *"str=LIBPKG<CustomLibName>"* &&
+		      "$out" == *"hook get: ping"* && "$out" == *"util.ping"* ]]; then
+			echo "[PASS] 包目录布局的 AOT 产物可编译运行，且包钩子与解释态一致"
+			pass=$((pass + 1))
+		else
+			echo "[FAIL] 包目录布局的 AOT 产物运行（exit=$rc）"
+			echo "----- output -----"; echo "$out"; echo "------------------"
+			fail=$((fail + 1))
+		fi
+	else
+		echo "[FAIL] 包目录布局的 AOT 产物构建失败"
+		fail=$((fail + 1))
+	fi
+
+	echo "== 7) .cpycp 与运行期解析 =="
+	# 7a) 纯运行期解析：脚本编译为 .cpycp 后删掉源码，import 全部由运行期完成
+	rm -rf "$WORK/lib_pkg"
+	cp -r "$SCRIPT_DIR/lib_pkg" "$WORK/lib_pkg"
+	cp "$SCRIPT_DIR/use_lib.pycp" "$WORK/use_lib.pycp"
+	(cd "$WORK" && "$PYCP" -c use_lib.pycp -o use_lib.cpycp >/dev/null 2>&1 &&
+		rm -f use_lib.pycp)
+	check_in ".cpycp 运行：运行期探测「目录即包」+ 点号子模块" 0 \
+		"name=CustomLibName|str=LIBPKG<CustomLibName>|hook get: ping|util.ping|helper: x" \
+		"$WORK" -- "$PYCP" use_lib.cpycp
+
+	# 7b) 仅存在 .cpycp 的模块可被 import（.cpycp 与 .pycp 等价）
+	cp "$SCRIPT_DIR/mod_only_src.pycp" "$WORK/mod_only.pycp"
+	cp "$SCRIPT_DIR/use_mod_only.pycp" "$WORK/use_mod_only.pycp"
+	(cd "$WORK" && "$PYCP" -c mod_only.pycp -o mod_only.cpycp >/dev/null 2>&1 &&
+		rm -f mod_only.pycp)
+	check_in "仅 .cpycp 存在的模块可被 import" 0 \
+		"mod_only.ping" \
+		"$WORK" -- "$PYCP" use_mod_only.pycp
 else
 	echo "[SKIP] 缺少 $DIST（先执行 cmake --build build --target pycp-dist）"
 fi

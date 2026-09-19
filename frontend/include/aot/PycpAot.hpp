@@ -22,6 +22,7 @@
 #include "aot/PycpProjectSpec.hpp" // ModuleKind（桩生成按形态过滤）
 
 #include <map>
+#include <set>
 #include <string>
 
 namespace Pycp::AOT {
@@ -43,14 +44,22 @@ std::string EmitCpp(const Pycp::BC::Module& module,
 //   被导入模块生成的源码仅含初始化函数（无 main），供入口链接调用。
 //   program_entry : 入口为「程序角色」的包（清单定义了 func main(argv)）。
 //                   生成的 main() 会在顶层执行后调用该 main(argv)，
-//                   并把其返回值（经 __integer__ 转换）作为进程退出码；
-//                   同时把入口 __name__ 冻结为只读绑定。
+//                   并把其返回值（经 __integer__ 转换）作为进程退出码。
+//                   同时入口模块注入 __name__ = "__main__"（可写）。
+//   library_package_entry : 入口是「库角色」的包（--emit-cpp -m <pkg> 但
+//                   未声明 as_program）。此时不生成 main()，入口模块的
+//                   __name__ 取模块名（而非 "__main__"）。
+//   package_names : 参与转译的「包对象」模块名集合；命中的模块会生成
+//                   mod->set_package(true)，启用脚本层属性钩子（与解释态
+//                   package_names_ 的标记同形）。nullptr 视为空集合。
 //   返回 map<模块名, 源码>；每个值的文件名由调用方决定（如 <name>.gen.cpp）。
 std::map<std::string, std::string> EmitCppAll(
     const std::map<std::string, Pycp::BC::Module>& modules,
     const std::string& entry_name,
     const std::map<std::string, ModuleKind>* kinds = nullptr,
-    bool program_entry = false);
+    bool program_entry = false,
+    bool library_package_entry = false,
+    const std::set<std::string>* package_names = nullptr);
 
 // 将生成结果写入磁盘文件（path 为 .cpp 输出路径）。
 //   返回 true 表示写入成功。
