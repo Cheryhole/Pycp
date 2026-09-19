@@ -53,7 +53,24 @@ extern "C" {
 #define MPD_PRAGMA(x)
 #define MPD_HIDE_SYMBOLS_START
 #define MPD_HIDE_SYMBOLS_END
-#define EXTINLINE extern inline
+/* Pycp vendor 补丁：原先无条件 `#define EXTINLINE extern inline`，在 GCC 下会
+   产生上千条 “inline function 'X' declared/used but never defined” 噪音：
+     - C++ 侧：C++ 里 `extern inline` 等价于 `inline`，此处只有声明没有定义，
+       于是每个包含本头且用到这些 API 的翻译单元（全仓库唯一直接包含点是
+       backend/src/PycpDecimal.cpp）都会为约 50 个函数各报一次
+       “used but never defined”；
+     - C 侧：libmpdec 其余 *.c（io.c / transpose.c 等）只包含本头、不带函数体，
+       `extern inline` 声明同样无用武之地，每个 TU 对每个 API 报一次
+       “declared but never defined”，合计近 800 条。
+   这些函数在 libmpdec/mpdecimal.c 里都有真实定义（`ALWAYS_INLINE` 只是属性、
+   并非 inline-only 定义，符号会正常导出），消费方拿到的本就只能是外部调用，
+   故把声明退化为普通外部声明：不改变任何 TU 的代码生成与链接结果，同时
+   mpdecimal.c 自身按 ALWAYS_INLINE 内联的行为保持不变（定义处未改动）。 */
+#ifdef __cplusplus
+  #define EXTINLINE
+#else
+  #define EXTINLINE extern
+#endif
 
 #define IMPORTEXPORT
 
