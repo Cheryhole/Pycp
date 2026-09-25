@@ -11,6 +11,7 @@
 #include "object/PycpGC.hpp"
 #include "object/PycpException.hpp"
 
+#include <cstring>
 #include <sstream>
 #include <utility>
 #include <vector>
@@ -137,6 +138,67 @@ const char* OpName(Op op) {
 	return "UNKNOWN";
 }
 
+const char* ConstKindName(ConstKind kind) {
+	switch (kind) {
+		case ConstKind::INTEGER: return "INTEGER";
+		case ConstKind::STRING:  return "STRING";
+		case ConstKind::NONE:    return "NONE";
+		case ConstKind::FLOAT:   return "FLOAT";
+		case ConstKind::DECIMAL: return "DECIMAL";
+	}
+	return "UNKNOWN";
+}
+
+// =============================================================
+// ConstRef
+// =============================================================
+ConstRef::ConstRef(ConstKind kind, int64_t int_value, uint64_t float_bits,
+                   const std::string& str_value)
+	: Object("BytecodeConst"), kind_(kind), int_value_(int_value),
+	  float_bits_(float_bits), str_value_(str_value) {}
+
+Object* ConstRef::__get_attribute__(const std::string& name) {
+	if (members_.find(name) == members_.end()) {
+		if (Object* v = BuildField(name)) members_[name] = v;
+	}
+	return Object::__get_attribute__(name);
+}
+
+Object* ConstRef::BuildField(const std::string& name) {
+	if (name == "kind") return Str(ConstKindName(kind_));
+	if (name == "int_value") return Integer::FromLong(int_value_);
+	if (name == "float_bits") {
+		// 无符号十进制文本（直接用于 "<bits>ULL"）。
+		return Str(std::to_string(float_bits_));
+	}
+	if (name == "float_value") {
+		double d = 0.0;
+		std::memcpy(&d, &float_bits_, sizeof(d));
+		return New<Float>(d);
+	}
+	if (name == "str_value") return Str(str_value_);
+	return nullptr;
+}
+
+Object* ConstRef::__inspect__() {
+	static const std::vector<std::string> names = {
+		"kind", "int_value", "float_bits", "float_value", "str_value"};
+	return StrList(names);
+}
+
+Object* ConstRef::__string__() {
+	switch (kind_) {
+		case ConstKind::INTEGER: return Str(std::to_string(int_value_));
+		case ConstKind::STRING:  return Str("\"" + str_value_ + "\"");
+		case ConstKind::FLOAT:   return Str(std::to_string(float_bits_) + "ULL");
+		case ConstKind::DECIMAL: return Str(str_value_ + "d");
+		case ConstKind::NONE:    return Str("None");
+	}
+	return Str("?");
+}
+
+Object* ConstRef::__raw_string__() { return __string__(); }
+
 // =============================================================
 // ModuleRef
 // =============================================================
@@ -154,6 +216,18 @@ Object* ModuleRef::BuildField(const std::string& name) {
 	if (!module_) return nullptr;
 	if (name == "source_path") return Str(module_->source_path);
 	if (name == "constants") return ConstList(module_->const_pool);
+	if (name == "const_pool") {
+		// 原始条目（含 kind 与浮点位模式），供 AOT 逐字复刻常量发射。
+		List* l = List::New();
+		for (const Constant& c : module_->const_pool) {
+			uint64_t bits = 0;
+			std::memcpy(&bits, &c.float_value, sizeof(bits));
+			Object* o = New<ConstRef>(c.kind, c.int_value, bits, c.str_value);
+			l->append(o);
+			Decref(o);
+		}
+		return l;
+	}
 	if (name == "symbols") return StrList(module_->symtab);
 	if (name == "imports") return StrList(module_->imports);
 	if (name == "import_linenos") return IntList(module_->import_linenos);
@@ -184,8 +258,8 @@ Object* ModuleRef::BuildField(const std::string& name) {
 
 Object* ModuleRef::__inspect__() {
 	static const std::vector<std::string> names = {
-		"source_path", "constants", "symbols", "imports", "import_linenos",
-		"repl_eval", "code_objects", "classes"};
+		"source_path", "constants", "const_pool", "symbols", "imports",
+		"import_linenos", "repl_eval", "code_objects", "classes"};
 	return StrList(names);
 }
 

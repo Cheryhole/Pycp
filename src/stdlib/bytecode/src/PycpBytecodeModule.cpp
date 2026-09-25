@@ -9,6 +9,8 @@
 #include "abi/PycpNativeExt.hpp"           // CompileSourceString（宿主编译钩子）
 #include "bytecode/PycpBytecode.hpp"       // BC::Module
 #include "bytecode/PycpBytecodeObject.hpp" // WrapModule / IsModuleRef
+#include "object/PycpConfig.hpp"           // SanitizeModuleName / AOT 命名约定
+#include "object/PycpMap.hpp"              // Map（aot_config 返回值）
 
 #include <memory>
 #include <string>
@@ -68,10 +70,57 @@ Object* _builtin_dump(Object*, FixedList* args, Map* kwargs) {
 	throw TypeError("dump: argument must be a bytecode module or a source string.");
 }
 
+// bytecode.sanitize_module_name(name) -> String
+// 模块名 -> C 标识符片段（'.' -> "__"），与运行时 ImportModule / dlsym 同源。
+Object* _builtin_sanitize_module_name(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"sanitize_module_name", { Extension::Arg::Required("name") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	const std::string name =
+		require_string("sanitize_module_name", "name", r["name"]);
+	return String::FromCString(SanitizeModuleName(name).c_str());
+}
+
+// bytecode.aot_config() -> Map
+// AOT 生成所需的命名/格式约定（与运行时 PycpConfig.hpp 同源，避免硬编码漂移）。
+Object* _builtin_aot_config(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs("aot_config", {});
+	spec.Bind(args, kwargs);
+
+	Map* m = Map::New();
+	auto put = [&](const char* key, const std::string& val) {
+		Object* k = String::FromCString(key);          // Owned
+		Object* v = String::FromCString(val.c_str());  // Owned
+		Object* old = m->__set_item__(k, v);           // 内部 Incref
+		if (old != nullptr) Decref(old);
+		Decref(k);
+		Decref(v);
+	};
+	put("version", PYCP_VERSION);
+	put("ext_pycp", EXT_PYCP);
+	put("ext_cpycp", EXT_CPYCP);
+	put("ext_cpp", EXT_CPP);
+	put("aot_cpp_suffix", AOT_CPP_SUFFIX);
+	put("aot_entry_cpp_filename", AOT_ENTRY_CPP_FILENAME);
+	put("aot_builtin_reg_cpp_filename", AOT_BUILTIN_REG_CPP_FILENAME);
+	put("aot_module_init_prefix", AOT_MODULE_INIT_PREFIX);
+	put("aot_fn_prefix", AOT_FN_PREFIX);
+	put("aot_entry_fn_name", AOT_ENTRY_FN_NAME);
+	put("stdlib_dir_name", STDLIB_DIR_NAME);
+	put("module_manifest_filename", MODULE_MANIFEST_FILENAME);
+	put("module_top_name", MODULE_TOP_NAME);
+	put("module_entry_name", MODULE_ENTRY_NAME);
+	put("module_name_separator", std::string(1, MODULE_NAME_SEPARATOR));
+	return m;
+}
+
 Module* make_bytecode_module() {
 	Module* mod = Module::New(MODULE_NAME);
 	mod->set_function("compile", _builtin_compile, /*with_keywords=*/true);
 	mod->set_function("dump", _builtin_dump, /*with_keywords=*/true);
+	mod->set_function("sanitize_module_name", _builtin_sanitize_module_name,
+	                  /*with_keywords=*/true);
+	mod->set_function("aot_config", _builtin_aot_config, /*with_keywords=*/true);
 	return mod;
 }
 
