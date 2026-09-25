@@ -318,6 +318,7 @@ set(PYCP_FRONTEND_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/parser/preprocessor/PycpPreprocessor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/PycpCodegen.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/loader/PycpModuleLoader.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/loader/PycpSourceBridge.cpp
     # 原生编译（AOT）—— 迁移期临时保留的 C++ 实现，阶段 3 转 pycp 后删除
     ${CMAKE_CURRENT_SOURCE_DIR}/aot/PycpAot.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/aot/PycpAotSdkLocator.cpp
@@ -368,6 +369,21 @@ if(BUILD_TEST)
     target_include_directories(pycp-selftest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(pycp-selftest PRIVATE ${PYCP_RUNTIME_TARGET})
     set_target_properties(pycp-selftest PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_DIR}
+    )
+
+    # 源码桥接自测（校验 SetSourceStringCompiler / SetSourceExecutor 生效）。
+    # 需要前端 OBJECT 一并并入。
+    add_executable(pycp-hooks-test
+        ${CMAKE_CURRENT_SOURCE_DIR}/loader/PycpSourceBridgeSelfTest.cpp
+    )
+    target_include_directories(pycp-hooks-test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${PYCP_GENERATED_DIR}
+    )
+    target_sources(pycp-hooks-test PRIVATE $<TARGET_OBJECTS:PycpFrontend_obj>)
+    target_link_libraries(pycp-hooks-test PRIVATE ${PYCP_RUNTIME_TARGET})
+    set_target_properties(pycp-hooks-test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_DIR}
     )
 endif()

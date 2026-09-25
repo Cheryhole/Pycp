@@ -50,6 +50,7 @@
 #include "aot/PycpScriptCodegen.hpp"  // 包清单求值（__codegen__ / 角色）
 #include "aot/PycpAotSdkLocator.hpp" // LocateSdk：过滤内置扩展名的 unresolved 提示
 #include "loader/PycpModuleLoader.hpp"
+#include "loader/PycpSourceBridge.hpp"  // 向运行时注册源码字符串编译/执行钩子
 #include "parser/preprocessor/PycpPreprocessor.hpp"
 
 #include "abi/Pycp.hpp"          // 运行时（Object/GC/ABI/Manager）
@@ -520,12 +521,14 @@ std::string entry_module_name(const std::string& path) {
 	return base;
 }
 
-// 初始化运行时，并注册 .pycp 源码模块编译器钩子。
+// 初始化运行时，并注册宿主提供的源码钩子。
 //
-// 钩子使 import 的第 2/3 层（可执行文件目录的 stdlib/、cwd 与脚本目录）
-// 能够直接加载 .pycp 源码文件——backend 无法解析 .pycp（parser / Codegen
-// 位于 frontend），故由宿主注入。
-//   注：AOT 生成的独立程序不注册钩子，其 stdlib/ 仅识别原生动态库。
+// ① 路径编译钩子：使 import 的第 2/3 层（可执行文件目录的 stdlib/、cwd 与
+//    脚本目录）能够直接加载 .pycp 源码文件——运行时无法解析 .pycp（parser /
+//    codegen 位于 frontend），故由宿主注入。
+// ② 源码字符串钩子（RegisterSourceHooks）：供 stdlib 模块 compile / codebyte /
+//    ast 使用（宿主链接了前端，故由前端桥接实现并注册）。
+//   注：AOT 生成的独立程序不注册任何钩子，其 stdlib/ 仅识别原生动态库。
 //   返回的 Module 为堆分配对象，所有权移交运行时（由 VM 加入
 //   owned_modules_，在 ~VM 时清理 runtime_consts 并释放）。
 void initialize_runtime() {
@@ -533,6 +536,7 @@ void initialize_runtime() {
 	Pycp::SetSourceModuleCompiler([](const char* path) -> Pycp::BC::Module* {
 		return new Pycp::BC::Module(Pycp::ModuleLoader::compile_file(path));
 	});
+	Pycp::RegisterSourceHooks();
 }
 
 // 执行入口模块及其 import 依赖（构造带模块注册表的 VM 并 run）。

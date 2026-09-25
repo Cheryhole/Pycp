@@ -58,6 +58,45 @@ using SourceModuleCompiler = BC::Module* (*)(const char* path);
 void SetSourceModuleCompiler(SourceModuleCompiler fn);
 
 // =============================================================
+// 源码「字符串」编译 / 执行 / 解析钩子
+// -------------------------------------------------------------
+// 与 SetSourceModuleCompiler（按【路径】编译）并列：这三个钩子以【内存源码
+// 字符串】为输入，供语言内 stdlib 模块（compile / codebyte / ast）使用。
+//
+// 运行时（PycpRuntime）不含 parser / codegen，故实现必须由链接了 PycpFrontend
+// 的宿主（pycp 可执行文件）注册——延续「backend 无法解析 .pycp，由宿主注入」
+// 的设计，避免 stdlib .so 反向依赖前端（Windows 下 DLL 无法解析宿主静态符号）。
+//
+// 未注册时，下方便捷调用会抛 RuntimeError（提示宿主未链接前端）。
+// =============================================================
+
+// 源码字符串 -> 字节码 Module（返回堆分配对象，所有权移交调用方）。
+using SourceStringCompiler = BC::Module* (*)(const std::string& source,
+                                             const std::string& filename);
+PYCP_API void SetSourceStringCompiler(SourceStringCompiler fn);
+
+// 源码字符串 -> 编译并执行，返回顶层结果（Owned）。
+//   globals 为可选的 Map：非空时以其内容作为全局命名空间执行，并把执行后
+//   新增 / 改动的名字写回该 Map（对齐 Python exec(code, globals)）。
+//   globals 为 nullptr / None 时使用全新全局命名空间。
+using SourceExecutor = Object* (*)(const std::string& source,
+                                   const std::string& filename, Object* globals);
+PYCP_API void SetSourceExecutor(SourceExecutor fn);
+
+// 源码字符串 -> AST 根节点（已转换为 pycp 对象，供 ast.parse 使用）。返回 Owned。
+using SourceParser = Object* (*)(const std::string& source,
+                                 const std::string& filename);
+PYCP_API void SetSourceParser(SourceParser fn);
+
+// 便捷调用：钩子未注册时抛 RuntimeError，语义见各自的钩子类型。
+PYCP_API BC::Module* CompileSourceString(const std::string& source,
+                                         const std::string& filename);
+PYCP_API Object* ExecSourceString(const std::string& source,
+                                  const std::string& filename, Object* globals);
+PYCP_API Object* ParseSourceString(const std::string& source,
+                                   const std::string& filename);
+
+// =============================================================
 // 命令行参数（argv）注入
 //
 // 宿主（PycpMain 解释器入口 / AOT 生成的 main）在启动时一次性写入，

@@ -50,6 +50,12 @@ BC::Module* default_source_compiler(const char*) {
 }
 std::atomic<SourceModuleCompiler> g_source_compiler{&default_source_compiler};
 
+// 源码字符串编译 / 执行 / 解析钩子（compile / codebyte / ast 用）。
+// nullptr 表示未注册——便捷调用会抛 RuntimeError 提示宿主未链接前端。
+std::atomic<SourceStringCompiler> g_string_compiler{nullptr};
+std::atomic<SourceExecutor> g_executor{nullptr};
+std::atomic<SourceParser> g_parser{nullptr};
+
 // 可执行文件所在目录（惰性计算并缓存）。
 std::string g_exe_dir;
 bool g_exe_dir_computed = false;
@@ -135,6 +141,54 @@ const std::string& GetStdlibDir() {
 void SetSourceModuleCompiler(SourceModuleCompiler fn) {
 	// 传 nullptr 表示注销，回退到默认实现（源码层禁用）。
 	g_source_compiler.store(fn != nullptr ? fn : &default_source_compiler);
+}
+
+void SetSourceStringCompiler(SourceStringCompiler fn) {
+	g_string_compiler.store(fn);
+}
+
+void SetSourceExecutor(SourceExecutor fn) {
+	g_executor.store(fn);
+}
+
+void SetSourceParser(SourceParser fn) {
+	g_parser.store(fn);
+}
+
+BC::Module* CompileSourceString(const std::string& source,
+                                const std::string& filename) {
+	SourceStringCompiler fn = g_string_compiler.load();
+	if (fn == nullptr) {
+		throw RuntimeError(
+			"source-string compiler hook is not registered: the host must link "
+			"PycpFrontend to enable compile/exec/ast.");
+	}
+	BC::Module* mod = fn(source, filename);
+	if (mod == nullptr) {
+		throw RuntimeError("source-string compiler hook returned a null module.");
+	}
+	return mod;
+}
+
+Object* ExecSourceString(const std::string& source, const std::string& filename,
+                         Object* globals) {
+	SourceExecutor fn = g_executor.load();
+	if (fn == nullptr) {
+		throw RuntimeError(
+			"source executor hook is not registered: the host must link "
+			"PycpFrontend to enable exec.");
+	}
+	return fn(source, filename, globals);
+}
+
+Object* ParseSourceString(const std::string& source, const std::string& filename) {
+	SourceParser fn = g_parser.load();
+	if (fn == nullptr) {
+		throw RuntimeError(
+			"source parser hook is not registered: the host must link "
+			"PycpFrontend to enable ast.parse.");
+	}
+	return fn(source, filename);
 }
 
 // 写入命令行参数（宿主启动时调用一次）；复制入全局状态，调用方 vector 可释放。

@@ -69,7 +69,8 @@ BC::Module ModuleLoader::compile_file(const std::string& path) {
 }
 
 BC::Module ModuleLoader::compile_string(const std::string& src,
-                                         const std::string& name) {
+                                         const std::string& name,
+                                         bool repl_eval) {
 	// 重置上一次 REPL 行的错误计数与源路径，避免沿用旧状态。
 	Pycp_parse_error_count = 0;
 	g_current_source_path = name;
@@ -83,7 +84,7 @@ BC::Module ModuleLoader::compile_string(const std::string& src,
 		throw Pycp::Exception("Expected a program AST.");
 	}
 	auto* program = static_cast<Pycp::Ast::Program*>(ast);
-	Pycp::BC::Module module = Pycp::Codegen::Compile(program, /*repl_eval=*/true);
+	Pycp::BC::Module module = Pycp::Codegen::Compile(program, repl_eval);
 	module.source_path = name;
 	delete ast;
 	return module;

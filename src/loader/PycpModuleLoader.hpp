@@ -68,12 +68,13 @@ public:
 	static BC::Module compile_file(const std::string& path);
 
 	// 编译内存中的源码字符串为 BC::Module（parse + Codegen::Compile）。
-	// 供 REPL 逐行/逐块求值使用；返回的 Module 已置 repl_eval=true，
-	// 使顶层表达式语句保留返回值供 REPL 回显。
-	//   src  : 源码文本
-	//   name : 用于报错显示的源名称（默认 REPL_SOURCE_NAME，即 <stdin>）
+	//   src       : 源码文本
+	//   name      : 用于报错显示的源名称（默认 REPL_SOURCE_NAME，即 <stdin>）
+	//   repl_eval : true 时置 Module.repl_eval，使顶层表达式语句保留返回值
+	//               供 REPL 回显；false 为普通模块语义（默认 true 保持既有行为）。
 	static BC::Module compile_string(const std::string& src,
-	                                 const std::string& name = REPL_SOURCE_NAME);
+	                                 const std::string& name = REPL_SOURCE_NAME,
+	                                 bool repl_eval = true);
 
 	// 单语句解析 ABI：编译【一段完整语句】为独立 BC::Module（parse_statement
 	// + Codegen::Compile）。语义对标 Python 的 "single" 解析模式——解析一条
