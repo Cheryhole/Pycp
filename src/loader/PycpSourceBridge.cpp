@@ -3,6 +3,7 @@
 #include "abi/PycpNativeExt.hpp"
 #include "bytecode/PycpBytecode.hpp"
 #include "loader/PycpModuleLoader.hpp"
+#include "parser/PycpAstReflect.hpp"
 #include "vm/PycpBytecodeVM.hpp"
 #include "object/PycpNone.hpp"
 #include "object/PycpMap.hpp"
@@ -88,12 +89,17 @@ Object* bridge_exec_string(const std::string& source,
 	return None::instance;
 }
 
+// SourceParser：源码字符串 -> AST 节点树（已映射为 pycp 对象），供 ast.parse。
+Object* bridge_parse_string(const std::string& source, const std::string& filename) {
+	return Ast::ParseToObjects(source, filename);
+}
+
 } // anonymous namespace
 
 void RegisterSourceHooks() {
 	SetSourceStringCompiler(&bridge_compile_string);
 	SetSourceExecutor(&bridge_exec_string);
-	// SourceParser（ast.parse 用）在前端 AST 反射模块中注册（见 ast 模块阶段）。
+	SetSourceParser(&bridge_parse_string);
 }
 
 } // namespace Pycp

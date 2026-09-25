@@ -4,7 +4,8 @@
 // 校验 RegisterSourceHooks 注册的源码字符串编译 / 执行钩子生效：
 //   1) CompileSourceString 能编译一段源码为字节码 Module；
 //   2) ExecSourceString 能在全新 globals 下执行；
-//   3) ExecSourceString 传入 Map 时能把新变量写回该 Map。
+//   3) ExecSourceString 传入 Map 时能把新变量写回该 Map；
+//   4) ParseSourceString 能解析源码并返回 AST 节点树（type_name == Program）。
 // =====================================================================
 #include <iostream>
 
@@ -42,12 +43,25 @@ int main() {
 
 	Pycp::Object* key = Pycp::String::FromCString("b"); // Owned
 	Pycp::Object* val = g->__get_item__(key);           // Borrowed
-	const bool ok = (val != nullptr && val->is_type("Integer") &&
-	                 static_cast<Pycp::Integer*>(val)->get_value() == 7);
+	const bool globals_ok = (val != nullptr && val->is_type("Integer") &&
+	                         static_cast<Pycp::Integer*>(val)->get_value() == 7);
 	Pycp::Decref(key);
 	Pycp::Decref(g);
 
-	std::cout << (ok ? "HOOKS OK" : "FAIL globals writeback") << std::endl;
+	// 4) AST 解析钩子：源码字符串 -> AST 节点树（根节点类型名为 "Program"）。
+	bool ast_ok = false;
+	try {
+		Pycp::Object* ast = Pycp::ParseSourceString("x = 1\n", "<hooks-test>");
+		ast_ok = (ast != nullptr && ast->is_type("Program"));
+		if (ast != nullptr) Pycp::Decref(ast);
+	} catch (const Pycp::Exception& e) {
+		std::cout << "FAIL ast: " << e.what() << std::endl;
+	}
+
+	const bool ok = globals_ok && ast_ok;
+	std::cout << (ok ? "HOOKS OK" : "FAIL (globals/ast)")
+	          << " globals=" << (globals_ok ? "ok" : "bad")
+	          << " ast=" << (ast_ok ? "ok" : "bad") << std::endl;
 	Pycp::Finalize();
 	return ok ? 0 : 1;
 }

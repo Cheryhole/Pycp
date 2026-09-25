@@ -314,6 +314,7 @@ endif()
 # =====================================================================
 set(PYCP_FRONTEND_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/parser/PycpAstNode.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/parser/PycpAstReflect.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/parser/escape_handler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/parser/preprocessor/PycpPreprocessor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/PycpCodegen.cpp
