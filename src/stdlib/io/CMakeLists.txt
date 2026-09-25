@@ -16,12 +16,10 @@
 
 # 本库源文件与头文件
 set(IO_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/PycpFile.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io.cpp
 )
 
 set(IO_HEADERS
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/PycpFile.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/include/io.hpp
 )
 

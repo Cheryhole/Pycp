@@ -96,10 +96,17 @@ public:
     void foreach_ref(const std::function<void(Object*)>& visit) override;
 };
 
+// File(path [, mode]) 的内建构造器（io / filesystem 共用；供 set_type 使用）。
+PYCP_API Object* FileConstructor(Object* self, FixedList* args, Map* kwargs);
+
 // File 全部方法（公开方法 write/read/readline/readlines/close/open +
-// 全部魔术方法）的唯一权威清单。io 的类型类注册（Module::set_type）
-// 与实例 __inspect__ 均从它派生。
+// 全部魔术方法）的唯一权威清单。类型类注册与实例 __inspect__ 均从它派生。
 const std::vector<MethodEntry>& File_method_table();
+
+// 运行时唯一的 File 类型类：首次调用时创建（含类型类登记）并 root，
+// 此后返回同一对象。io.File 与 filesystem.File 均绑定此对象（同一别名）。
+// 返回 Borrowed。
+PYCP_API Class* FileTypeClass();
 
 // 类型萃取特化：File（可变）。
 template <> struct TypeTraits<File> {

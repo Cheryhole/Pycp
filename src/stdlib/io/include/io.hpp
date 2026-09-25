@@ -19,7 +19,7 @@
 // 返回构建好的 Module。
 // =============================================================
 
-#include "PycpFile.hpp"
+#include "object/PycpFile.hpp"   // File 实现已上提至运行时（io.File == filesystem.File）
 #include "object/PycpConfig.hpp"
 
 namespace Pycp {

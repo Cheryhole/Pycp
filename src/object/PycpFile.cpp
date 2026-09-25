@@ -1,4 +1,4 @@
-#include "PycpFile.hpp"
+#include "object/PycpFile.hpp"
 #include "object/PycpClass.hpp"
 #include "object/PycpException.hpp"
 #include "object/PycpGC.hpp"
@@ -10,6 +10,7 @@
 #include "object/PycpMagic.hpp"
 #include "object/PycpFixedList.hpp"
 #include "object/PycpExtension.hpp" // 扩展唯一对外头（参数规范框架 / set_*）
+#include "object/PycpModule.hpp"    // Module::set_type（FileTypeClass 用）
 
 #include <sstream>
 #include <cstring>
@@ -493,6 +494,38 @@ const std::vector<MethodEntry>& File_method_table() {
 		{"__boolean__",          nullptr},
 	};
 	return table;
+}
+
+// File(path [, mode]) 的内建构造器（io / filesystem 共用，对齐 Python open）。
+Object* FileConstructor(Object* /*self*/, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"File", { Extension::Arg::Required("path"),
+		          Extension::Arg::Optional("mode", String::FromCString("r")) });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	Object* pv = r["path"];
+	Object* mv = r["mode"];
+	if (pv == nullptr || !IsString(pv)) {
+		throw TypeError("File: argument 'path' expects a string.");
+	}
+	if (mv == nullptr || !IsString(mv)) {
+		throw TypeError("File: argument 'mode' expects a string.");
+	}
+	return New<File>(AsString(pv), AsString(mv));
+}
+
+// 运行时唯一的 File 类型类：io.File 与 filesystem.File 均绑定此对象。
+Class* FileTypeClass() {
+	static Class* cls = nullptr;
+	if (cls == nullptr) {
+		// 用一个内部模块承载类型类（命名空间与类型类注册表各持一份引用），
+		// 并 root 二者，使类型类在进程生命周期内常驻。
+		static Module* owner = Module::New("<runtime:file>");
+		GC_AddRoot(owner);
+		cls = owner->set_type("File", FileConstructor, /*initialize=*/nullptr,
+		                      File_method_table);
+		GC_AddRoot(cls);
+	}
+	return cls;
 }
 
 Object* File::__get_attribute__(const std::string& attr_name) {

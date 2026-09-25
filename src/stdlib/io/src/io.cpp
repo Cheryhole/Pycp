@@ -1,5 +1,5 @@
 #include "io.hpp"
-#include "PycpFile.hpp"
+#include "object/PycpFile.hpp"   // File 实现已上提至运行时
 #include "object/PycpModule.hpp"   // runtime 的 Module 完整定义
 #include "object/PycpClass.hpp"    // 类型对象注册（Module::set_type）
 #include "object/PycpFunction.hpp"
@@ -152,19 +152,6 @@ Object* _builtin_input(Object*, FixedList* args, Map* kwargs) {
 	return g_io_stdin->readline();
 }
 
-// File(path [, mode])：打开文件并返回 File 对象（对齐 Python open）。
-// 支持 1 或 2 个参数：path 必填，mode 可选（默认 "r"）。
-// 默认值 "r" 在规范表内登记，仅在首次编译规范时构造一次并常驻。
-Object* _builtin_file_ctor(Object*, FixedList* args, Map* kwargs) {
-	static const Extension::ArgTable spec = Extension::CompileArgs(
-		"File", { Extension::Arg::Required("path"),
-		          Extension::Arg::Optional("mode", String::FromCString("r")) });
-	Extension::ArgResult r = spec.Bind(args, kwargs);
-	std::string path = require_string("open", "path", r["path"]);
-	std::string mode = require_string("open", "mode", r["mode"]);
-	return New<File>(path, mode);
-}
-
 // io.stdout / io.stdin / io.stderr 为 File，
 // 支持 .write（仅字符串）、.flush、.readline 方法；
 // print（对齐 Python print(*args, sep, end, file, flush)）/ input 为模块级函数。
@@ -204,12 +191,14 @@ Module* make_io_module() {
 	// 注册为 BuiltinTypeClass（而非普通 Function），使 io.File 显示为
 	// "<class "File">" 且 io.File.__inspect__() 返回其方法名（write/read/
 	// readline/readlines/close/open），而非空结果。
-	// File 类型类：一次性完整注册（方法表驱动，含类型类登记）。
-	// io.File(path [, mode]) 打开文件并返回 File 对象；方法表使
-	// io.File.__inspect__() 与 File 实例 __inspect__() 同源一致。
-	// mode 的默认值与函数名 "File" 均由构造器内部的参数规范表登记
-	// （构造调用时 self 为 nullptr，故规范表内显式写明函数名以生成可读报错）。
-	mod->set_type("File", _builtin_file_ctor, /*initialize=*/nullptr, File_method_table);
+	// File 类型类：绑定运行时唯一的 File 类型类——与 filesystem.File 指向
+	// 同一对象（别名）。类型类由 FileTypeClass() 首次创建并登记 / root；
+	// set_object 会把它同时登记进运行时类型类注册表（typeof / __class__）。
+	{
+		Object* file_cls = FileTypeClass(); // Borrowed（运行时 root 持有）
+		Incref(file_cls);                   // set_object 接管所有权
+		mod->set_object("File", file_cls);
+	}
 
 	return mod;
 }

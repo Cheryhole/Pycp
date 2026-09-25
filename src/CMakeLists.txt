@@ -220,6 +220,7 @@ set(PYCP_RUNTIME_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/object/PycpIterator.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/object/PycpMagic.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/object/PycpExtension.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/object/PycpFile.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/bytecode/PycpBytecode.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/bytecode/PycpBytecodeDump.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/bytecode/PycpBytecodeObject.cpp
