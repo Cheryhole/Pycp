@@ -8,6 +8,7 @@
 //   - pycp.String(x)：内置类型类，调用时返回字符串表示（语义对齐 Python str(x)）。
 //   - pycp.Integer(x)：内置类型类，调用时返回整数（语义对齐 Python int(x)）。
 //   - pycp.Object：基类，含默认空 __initialize__（供 super() 调用）。
+//   - pycp.exec(code [, globals])：执行源码字符串或字节码模块对象。
 //   - pycp.public / pycp.private：可见性装饰器函数，功能与 classtools
 //     库中的同名函数完全一致（设置被装饰对象的可见性后原样返回）。
 //

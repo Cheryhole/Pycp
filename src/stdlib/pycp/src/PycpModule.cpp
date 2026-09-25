@@ -17,6 +17,10 @@
 #include "object/PycpClass.hpp"     // RegisterObjectClass / 类型对象注册（Module::set_type）
 #include "abi/PycpNativeExt.hpp" // SetArgv/GetArgv：构建 pycp.argv 的宿主注入来源
 #include "object/PycpExtension.hpp" // 扩展唯一对外头（导出宏 + set_* + 参数规范框架）
+#include "bytecode/PycpBytecode.hpp"       // BC::Module（exec 的模块对象入参）
+#include "bytecode/PycpBytecodeObject.hpp" // BC::IsModuleRef / UnwrapModule
+
+#include <memory>
 
 namespace Pycp {
 
@@ -471,6 +475,34 @@ const std::vector<MethodEntry>& Object_method_table() {
 	return table;
 }
 
+// exec(code [, globals])：执行源码字符串或字节码模块对象（对齐 Python exec）。
+//   code    : 源码字符串，或 bytecode.compile 返回的字节码模块对象；
+//   globals : 可选 Map。给定则以其为全局命名空间执行，并把执行后新增 /
+//             改动的名字写回（对齐 exec(code, globals)）；省略 / None 则用
+//             全新全局命名空间。
+// 返回顶层结果（Owned）。字节码模块对象经运行时 VM 执行；源码字符串经宿主
+// 注册的 SourceExecutor 钩子编译并执行。
+Object* _builtin_exec(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs("exec", {
+		Extension::Arg::Required("code"),
+		Extension::Arg::Optional("globals"),
+	});
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	Object* code = r["code"];
+	Object* globals = r.given("globals") ? r["globals"] : nullptr;
+	if (code == nullptr) throw TypeError("exec: argument 'code' is null.");
+
+	if (BC::IsModuleRef(code)) {
+		std::shared_ptr<BC::Module> mod = BC::UnwrapModule(code);
+		if (!mod) throw TypeError("exec: invalid bytecode module object.");
+		return RunBytecodeModule(mod.get(), globals);
+	}
+	if (IsString(code)) {
+		return ExecSourceString(AsString(code), "<exec>", globals);
+	}
+	throw TypeError("exec: argument must be a bytecode module or a source string.");
+}
+
 Module* make_pycp_module() {
 	Module* mod = Module::New(MODULE_NAME);
 
@@ -521,6 +553,9 @@ Module* make_pycp_module() {
 
 	// typeof(obj)：返回对象所属的类对象（类对象返回 pycp.Object）。
 	mod->set_function("typeof", _builtin_typeof);
+
+	// exec(code [, globals])：执行源码字符串 / 字节码模块对象。
+	mod->set_function("exec", _builtin_exec, /*with_keywords=*/true);
 
 	// argv：命令行参数列表（对齐 Python 的 sys.argv）。构造时从宿主注入的
 	// 全局 argv（Pycp::GetArgv）构建为 List[String]，读一次快照加入命名空间。

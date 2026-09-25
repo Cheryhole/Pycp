@@ -1,7 +1,7 @@
 # =====================================================================
 # Pycp bytecode 标准库构建脚本（动态库 + 静态库）
 # ---------------------------------------------------------------------
-# 字节码结构化内省（类似 dis）：bytecode.compile / bytecode.dis。
+# 字节码结构化内省（类似 dis）：bytecode.compile / bytecode.dump。
 # 本模块只链接 PycpRuntime；源码 -> 字节码经宿主 SourceStringCompiler 钩子。
 #
 # 产物：

@@ -48,30 +48,30 @@ Object* _builtin_compile(Object*, FixedList* args, Map* kwargs) {
 	return BC::WrapModule(mod); // Owned
 }
 
-// bytecode.dis(x) -> 反汇编文本（x 为字节码模块对象或源码字符串）
-Object* _builtin_dis(Object*, FixedList* args, Map* kwargs) {
-	static const Extension::ArgTable spec = Extension::CompileArgs("dis", {
+// bytecode.dump(x) -> 反汇编文本（x 为字节码模块对象或源码字符串）
+Object* _builtin_dump(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs("dump", {
 		Extension::Arg::Required("x"),
 	});
 	Extension::ArgResult r = spec.Bind(args, kwargs);
 	Object* x = r["x"];
-	if (x == nullptr) throw TypeError("dis: argument 'x' is null.");
+	if (x == nullptr) throw TypeError("dump: argument 'x' is null.");
 
 	if (BC::IsModuleRef(x)) return x->__string__(); // Owned
 	if (IsString(x)) {
-		std::shared_ptr<BC::Module> mod(CompileSourceString(AsString(x), "<dis>"));
+		std::shared_ptr<BC::Module> mod(CompileSourceString(AsString(x), "<dump>"));
 		Object* ref = BC::WrapModule(mod); // Owned
 		Object* out = ref->__string__();   // Owned
 		Decref(ref);
 		return out;
 	}
-	throw TypeError("dis: argument must be a bytecode module or a source string.");
+	throw TypeError("dump: argument must be a bytecode module or a source string.");
 }
 
 Module* make_bytecode_module() {
 	Module* mod = Module::New(MODULE_NAME);
 	mod->set_function("compile", _builtin_compile, /*with_keywords=*/true);
-	mod->set_function("dis", _builtin_dis, /*with_keywords=*/true);
+	mod->set_function("dump", _builtin_dump, /*with_keywords=*/true);
 	return mod;
 }
 
