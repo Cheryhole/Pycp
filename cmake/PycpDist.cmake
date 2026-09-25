@@ -225,10 +225,14 @@ foreach(_d IN LISTS _include_dirs)
 		message(WARNING "pycp-dist: include directory does not exist: ${_dir}")
 		continue()
 	endif()
+	# 保留组件子目录（object/ bytecode/ vm/ abi/）：运行时头文件内部使用
+	# 组件前缀 include（如 "object/PycpConfig.hpp"），故 SDK 的 include/
+	# 必须与源码分层同构。
+	get_filename_component(_component "${_dir}" NAME)
 	file(GLOB _headers "${_dir}/*.h" "${_dir}/*.hpp")
 	foreach(_h IN LISTS _headers)
 		get_filename_component(_name "${_h}" NAME)
-		pycp_dist_copy("${_h}" "${INCLUDE_DIR}/${_name}")
+		pycp_dist_copy("${_h}" "${INCLUDE_DIR}/${_component}/${_name}")
 	endforeach()
 endforeach()
 

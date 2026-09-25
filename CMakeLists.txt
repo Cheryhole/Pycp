@@ -1,10 +1,21 @@
 # =====================================================================
 # Pycp 项目总构建脚本
 # ---------------------------------------------------------------------
-# 统一构建入口：编排 backend 运行时（静态库）、frontend 前端源码
-# （AST / Codegen / AOT / Flex/Bison 生成）与顶层 PycpMain.cpp，
-# 最终产出 pycp 可执行文件，并由 pycp-dist 目标把所有产物收集到
-# 最终输出目录（默认 build/dist/，自包含可直接运行 / 部署）。
+# 统一构建入口。源码按组件分层组织在 src/ 下：
+#   src/object   对象系统 + GC + 类型系统
+#   src/bytecode 字节码格式 + 序列化 + dump
+#   src/vm       执行引擎
+#   src/abi      稳定 ABI + 原生扩展加载
+#   src/parser   AST + 词法/语法 + 预处理
+#   src/codegen  字节码代码生成
+#   src/loader   模块加载器
+#   src/aot      原生编译（迁移期临时保留的 C++ 实现）
+#   src/main     可执行入口
+#   src/stdlib   原生标准库扩展
+#
+# 两个库：
+#   PycpRuntime  = object + bytecode + vm + abi（静态库 + 动态库）
+#   PycpFrontend = parser + codegen + loader + aot（静态库，由宿主链接）
 #
 # 用法：
 #   cmake -S . -B build
@@ -61,13 +72,12 @@ message(STATUS "Bison : ${BISON_EXECUTABLE}")
 message(STATUS "Flex  : ${FLEX_EXECUTABLE}")
 
 # =====================================================================
-# Backend 运行时（静态库 / 动态库，可在构建时选择）
+# 运行时库形态（静态 / 动态，可在构建时选择）
 # ---------------------------------------------------------------------
-# 默认同时构建静态库与动态库（static ON、shared ON），pycp 与三个 stdlib
+# 默认同时构建静态库与动态库（static ON、shared ON），pycp 与 stdlib
 # 扩展统一【动态链接】运行时：全进程只存在一份运行时状态（GC 池、小整数池、
 # 扩展句柄缓存），避免每个扩展 .so 内嵌一份副本。静态库仍产出，供 AOT 生成
 # 代码选择静态链接。想退回纯静态，配置 -DBUILD_RUNTIME_SHARED=OFF。
-# 产物统一输出到 build/backend/；关闭非必需的 Python 绑定 / 测试目标。
 # 所有产物最终由 pycp-dist 目标收集到最终输出目录（默认 build/dist）。
 # =====================================================================
 set(BUILD_RUNTIME_STATIC ON CACHE BOOL "Build static PycpRuntime library")
@@ -76,22 +86,56 @@ set(BUILD_RUNTIME_STATIC ON CACHE BOOL "Build static PycpRuntime library")
 # 符号，必须靠 PycpRuntime_shared.dll 导出。
 set(BUILD_RUNTIME_SHARED ON CACHE BOOL "Build shared PycpRuntime library")
 set(BUILD_PYTHON_BINDING OFF CACHE BOOL "" FORCE)
-set(BUILD_TEST OFF CACHE BOOL "" FORCE)
+# 运行时自测程序（pycp-selftest）：默认关闭。
+set(BUILD_TEST OFF CACHE BOOL "Build runtime self-test executable (pycp-selftest)")
 
 # 合法性校验：至少构建一种库，否则无链接目标
 if(NOT BUILD_RUNTIME_STATIC AND NOT BUILD_RUNTIME_SHARED)
     message(FATAL_ERROR "At least one of BUILD_RUNTIME_STATIC / BUILD_RUNTIME_SHARED must be ON.")
 endif()
 
-add_subdirectory(backend)
+# =====================================================================
+# 路径与目标选择
+# =====================================================================
+# 源根：所有组件前缀 include（如 "object/PycpObject.hpp"）均以它为搜索根。
+set(PYCP_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set(PYCP_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+file(MAKE_DIRECTORY ${PYCP_GENERATED_DIR})
+
+# 运行时库目标：shared 优先（默认），否则静态。PycpFrontend 与 pycp 均链接它。
+if(BUILD_RUNTIME_SHARED)
+    set(PYCP_RUNTIME_TARGET PycpRuntime_shared)
+else()
+    set(PYCP_RUNTIME_TARGET PycpRuntime_static)
+endif()
+
+# 运行时头文件目录（组件分层）。dist 时【扁平】收集到 dist/include，
+# 以匹配 AOT 生成代码的扁平 #include（如 "PycpABI.hpp"）。
+set(PYCP_RUNTIME_INCLUDE_DIRS
+    ${PYCP_SRC_DIR}/object
+    ${PYCP_SRC_DIR}/bytecode
+    ${PYCP_SRC_DIR}/vm
+    ${PYCP_SRC_DIR}/abi
+)
+
+# 行编辑库（提供 REPL 方向键/历史，仅用于无参数 REPL 路径）。
+# 统一使用 cpp-linenoise（C++17 头文件库，跨平台，原生支持 Windows 控制台）。
+set(LINENOISE_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cpp-linenoise)
+message(STATUS "Line editing: cpp-linenoise (header-only)")
 
 # =====================================================================
-# 标准库动态库（io / Pycp）：编译为 .so/.dll，import 时动态加载
+# 组件分层（PycpRuntime + PycpFrontend + Flex/Bison 生成）
+# =====================================================================
+# 在 src/CMakeLists.txt 中定义两个库目标，并完成解析器/词法器的生成。
+add_subdirectory(src)
+
+# =====================================================================
+# 标准库动态库（io / Pycp / classtools / moduletools）
 # ---------------------------------------------------------------------
-# 在 backend 之后引入，使动态库可链接 PycpRuntime。产物输出到
+# 在 src 之后引入，使动态库可链接 PycpRuntime。产物输出到
 # ${CMAKE_BINARY_DIR}/stdlib/，运行时可执行文件旁的 stdlib/ 目录加载。
 # =====================================================================
-add_subdirectory(stdlib)
+add_subdirectory(src/stdlib)
 
 # 取出各 stdlib 子库注册的全局目标清单（安装与 dist 收集共用）。
 # 新增 stdlib 子库只需在其 CMakeLists 中 set_property 注册，此处无需改动。
@@ -100,289 +144,30 @@ get_property(PYCP_STDLIB_TARGETS GLOBAL PROPERTY PYCP_STDLIB_TARGETS)
 get_property(PYCP_STDLIB_STATIC_TARGETS GLOBAL PROPERTY PYCP_STDLIB_STATIC_TARGETS)
 
 # =====================================================================
-# 目录路径
-# =====================================================================
-set(PYCP_FRONTEND_DIR ${CMAKE_CURRENT_SOURCE_DIR}/frontend)
-set(PYCP_BACKEND_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/backend)
-set(PYCP_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
-
-file(MAKE_DIRECTORY ${PYCP_GENERATED_DIR})
-
-# =====================================================================
-# 源文件
-# =====================================================================
-set(AST_SOURCES
-    ${PYCP_FRONTEND_DIR}/src/PycpAstNode.cpp
-)
-
-set(CODGEN_SOURCES
-    ${PYCP_FRONTEND_DIR}/src/PycpCodegen.cpp
-)
-
-set(AOT_SOURCES
-    ${PYCP_FRONTEND_DIR}/src/aot/PycpAot.cpp
-    ${PYCP_FRONTEND_DIR}/src/aot/PycpAotSdkLocator.cpp
-    ${PYCP_FRONTEND_DIR}/src/aot/PycpModulePlan.cpp
-    ${PYCP_FRONTEND_DIR}/src/aot/PycpProjectSpec.cpp
-    ${PYCP_FRONTEND_DIR}/src/aot/PycpBuildScriptGenerator.cpp
-    ${PYCP_FRONTEND_DIR}/src/aot/PycpCMakeGenerator.cpp
-    ${PYCP_FRONTEND_DIR}/src/aot/PycpAotProject.cpp
-    ${PYCP_FRONTEND_DIR}/src/aot/PycpScriptCodegen.cpp
-)
-
-set(LOADER_SOURCES
-    ${PYCP_FRONTEND_DIR}/src/PycpModuleLoader.cpp
-)
-
-set(LEXER_SOURCES
-    ${PYCP_FRONTEND_DIR}/src/escape_handler.cpp
-)
-
-set(PREPROCESSOR_SOURCES
-    ${PYCP_FRONTEND_DIR}/src/preprocessor/PycpPreprocessor.cpp
-)
-
-set(PREPROCESSOR_BISON_INPUT
-    ${PYCP_FRONTEND_DIR}/src/preprocessor/PycpPreprocessorParser.y
-)
-
-set(PREPROCESSOR_FLEX_INPUT
-    ${PYCP_FRONTEND_DIR}/src/preprocessor/PycpPreprocessorLexer.l
-)
-
-# 主程序入口：位于项目顶层目录
-set(MAIN_SOURCE
-    ${CMAKE_CURRENT_SOURCE_DIR}/PycpMain.cpp
-)
-
-# =====================================================================
-# Flex / Bison 输入文件
-# =====================================================================
-set(BISON_INPUT
-    ${PYCP_FRONTEND_DIR}/src/PycpParser.y
-)
-
-set(FLEX_INPUT
-    ${PYCP_FRONTEND_DIR}/src/PycpLexer.l
-)
-
-# =====================================================================
-# 生成解析器与词法分析器（Flex / Bison）
-# ---------------------------------------------------------------------
-# 不使用 bison_target / flex_target / add_flex_bison_dependency，改为手写
-# add_custom_command。原因：Windows 下的 win_flex / win_bison
-# （winflexbison）并发不安全——它用 _tempnam + fopen 申请临时文件（TOCTOU），
-# 并行运行的多个实例会共用同一个临时文件并互相覆盖，产出"未展开的 m4 骨架"
-# （残留 M4_YY_PREFIX / m4_ifdef / [[#ifndef 等模板文本）。拿去编译会得到
-# 数百行毫无意义的错误，例如：
-#   error: '#endif' without '#if'
-#   error: stray '#' in program
-#   error: 'out_ALREADY_DEFINED' does not name a type
-#   error: expected unqualified-id before ']' token
-# 而且产物比 .l/.y 新，不手动删除就不会重新生成，问题会一直卡住。
-# 上游已知缺陷：
-#   https://github.com/lexxmark/winflexbison/issues/86
-#   https://github.com/westes/flex/issues/580
-# Linux/WSL 的 GNU flex/bison 用 mkstemp，并发安全，故只有 WIN32 需要串行化。
-#
-# flex_target 不支持追加 DEPENDS，无法表达"第二个 flex 必须等第一个 flex
-# 结束"，所以必须手写命令才能建立下面的依赖链：
-#   PycpParser -> PycpLexer -> PycpPreprocessorParser -> PycpPreprocessorLexer
-# 每条命令末尾再跑一次生成物自检（cmake/PycpCheckGenerated.cmake），在编译器
-# 介入前把"几百行莫名报错"变成一条可操作的错误。
-# =====================================================================
-
-# 生成产物（显式列出，便于建立依赖链与自检）
-set(PYCP_GEN_PARSER_CPP    ${PYCP_GENERATED_DIR}/PycpParser.cpp)
-set(PYCP_GEN_PARSER_HPP    ${PYCP_GENERATED_DIR}/PycpParser.hpp)
-set(PYCP_GEN_PARSER_REPORT ${PYCP_GENERATED_DIR}/PycpParser.output)
-
-set(PYCP_GEN_LEXER_CPP     ${PYCP_GENERATED_DIR}/PycpLexer.cpp)
-set(PYCP_GEN_LEXER_HPP     ${PYCP_GENERATED_DIR}/PycpLexer.hpp)
-
-set(PYCP_GEN_PP_PARSER_CPP    ${PYCP_GENERATED_DIR}/PycpPreprocessorParser.cpp)
-set(PYCP_GEN_PP_PARSER_HPP    ${PYCP_GENERATED_DIR}/PycpPreprocessorParser.hpp)
-set(PYCP_GEN_PP_PARSER_REPORT ${PYCP_GENERATED_DIR}/PycpPreprocessorParser.output)
-
-set(PYCP_GEN_PP_LEXER_CPP     ${PYCP_GENERATED_DIR}/PycpPreprocessorLexer.cpp)
-set(PYCP_GEN_PP_LEXER_HPP     ${PYCP_GENERATED_DIR}/PycpPreprocessorLexer.hpp)
-
-set(PYCP_GEN_CHECK_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PycpCheckGenerated.cmake)
-
-# Windows 串行化：每一步额外依赖上一步的全部产物。
-# 词法器对语法头文件的依赖（token 常量）在所有平台都保留；
-# 跨解析器的依赖仅在 WIN32 下追加，Linux/WSL 仍是并行。
-if(WIN32)
-    set(PYCP_GEN_PP_PARSER_EXTRA_DEPS
-        ${PYCP_GEN_LEXER_CPP} ${PYCP_GEN_LEXER_HPP})
-else()
-    set(PYCP_GEN_PP_PARSER_EXTRA_DEPS)
-endif()
-
-# ---------------------------------------------------------------------
-# 1) 主解析器：PycpParser.y -> PycpParser.cpp / .hpp（+ .output 报告）
-# ---------------------------------------------------------------------
-add_custom_command(
-    OUTPUT
-        ${PYCP_GEN_PARSER_CPP}
-        ${PYCP_GEN_PARSER_HPP}
-        ${PYCP_GEN_PARSER_REPORT}
-    # bison / flex 不会自建输出目录，且在 WIN32 下两条命令可能先于
-    # file(MAKE_DIRECTORY) 被触发，故每条生成命令都自带建目录步骤。
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${PYCP_GENERATED_DIR}
-    COMMAND ${BISON_EXECUTABLE}
-        -v -Wcounterexamples
-        --defines=${PYCP_GEN_PARSER_HPP}
-        -o ${PYCP_GEN_PARSER_CPP}
-        ${BISON_INPUT}
-    COMMAND ${CMAKE_COMMAND}
-        -DFILE=${PYCP_GEN_PARSER_CPP}
-        -DEXPECT=Pycpparse
-        -DLABEL=PycpParser.cpp
-        -P ${PYCP_GEN_CHECK_SCRIPT}
-    DEPENDS ${BISON_INPUT}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "[BISON][PycpParser] Generating parser"
-    VERBATIM
-)
-
-# ---------------------------------------------------------------------
-# 2) 主词法器：PycpLexer.l -> PycpLexer.cpp / .hpp（依赖解析器头文件）
-# ---------------------------------------------------------------------
-add_custom_command(
-    OUTPUT
-        ${PYCP_GEN_LEXER_CPP}
-        ${PYCP_GEN_LEXER_HPP}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${PYCP_GENERATED_DIR}
-    COMMAND ${FLEX_EXECUTABLE}
-        --header-file=${PYCP_GEN_LEXER_HPP}
-        -o${PYCP_GEN_LEXER_CPP}
-        ${FLEX_INPUT}
-    COMMAND ${CMAKE_COMMAND}
-        -DFILE=${PYCP_GEN_LEXER_CPP}
-        -DEXPECT=Pycp_create_buffer
-        -DLABEL=PycpLexer.cpp
-        -P ${PYCP_GEN_CHECK_SCRIPT}
-    DEPENDS ${FLEX_INPUT} ${PYCP_GEN_PARSER_HPP}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "[FLEX][PycpLexer] Generating scanner"
-    VERBATIM
-)
-
-# ---------------------------------------------------------------------
-# 3) 预处理指令解析器（独立于主解析器）：
-#    PycpPreprocessorParser.y -> .cpp / .hpp（+ .output 报告）
-# ---------------------------------------------------------------------
-add_custom_command(
-    OUTPUT
-        ${PYCP_GEN_PP_PARSER_CPP}
-        ${PYCP_GEN_PP_PARSER_HPP}
-        ${PYCP_GEN_PP_PARSER_REPORT}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${PYCP_GENERATED_DIR}
-    COMMAND ${BISON_EXECUTABLE}
-        -v -Wcounterexamples
-        --defines=${PYCP_GEN_PP_PARSER_HPP}
-        -o ${PYCP_GEN_PP_PARSER_CPP}
-        ${PREPROCESSOR_BISON_INPUT}
-    COMMAND ${CMAKE_COMMAND}
-        -DFILE=${PYCP_GEN_PP_PARSER_CPP}
-        -DEXPECT=Pycppparse
-        -DLABEL=PycpPreprocessorParser.cpp
-        -P ${PYCP_GEN_CHECK_SCRIPT}
-    DEPENDS ${PREPROCESSOR_BISON_INPUT} ${PYCP_GEN_PP_PARSER_EXTRA_DEPS}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "[BISON][PycpPreprocessorParser] Generating parser"
-    VERBATIM
-)
-
-# ---------------------------------------------------------------------
-# 4) 预处理指令词法器：
-#    PycpPreprocessorLexer.l -> .cpp / .hpp（依赖其解析器头文件）
-# ---------------------------------------------------------------------
-add_custom_command(
-    OUTPUT
-        ${PYCP_GEN_PP_LEXER_CPP}
-        ${PYCP_GEN_PP_LEXER_HPP}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${PYCP_GENERATED_DIR}
-    COMMAND ${FLEX_EXECUTABLE}
-        --header-file=${PYCP_GEN_PP_LEXER_HPP}
-        -o${PYCP_GEN_PP_LEXER_CPP}
-        ${PREPROCESSOR_FLEX_INPUT}
-    COMMAND ${CMAKE_COMMAND}
-        -DFILE=${PYCP_GEN_PP_LEXER_CPP}
-        -DEXPECT=Pycpp_create_buffer
-        -DLABEL=PycpPreprocessorLexer.cpp
-        -P ${PYCP_GEN_CHECK_SCRIPT}
-    DEPENDS
-        ${PREPROCESSOR_FLEX_INPUT}
-        ${PYCP_GEN_PP_PARSER_HPP}
-        ${PYCP_GEN_PP_PARSER_CPP}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "[FLEX][PycpPreprocessorLexer] Generating scanner"
-    VERBATIM
-)
-
-# =====================================================================
 # 可执行文件
+# ---------------------------------------------------------------------
+# 主程序入口（src/main/PycpMain.cpp）链接运行时 + 前端两个库。
 # =====================================================================
-# 行编辑库（提供 REPL 方向键/历史，仅用于无参数 REPL 路径）。
-# 统一使用 cpp-linenoise（C++17 头文件库，跨平台，原生支持 Windows 控制台）。
-set(LINENOISE_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cpp-linenoise)
-message(STATUS "Line editing: cpp-linenoise (header-only)")
-
 add_executable(pycp
-    ${MAIN_SOURCE}
-    ${AST_SOURCES}
-    ${CODGEN_SOURCES}
-    ${AOT_SOURCES}
-    ${LOADER_SOURCES}
-    ${LEXER_SOURCES}
-    ${PREPROCESSOR_SOURCES}
-
-    # Flex / Bison 生成物（见上方"生成解析器与词法分析器"一节）
-    ${PYCP_GEN_PARSER_CPP}
-    ${PYCP_GEN_PARSER_HPP}
-    ${PYCP_GEN_LEXER_CPP}
-    ${PYCP_GEN_LEXER_HPP}
-    ${PYCP_GEN_PP_PARSER_CPP}
-    ${PYCP_GEN_PP_PARSER_HPP}
-    ${PYCP_GEN_PP_LEXER_CPP}
-    ${PYCP_GEN_PP_LEXER_HPP}
+    ${PYCP_SRC_DIR}/main/PycpMain.cpp
 )
 
-# PycpParser.y 顶部 #include "PycpLexer.hpp"，该头文件本身也是生成物。
-# 显式声明这一编译单元的依赖，避免并行构建下"编译先于生成"
-# （Ninja 下会退化成 missing and no known rule to make it）。
-set_source_files_properties(${PYCP_GEN_PARSER_CPP} PROPERTIES
-    OBJECT_DEPENDS ${PYCP_GEN_LEXER_HPP}
-)
+# 前端 OBJECT 库的产物直接并入可执行文件（OBJECT 库保证静态自注册对象，
+# 如 CMake/构建脚本生成器，不被静态库链接期裁撤）。
+target_sources(pycp PRIVATE $<TARGET_OBJECTS:PycpFrontend_obj>)
 
-# =====================================================================
-# 头文件搜索路径
-# =====================================================================
 target_include_directories(pycp
     PRIVATE
-
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${PYCP_FRONTEND_DIR}/include
-    ${PYCP_BACKEND_DIR}/include
+    ${PYCP_SRC_DIR}
     ${PYCP_GENERATED_DIR}
     ${LINENOISE_INCLUDE_DIR}
 )
 
-# =====================================================================
-# 编译选项
-# =====================================================================
 if(MSVC)
-    target_compile_options(pycp
-        PRIVATE
-        /W4
-        /MP
-    )
+    target_compile_options(pycp PRIVATE /W4 /MP)
 else()
     target_compile_options(pycp
         PRIVATE
-
         -Wall
         -Wextra
         -Wpedantic
@@ -391,7 +176,7 @@ else()
 endif()
 
 # =====================================================================
-# 链接 Flex 库（仅 Linux）与 backend 运行时
+# 链接 Flex 库（仅 Linux）与运行时 / 前端库
 # =====================================================================
 if(UNIX AND NOT APPLE)
     # flex 库（libfl）提供 yywrap/main，但本工程 lexer 已 noyywrap 且自带
@@ -402,15 +187,8 @@ if(UNIX AND NOT APPLE)
     endif()
 endif()
 
-# 根据选项选择 runtime 库：shared ON 时动态链接（默认），否则静态链接
-if(BUILD_RUNTIME_SHARED)
-    set(PYCP_RUNTIME_TARGET PycpRuntime_shared)
-else()
-    set(PYCP_RUNTIME_TARGET PycpRuntime_static)
-endif()
-
-# io/Pycp 库已改为动态库（stdlib/），import 时通过 LoadNativeModule 动态加载，
-# 不再静态链接进 pycp。pycp 仅链接 PycpRuntime。
+# io/Pycp 等库已改为动态库（src/stdlib/），import 时通过 LoadNativeModule
+# 动态加载，不再静态链接进 pycp。pycp 链接运行时；前端以 OBJECT 并入。
 target_link_libraries(pycp PRIVATE ${PYCP_RUNTIME_TARGET})
 
 # 原生扩展（dlopen/LoadLibrary 加载的 .so/.dll）需解析运行时 C++ 符号
@@ -461,7 +239,7 @@ endif()
 # 安装
 # ---------------------------------------------------------------------
 # 布局与 dist 保持一致：bin/pycp、bin/stdlib/*.so（必须与 exe 同级）、
-# lib/libPycpRuntime.*、include/*.h*。rpath 均为 $ORIGIN/../lib。
+# lib/libPycpRuntime.*、lib/libPycpFrontend.a、include/*.h*。rpath 均为 $ORIGIN/../lib。
 # =====================================================================
 install(TARGETS pycp
     RUNTIME DESTINATION bin
@@ -488,24 +266,28 @@ if(PYCP_STDLIB_TARGETS)
     )
 endif()
 
-# AOT / 原生扩展编译所需的后端头文件
-install(DIRECTORY ${PYCP_BACKEND_DIR}/include/
-    DESTINATION include
-    FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp"
-)
+# AOT / 原生扩展编译所需的运行时头文件：保留组件子目录（object/ bytecode/
+# vm/ abi/），与源码分层及 dist/include 同构。
+foreach(_include_dir IN LISTS PYCP_RUNTIME_INCLUDE_DIRS)
+    get_filename_component(_include_component ${_include_dir} NAME)
+    install(DIRECTORY ${_include_dir}/
+        DESTINATION include/${_include_component}
+        FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp"
+    )
+endforeach()
 
 # =====================================================================
 # 最终产物收集（dist）
 # ---------------------------------------------------------------------
 # 把散落在构建树各处的产物（build/pycp、build/backend/libPycpRuntime.*、
-# build/stdlib/*.so、backend/include/*.h*）统一收集到一个自包含目录，
+# build/stdlib/*.so、运行时头文件）统一收集到一个自包含目录，
 # 开箱即可运行与部署，无需再拼接其它路径：
 #
 #   <PYCP_DIST_DIR>/pycp                主程序
 #   <PYCP_DIST_DIR>/stdlib/             标准库原生扩展（运行时按可执行文件
 #                                       同级目录的 stdlib/ 查找，不可改名）
 #   <PYCP_DIST_DIR>/lib/                运行时库（动态库 + 静态库 + 导入库）
-#   <PYCP_DIST_DIR>/include/            AOT / 原生扩展所需的后端头文件
+#   <PYCP_DIST_DIR>/include/            AOT / 原生扩展所需的头文件
 #
 # 触发：默认随 ALL 自动执行；也可单独执行（幂等，仅覆盖同名文件、不清空目录）：
 #   cmake --build build --target pycp-dist
@@ -562,7 +344,7 @@ if(BUILD_RUNTIME_SHARED)
 endif()
 
 # 精确小数依赖（mpdecimal）静态库：AOT --static 链接时需要，随静态运行时
-# 一并收进 dist/lib（与 Python_ 不同，mpdec 总是构建，故只要目标存在即纳入）。
+# 一并收进 dist/lib。
 if(TARGET mpdec)
     string(APPEND PYCP_DIST_RUNTIME_FILES "$<TARGET_FILE:mpdec>|")
 endif()
@@ -574,6 +356,12 @@ set(PYCP_DIST_ROOT_FILES "")
 if(BUILD_RUNTIME_SHARED)
     string(APPEND PYCP_DIST_ROOT_FILES "$<TARGET_FILE:PycpRuntime_shared>|")
 endif()
+
+# dist 收集的 include 目录：组件分层目录以 '|' 连接（脚本按 '|' 拆分）。
+set(PYCP_DIST_INCLUDE_DIRS "")
+foreach(_include_dir IN LISTS PYCP_RUNTIME_INCLUDE_DIRS)
+    string(APPEND PYCP_DIST_INCLUDE_DIRS "${_include_dir}|")
+endforeach()
 
 # 收集动作由独立脚本执行（建目录 / 覆盖复制 / 路径规范化 / 缺失即报错），
 # 多值参数以 '|' 分隔，避免路径中的分号被 CMake 列表吞掉。
@@ -588,7 +376,7 @@ add_custom_target(pycp-dist ALL
         -DRUNTIME_FILES=${PYCP_DIST_RUNTIME_FILES}
         -DSTDLIB_FILES=${PYCP_DIST_STDLIB_FILES}
         -DSTDLIB_STATIC_FILES=${PYCP_DIST_STDLIB_STATIC_FILES}
-        -DINCLUDE_DIRS=${PYCP_BACKEND_DIR}/include
+        -DINCLUDE_DIRS=${PYCP_DIST_INCLUDE_DIRS}
         -DWRITE_BUILD_INFO=${PYCP_DIST_WRITE_BUILD_INFO}
         -DBUILD_INFO_SYSTEM=${CMAKE_SYSTEM_NAME}
         -DBUILD_INFO_ARCH=${CMAKE_SYSTEM_PROCESSOR}
@@ -617,13 +405,6 @@ add_dependencies(pycp-dist
 #
 # 不挂 ALL：构建 AOT 项目较慢，不应拖慢常规构建。单独执行：
 #   cmake --build build --target pycp-aot-equiv
-#
-# 用例集在【配置期】GLOB，新增 .pycp 后需重新配置（与 dist 里的头文件
-# GLOB 同为「配置期快照」，不追求运行时自增）。
-#
-# 并行度：脚本默认按 CPU 核数自动分片（上限 8），可用 PYCP_EQUIV_JOBS 覆盖：
-#   cmake -S . -B build -DPYCP_EQUIV_JOBS=4
-# 每个用例的 AOT 工程目录互不相干，故按 (用例, 模式) 轮询分给工作进程。
 # =====================================================================
 set(PYCP_EQUIV_JOBS "" CACHE STRING
     "pycp-aot-equiv 并行工作进程数（空 = 按 CPU 核数自动，上限 8）")
@@ -642,23 +423,7 @@ add_custom_target(pycp-aot-equiv
         -DMODES=shared$<SEMICOLON>static
         # 并行分片：空 -> 脚本按 CPU 核数自动决定
         -DJOBS=${PYCP_EQUIV_JOBS}
-        # 生成器由脚本统一决定：默认 MinGW Makefiles（Windows）/ Unix Makefiles
-        # （POSIX），先生成 Makefile 再 make -j16 构建（见 PycpAotEquivalence.cmake）。
-        # 不再复用主构建生成器：AOT 子工程彼此独立，强制 Makefile 最稳。
-        # 已知缺陷用例（解释器自身行为未定义、预期不一致）降级为 XFAIL，
-        # 与 tests/modules/import_tests/run.sh 的 EXPECTED_FAIL_PATTERNS 一致。
-        # circular_import 与其两端 mod_circ_x / mod_circ_y 同属「真正循环导入」
-        # 已知缺陷：解释器自身会段错误/堆损坏（0xc0000374），AOT 为栈溢出，
-        # 退出码必然不一致，属预期。
-        # preprocessings 用 # send warning/message 在编译期输出诊断：解释器
-        # 运行时复跑预处理器（诊断进 stderr），AOT 预处理器在 --emit-cpp 生成期
-        # 已跑、产物 exe 无法复现，属编译期 vs 运行期的结构性差异，预期不一致。
-        # 环境差异类已知缺陷（非语义漂移，AOT 与解释器必然不一致，预期 XFAIL）：
-        #   - import_unknown：解释器沿搜索路径报 ImportError，AOT 无源码编译器钩子
-        #     走 ImportModule 落空，属「无源模块」环境差异。
-        #   - miss_main / shadow_main：入口解析依赖脚本目录 / cwd 搜索顺序，
-        #     AOT 产物 exe 的搜索路径与解释器不同，属搜索路径环境差异。
-        #   - argv_demo：依赖进程 argv，AOT 产物 argv 与解释器运行态不一致。
+        # 已知缺陷用例降级为 XFAIL（与 tests/modules/import_tests/run.sh 一致）。
         -DXFAIL=circular_import|mod_circ|preprocessings|import_unknown|miss_main|shadow_main|argv_demo
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PycpAotEquivalence.cmake
     COMMENT "Comparing AOT vs interpreter behaviour on ${_pycp_equiv_case_count} test case(s)"

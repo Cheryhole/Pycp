@@ -1,0 +1,115 @@
+#ifndef PYCP_ITERATOR_HPP
+#define PYCP_ITERATOR_HPP
+
+#include "object/PycpObject.hpp"
+#include "object/PycpList.hpp"
+#include "object/PycpFixedList.hpp"
+#include "object/PycpString.hpp"
+#include "object/PycpGC.hpp"
+#include "object/PycpException.hpp"
+#include "object/PycpMagic.hpp"
+#include <cstddef>
+
+namespace Pycp {
+
+class List;
+class String;
+class FixedList;
+
+// =============================================================
+// List 迭代器（ListIterator）
+//
+// 独立继承 Object（不与 StringIterator 共享基类）。
+// 持有 List 源引用（Incref）与游标 index，__next__ 依次返回元素，
+// 越界抛 StopIteration。一次性语义：index 只增不减，耗尽后任何
+// __next__ 均抛 StopIteration。
+// =============================================================
+class PYCP_API ListIterator : public Object {
+	private:
+		List* source_;        // 被迭代的 List（Incref 持有）
+		std::size_t index_;   // 当前游标
+
+	public:
+		explicit ListIterator(List* source);
+		~ListIterator() override;
+
+		const char* get_name() const override { return "ListIterator"; }
+
+		Object* __next__() override;
+		Object* __iterator__() override { Incref(this); return this; }
+		Object* __inspect__() override;
+
+		// GC 子引用：遍历持有的 source。
+		void foreach_ref(const std::function<void(Object*)>& visit) override;
+};
+
+// =============================================================
+// String 迭代器（StringIterator）
+//
+// 独立继承 Object。持有 String 源引用（Incref）与游标 index，
+// __next__ 依次返回单字符 String，越界抛 StopIteration。
+// 一次性语义同 ListIterator。
+// =============================================================
+class PYCP_API StringIterator : public Object {
+	private:
+		String* source_;      // 被迭代的 String（Incref 持有）
+		std::size_t index_;   // 当前游标
+
+	public:
+		explicit StringIterator(String* source);
+		~StringIterator() override;
+
+		const char* get_name() const override { return "StringIterator"; }
+
+		Object* __next__() override;
+		Object* __iterator__() override { Incref(this); return this; }
+		Object* __inspect__() override;
+
+		void foreach_ref(const std::function<void(Object*)>& visit) override;
+};
+
+// =============================================================
+// FixedList 迭代器（FixedListIterator）
+//
+// 独立继承 Object。持有 FixedList 源引用（Incref）与游标 index，
+// __next__ 依次返回元素，越界抛 StopIteration。一次性语义同 ListIterator。
+// =============================================================
+class PYCP_API FixedListIterator : public Object {
+	private:
+		FixedList* source_;   // 被迭代的 FixedList（Incref 持有）
+		std::size_t index_;   // 当前游标
+
+	public:
+		explicit FixedListIterator(FixedList* source);
+		~FixedListIterator() override;
+
+		const char* get_name() const override { return "FixedListIterator"; }
+
+		Object* __next__() override;
+		Object* __iterator__() override { Incref(this); return this; }
+		Object* __inspect__() override;
+
+		// GC 子引用：遍历持有的 source。
+		void foreach_ref(const std::function<void(Object*)>& visit) override;
+};
+
+// 类型萃取特化：ListIterator / StringIterator / FixedListIterator（可迭代）。
+template <> struct TypeTraits<ListIterator> {
+	static constexpr PycpTypeId   id            = PycpTypeId::ListIterator;
+	static constexpr PycpTypeFlag flags         = PycpTypeFlag::Iterable;
+	static constexpr PycpTypeFlag subclass_flag = PycpTypeFlag::None;
+};
+template <> struct TypeTraits<StringIterator> {
+	static constexpr PycpTypeId   id            = PycpTypeId::StringIterator;
+	static constexpr PycpTypeFlag flags         = PycpTypeFlag::Iterable;
+	static constexpr PycpTypeFlag subclass_flag = PycpTypeFlag::None;
+};
+template <> struct TypeTraits<FixedListIterator> {
+	static constexpr PycpTypeId   id            = PycpTypeId::FixedListIterator;
+	static constexpr PycpTypeFlag flags         = PycpTypeFlag::Iterable;
+	static constexpr PycpTypeFlag subclass_flag = PycpTypeFlag::None;
+};
+
+} // namespace Pycp
+
+#endif // PYCP_ITERATOR_HPP
