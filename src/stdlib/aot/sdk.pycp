@@ -1,0 +1,208 @@
+// sdk.pycp —— AOT 运行时 SDK 定位（对应前端的 PycpAotSdkLocator）。
+//
+// 职责：从可执行文件所在目录向上定位 Pycp 运行时 SDK 根（含 include/、
+// lib/、stdlib/），并探测静态链接产物（libPycpRuntime.a、mpdecimal 静态库、
+// 运行时 DLL）与「内置原生扩展」静态库清单（libPycpExt_<name>.a）。
+//
+// 与 C++ 版本一致：SDK 根目录即 pycp 可执行文件同级目录（常规 dist 布局：
+// pycp.exe 与 include/、lib/、stdlib/ 同级，故 exe_dir 即为根）。
+
+import pycp
+import filesystem
+from util import str_len, str_less, substr, find
+
+// Pycp 版本（仅用于生成文件头注释，便于追溯；与 PycpConfig.hpp 的
+// PYCP_VERSION 保持一致，使生成产物与旧 C++ AOT 逐字节一致）。
+PYCP_VERSION = "1.0.0"
+
+func _is_dir(p) {
+	return filesystem.is_dir(p)
+}
+
+func _is_file(p) {
+	return filesystem.is_file(p)
+}
+
+// 内置扩展静态库名 -> 模块名：libPycpExt_io.a / PycpExt_io.lib / PycpExt_io.a -> "io"。
+// 末能匹配 PycpExt_ 命名规则的返回空串（表示跳过）。
+func _static_ext_module_name(fname) {
+	pos = find(fname, "PycpExt_")
+	if (pos != None) {
+		name = substr(fname, pos + 8, str_len(fname))
+		dot = find(name, ".")
+		if (dot != None) {
+			name = substr(name, 0, dot)
+		}
+		return name
+	}
+	return ""
+}
+
+// 字符串列表插入排序（按字节序升序；List 无 sort）。
+func _sort_strings(lst) {
+	n = lst.length()
+	out = pycp.List()
+	repeat n as si {
+		out.append(lst[si])
+	}
+	repeat n as sj {
+		if (sj >= 1) {
+			i = sj
+			v = out[i]
+			repeat n as w {
+				if (i <= 0) {
+					break
+				}
+				if (str_less_eq(out[i - 1], v)) {
+					break
+				}
+				out[i] = out[i - 1]
+				i = i - 1
+			}
+			out[i] = v
+		}
+	}
+	return out
+}
+
+func str_less_eq(a, b) {
+	if (str_less(a, b) == True) {
+		return True
+	}
+	return (a == b)
+}
+
+// 校验 SDK 根：三项必需（include/、lib/、stdlib/）；并探测可选静态产物。
+// 返回 Map：{ valid, root, include_dir, lib_dir, stdlib_dir, static_runtime,
+//             static_mpdec, root_dll, builtin_modules(List),
+//             stdlib_static_libs(List), tried(List) }。
+func validate_sdk_root(root) {
+	res = pycp.Map()
+	res["valid"] = False
+	res["root"] = root
+	res["include_dir"] = filesystem.join(root, "include")
+	res["lib_dir"] = filesystem.join(root, "lib")
+	res["stdlib_dir"] = filesystem.join(root, "stdlib")
+	res["static_runtime"] = ""
+	res["static_mpdec"] = ""
+	res["root_dll"] = ""
+	res["builtin_modules"] = pycp.List()
+	res["stdlib_static_libs"] = pycp.List()
+	res["builtin_lib_map"] = pycp.Map()
+	res["tried"] = pycp.List()
+
+	if (_is_dir(root) == False) {
+		res["tried"].append("不是目录: " + root)
+		return res
+	}
+	if (_is_dir(res["include_dir"]) == False) {
+		res["tried"].append("缺少 include/: " + root)
+		return res
+	}
+	if (_is_dir(res["lib_dir"]) == False) {
+		res["tried"].append("缺少 lib/: " + root)
+		return res
+	}
+	if (_is_dir(res["stdlib_dir"]) == False) {
+		res["tried"].append("缺少 stdlib/: " + root)
+		return res
+	}
+
+	// 运行时 DLL（仅 Windows 需要；静态 SDK 无，置空不报错）。
+	dll_cands = pycp.List()
+	dll_cands.append("PycpRuntime.dll")
+	dll_cands.append("libPycpRuntime.dll")
+	for dc in dll_cands {
+		d = filesystem.join(root, dc)
+		if (_is_file(d)) {
+			res["root_dll"] = d
+			break
+		}
+	}
+
+	// 静态运行时。
+	rt_cands = pycp.List()
+	rt_cands.append("libPycpRuntime.a")
+	rt_cands.append("PycpRuntime.lib")
+	rt_cands.append("libPycpRuntime.lib")
+	for rc in rt_cands {
+		a = filesystem.join(res["lib_dir"], rc)
+		if (_is_file(a)) {
+			res["static_runtime"] = a
+			break
+		}
+	}
+
+	// 精确小数（mpdecimal）静态库：必须与静态运行时一同链入。
+	mp_cands = pycp.List()
+	mp_cands.append("libmpdec.a")
+	mp_cands.append("mpdec.lib")
+	for mc in mp_cands {
+		a = filesystem.join(res["lib_dir"], mc)
+		if (_is_file(a)) {
+			res["static_mpdec"] = a
+			break
+		}
+	}
+
+	// 扫描 lib/ 下全部 libPycpExt_<name>.a，推导内置扩展清单（排序稳定）。
+	entries = filesystem.listdir(res["lib_dir"])
+	for e in entries {
+		mod = _static_ext_module_name(e)
+		if (mod == "") {
+			// 非内置静态扩展（命名不符 PycpExt_），跳过
+		} else {
+			res["stdlib_static_libs"].append(filesystem.join(res["lib_dir"], e))
+			res["builtin_modules"].append(mod)
+			res["builtin_lib_map"][mod] = filesystem.join(res["lib_dir"], e)
+		}
+	}
+	res["builtin_modules"] = _sort_strings(res["builtin_modules"])
+	res["stdlib_static_libs"] = _sort_strings(res["stdlib_static_libs"])
+
+	res["valid"] = True
+	return res
+}
+
+// 定位 SDK：exe 同级目录（dist 布局）即根。返回 validate_sdk_root 的结果。
+func locate() {
+	exe_dir = filesystem.exe_dir()
+	cands = pycp.List()
+	cands.append(exe_dir)
+	cands.append(filesystem.join(exe_dir, "dist"))
+	parent = filesystem.dirname(exe_dir)
+	if (parent == ".") {
+		// 已在文件系统根，无父级 dist
+	} else {
+		cands.append(filesystem.join(parent, "dist"))
+	}
+	env = filesystem.getenv("PYCP_DIST")
+	if (env != None) {
+		if (env == "") {
+			// 空环境变量，跳过
+		} else {
+			cands.append(env)
+		}
+	}
+
+	result = pycp.Map()
+	result["valid"] = False
+	result["tried"] = pycp.List()
+	for c in cands {
+		if (c == "") {
+			// 跳过空候选路径
+		} else {
+			info = validate_sdk_root(c)
+			if (info["valid"] == True) {
+				return info
+			}
+			for t in info["tried"] {
+				result["tried"].append(t)
+			}
+		}
+	}
+	if (result["tried"].length() == 0) {
+		result["tried"].append("(无候选路径)")
+	}
+	return result
+}

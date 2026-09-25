@@ -183,6 +183,29 @@ foreach(_f IN LISTS _stdlib_static_files)
 endforeach()
 
 # =====================================================================
+# 2c. 纯 pycp 实现的标准库包（模块文件夹：pycp.mpycp + *.pycp）
+# ---------------------------------------------------------------------
+# 运行期经 GetStdlibDir() 按名查找（`import <name>` / `pycp -m <name>`），
+# 故保持 <stdlib>/<包名>/ 的目录层级整体复制（含子模块与子目录）。
+# =====================================================================
+pycp_dist_split(_stdlib_pkg_dirs "${STDLIB_PACKAGE_DIRS}")
+foreach(_d IN LISTS _stdlib_pkg_dirs)
+	if(_d STREQUAL "")
+		continue()
+	endif()
+	pycp_dist_abs(_pkg_dir "${_d}" "${BASE_DIR}")
+	if(NOT IS_DIRECTORY "${_pkg_dir}")
+		message(FATAL_ERROR "pycp-dist: stdlib package dir is missing: ${_pkg_dir}")
+	endif()
+	get_filename_component(_pkg_name "${_pkg_dir}" NAME)
+	file(GLOB_RECURSE _pkg_files RELATIVE "${_pkg_dir}" "${_pkg_dir}/*")
+	foreach(_f IN LISTS _pkg_files)
+		pycp_dist_copy("${_pkg_dir}/${_f}"
+			"${PYCP_DIST_STDLIB_DIR}/${_pkg_name}/${_f}")
+	endforeach()
+endforeach()
+
+# =====================================================================
 # 3. 运行时库（静态库 / 动态库 / Windows 导入库）-> LIB_DIR
 # =====================================================================
 pycp_dist_split(_runtime_files "${RUNTIME_FILES}")

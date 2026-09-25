@@ -149,7 +149,7 @@ in       { brk_expr_ctx = 1; return KW_IN; }
 	brk_expr_ctx = 0;
 	return (suffix == 'f' || suffix == 'F') ? LT_FLOAT : LT_DECIMAL;
 }
-<*>"//"[ \t]*"__pycp_pp#"[^\n]*\n	{ /* line directive: // __pycp_pp# <lineno> "<file>"; consume whole line, set Pycplineno after '\n' auto-increment. <*> so it works after '}' (EXPECT_ELIF) etc. */
+<INITIAL,EXPECT_ELIF,MEMBER_ACCESS,BRACKET_BODY>"//"[ \t]*"__pycp_pp#"[^\n]*\n	{ /* line directive: // __pycp_pp# <lineno> "<file>"; consume whole line, set Pycplineno after '\n' auto-increment. <*> so it works after '}' (EXPECT_ELIF) etc. */
 	const char* p = Pycptext + 2;   /* 跳过 "//" */
 	while (*p == ' ' || *p == '\t') ++p;   /* 跳过 "//" 后空白 */
 	p += 10;   /* 越过 "__pycp_pp#" 标记 */
@@ -172,7 +172,7 @@ in       { brk_expr_ctx = 1; return KW_IN; }
 	}
 	/* 整行（含换行）已消费，不产生 token。 */
 }
-<*>"//"[^\n]*	{ /* 单行（行内）注释：跳过到行尾，换行仍由 NEWLINE 规则处理 */ }
+<INITIAL,EXPECT_ELIF,MEMBER_ACCESS,BRACKET_BODY,COMMENT>"//"[^\n]*	{ /* 单行（行内）注释：跳过到行尾，换行仍由 NEWLINE 规则处理 */ }
 "/*"	{ _comment_return_state = INITIAL; BEGIN(COMMENT); }
 <COMMENT>"*/"	{ BEGIN(_comment_return_state); }
 <COMMENT>([^*]|\n)+	{ /* 吞掉块注释内容（含换行） */ }

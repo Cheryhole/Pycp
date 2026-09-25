@@ -10,6 +10,7 @@
 #include "bytecode/PycpBytecode.hpp"       // BC::Module
 #include "bytecode/PycpBytecodeObject.hpp" // WrapModule / IsModuleRef
 #include "object/PycpConfig.hpp"           // SanitizeModuleName / AOT 命名约定
+#include "object/PycpInteger.hpp"
 #include "object/PycpMap.hpp"              // Map（aot_config 返回值）
 #include "object/PycpList.hpp"
 #include "object/PycpFixedList.hpp"
@@ -384,6 +385,40 @@ Object* _builtin_eval_manifest(Object*, FixedList* args, Map* kwargs) {
 	return out;
 }
 
+// bytecode.char_code(s) -> Integer
+//   取字符串首字节的码值（0..255）。pycp 语言无 ord/chr，而代码生成需要逐
+//   字符访问（字符串转义、标识符清洗），故由本模块提供最小字符原语。
+Object* _builtin_char_code(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs("char_code", {
+		Extension::Arg::Required("s"),
+	});
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	const std::string s = require_string("char_code", "s", r["s"]);
+	if (s.empty()) {
+		throw ValueError("char_code: empty string has no character.");
+	}
+	return Integer::FromLong(
+		static_cast<long long>(static_cast<unsigned char>(s[0])));
+}
+
+// bytecode.code_char(n) -> String
+//   码值（0..255）-> 单字节字符串（char_code 的逆操作）。
+Object* _builtin_code_char(Object*, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs("code_char", {
+		Extension::Arg::Required("n"),
+	});
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	Object* n = r["n"];
+	if (n == nullptr || !n->is_type("Integer")) {
+		throw TypeError("code_char: argument 'n' must be an Integer.");
+	}
+	const long long v = static_cast<Integer*>(n)->get_value();
+	if (v < 0 || v > 255) {
+		throw ValueError("code_char: code out of range (0..255).");
+	}
+	return String::FromCString(std::string(1, static_cast<char>(v)).c_str());
+}
+
 Module* make_bytecode_module() {
 	Module* mod = Module::New(MODULE_NAME);
 	mod->set_function("compile", _builtin_compile, /*with_keywords=*/true);
@@ -394,6 +429,8 @@ Module* make_bytecode_module() {
 	mod->set_function("load_set", _builtin_load_set, /*with_keywords=*/true);
 	mod->set_function("eval_manifest", _builtin_eval_manifest,
 	                  /*with_keywords=*/true);
+	mod->set_function("char_code", _builtin_char_code, /*with_keywords=*/true);
+	mod->set_function("code_char", _builtin_code_char, /*with_keywords=*/true);
 	return mod;
 }
 

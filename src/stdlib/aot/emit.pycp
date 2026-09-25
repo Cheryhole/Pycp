@@ -1,0 +1,1008 @@
+// =============================================================
+// aot.emit：字节码 -> 独立 C++ 源文件的翻译器（纯 pycp 实现）
+// -------------------------------------------------------------
+// 本模块是 C++ 版 PycpAot.cpp 的 pycp 移植：把 BCE 字节码模块逐指令展开为
+// 依赖 PycpABI 的 C++ 语句，生成的程序不内嵌解释器循环。
+//
+// 多模块（import）约定与 C++ 版一致：
+//   - 每模块一个 .cpp，私有符号（pycp_fn_N / g_c / g_globals）均为 static；
+//   - 每模块导出非 static 的模块初始化函数 PycpModule_<name>()（懒执行）；
+//   - 入口模块额外生成 main()；
+//   - 「链接拉入桩」仅对静态形态的同类模块生成（动态形态运行期 dlopen）。
+// =============================================================
+
+import pycp
+import bytecode
+from util import S, join, cpp_string_literal, sanitize_identifier, sort_strings
+from util import map_has, sorted_map_keys, str_len, substr, find
+
+_CFG = bytecode.aot_config()
+FN_PREFIX = _CFG["aot_fn_prefix"]
+MODULE_INIT_PREFIX = _CFG["aot_module_init_prefix"]
+ENTRY_FN_NAME = _CFG["aot_entry_fn_name"]
+MODULE_ENTRY_NAME = _CFG["module_entry_name"]
+
+// 模块初始化函数符号名（与运行时 SanitizeModuleName 同源，dlsym 与注册表共用）。
+func module_init_symbol(name) {
+	return MODULE_INIT_PREFIX + bytecode.sanitize_module_name(name)
+}
+
+// 形参形态表：长度不足时按旧语义合成（前段 Required=0 + 后段 Optional=1）。
+func synthesize_param_kinds(nparams, default_count) {
+	kinds = []
+	repeat nparams {
+		kinds.append(0)
+	}
+	opt = default_count
+	if (opt > nparams) {
+		opt = nparams
+	}
+	start = nparams - opt
+	repeat nparams as i {
+		if (i >= start) {
+			kinds[i] = 1
+		}
+	}
+	return kinds
+}
+
+func param_kinds_of(co) {
+	kinds = co.param_kinds
+	if (kinds.length() != co.nparams) {
+		kinds = synthesize_param_kinds(co.nparams, co.default_count)
+	}
+	return kinds
+}
+
+// 生成 `<ptr>->set_param_info(nparams, default_count, {kinds}, {names});`
+func param_info_call(ptr, co) {
+	kinds = param_kinds_of(co)
+	out = ptr + "->set_param_info(" + S(co.nparams) + ", " + S(co.default_count) + ", {"
+	pk = 0
+	for kind in kinds {
+		if (pk > 0) {
+			out = out + ", "
+		}
+		out = out + S(kind)
+		pk = pk + 1
+	}
+	out = out + "}, {"
+	names = co.names
+	repeat co.nparams as i {
+		if (i > 0) {
+			out = out + ", "
+		}
+		nm = ""
+		if (i < names.length()) {
+			nm = names[i]
+		}
+		out = out + cpp_string_literal(nm)
+	}
+	out = out + "});"
+	return out
+}
+
+// 单个代码对象指令流的最大可能栈深（保守顺序扫描，与 C++ 版一致）。
+func estimate_stack_depth(co) {
+	depth = 0
+	max_depth = 0
+	ins_list = co.instructions
+	for ins in ins_list {
+		op = ins.op
+		operand = ins.operand
+		if (op == "LOAD_CONST") {
+			depth = depth + 1
+		} elif (op == "LOAD_VAR") {
+			depth = depth + 1
+		} elif (op == "LOAD_NONE") {
+			depth = depth + 1
+		} elif (op == "LOAD_TRUE") {
+			depth = depth + 1
+		} elif (op == "LOAD_FALSE") {
+			depth = depth + 1
+		} elif (op == "MAKE_FUNCTION") {
+			depth = depth + 1
+		} elif (op == "LOAD_MODULE") {
+			depth = depth + 1
+		} elif (op == "BINARY_ADD") {
+			if (depth > 0) { depth = depth - 1 }
+		} elif (op == "BINARY_SUB") {
+			if (depth > 0) { depth = depth - 1 }
+		} elif (op == "BINARY_MUL") {
+			if (depth > 0) { depth = depth - 1 }
+		} elif (op == "BINARY_DIV") {
+			if (depth > 0) { depth = depth - 1 }
+		} elif (op == "BINARY_POW") {
+			if (depth > 0) { depth = depth - 1 }
+		} elif (op == "COMPARE_OP") {
+			if (depth > 0) { depth = depth - 1 }
+		} elif (op == "UNARY_NEG") {
+			if (depth > 0) { depth = depth - 1 }
+		} elif (op == "POP_TOP") {
+			if (depth > 0) { depth = depth - 1 }
+		} elif (op == "RETURN") {
+			if (depth > 0) { depth = depth - 1 }
+		} elif (op == "JUMP_IF_FALSE") {
+			if (depth > 0) { depth = depth - 1 }
+		} elif (op == "JUMP_IF_TRUE") {
+			if (depth > 0) { depth = depth - 1 }
+		} elif (op == "CALL") {
+			argc = operand
+			if (depth > argc + 1) {
+				depth = depth - argc - 1
+			} else {
+				depth = 0
+			}
+			depth = depth + 1
+		} elif (op == "CALL_KW") {
+			npos = ins.arg_pos
+			nkw = ins.arg_kw
+			popped = npos + 2 * nkw + 1
+			if (depth > popped) {
+				depth = depth - popped
+			} else {
+				depth = 0
+			}
+			depth = depth + 1
+		} elif (op == "DUP_TOP") {
+			depth = depth + 1
+		} elif (op == "GET_ATTR") {
+		} elif (op == "LOAD_ATTR") {
+		} elif (op == "GET_ITER") {
+		} elif (op == "FOR_ITER") {
+		} elif (op == "STORE_ATTR") {
+			if (depth > 0) { depth = depth - 1 }
+		} elif (op == "MAKE_CLASS") {
+			depth = depth + 1
+		} elif (op == "BUILD_LIST") {
+			n = operand
+			if (depth > n) {
+				depth = depth - n + 1
+			} else {
+				depth = 1
+			}
+		} elif (op == "BUILD_MAP") {
+			n = operand
+			if (depth > 2 * n) {
+				depth = depth - 2 * n + 1
+			} else {
+				depth = 1
+			}
+		} elif (op == "GET_ITEM") {
+			if (depth > 0) { depth = depth - 1 }
+		} elif (op == "SET_ITEM") {
+			if (depth >= 3) {
+				depth = depth - 3
+			} else {
+				depth = 0
+			}
+		}
+		if (depth > max_depth) {
+			max_depth = depth
+		}
+	}
+	if (max_depth < 16) {
+		max_depth = 16
+	}
+	return max_depth + 8
+}
+
+// 单个 CodeObject -> 一个 native 函数体。
+func emit_function(module, co, co_idx) {
+	out = ""
+	nlocals = co.nlocals
+	max_depth = estimate_stack_depth(co)
+	nparams = co.nparams
+	src = module.source_path
+	symbols = module.symbols
+	imports = module.imports
+	linenos = co.linenos
+	ins_list = co.instructions
+
+	out = out + "static Pycp::Object* " + FN_PREFIX + S(co_idx) + "(Pycp::Object* self, Pycp::Object** argv, std::size_t argc) {\n"
+	out = out + "    std::shared_ptr<Pycp::BC::Environment> env = std::make_shared<Pycp::BC::Environment>();\n"
+	out = out + "    if (self != nullptr) {\n"
+	out = out + "        Pycp::BytecodeFunction* bfn = static_cast<Pycp::BytecodeFunction*>(self);\n"
+	out = out + "        env->captured = bfn->get_captured();\n"
+	out = out + "    }\n"
+	out = out + "    env->globals = g_mod_ns;\n"
+
+	out = out + "    env->local_names = {"
+	names = co.names
+	i = 0
+	for nm in names {
+		if (i > 0) {
+			out = out + ", "
+		}
+		out = out + cpp_string_literal(nm)
+		i = i + 1
+	}
+	out = out + "};\n"
+	out = out + "    env->locals.assign(" + S(nlocals) + ", nullptr);\n"
+
+	if (nparams > 0) {
+		out = out + "    for (std::size_t i = 0; i < argc && i < " + S(nparams) + "; ++i) {\n"
+		out = out + "        env->locals[i] = argv[i];\n"
+		out = out + "        if (argv[i]) Pycp::Incref(argv[i]);\n"
+		out = out + "    }\n"
+	}
+
+	out = out + "    std::vector<Pycp::Object*> st;\n"
+	out = out + "    st.reserve(" + S(max_depth) + ");\n"
+
+	// ---- 逐指令翻译 ----
+	total = ins_list.length()
+	repeat total as pc {
+		ins = ins_list[pc]
+		op = ins.op
+		operand = ins.operand
+		lineno = -1
+		if (pc < linenos.length()) {
+			lineno = linenos[pc]
+		}
+		out = out + "L_" + S(pc) + ":;\n"
+
+		if (op == "LOAD_CONST") {
+			out = out + "    st.push_back(g_c[" + S(operand) + "]);\n"
+			out = out + "    Pycp::Incref(g_c[" + S(operand) + "]);\n"
+		} elif (op == "LOAD_NONE") {
+			out = out + "    st.push_back(Pycp::None::instance);\n"
+			out = out + "    Pycp::Incref(Pycp::None::instance);\n"
+		} elif (op == "LOAD_TRUE") {
+			out = out + "    st.push_back(Pycp::Boolean::True());\n"
+			out = out + "    Pycp::Incref(Pycp::Boolean::True());\n"
+		} elif (op == "LOAD_FALSE") {
+			out = out + "    st.push_back(Pycp::Boolean::False());\n"
+			out = out + "    Pycp::Incref(Pycp::Boolean::False());\n"
+		} elif (op == "LOAD_VAR") {
+			name = symbols[operand]
+			out = out + "    { Pycp::Object* v = Pycp::Environment_Lookup(env.get(), " + cpp_string_literal(name) + ");\n"
+			out = out + "      if (v == nullptr) throw Pycp::NameError(" + cpp_string_literal(src) + ", " + S(lineno) + ", \"name '" + name + "' is not defined\");\n"
+			out = out + "      st.push_back(v); Pycp::Incref(v); }\n"
+		} elif (op == "STORE_VAR") {
+			name = symbols[operand]
+			out = out + "    { Pycp::Object* v = st.back(); st.pop_back();\n"
+			out = out + "      Pycp::Environment_Store(env.get(), " + cpp_string_literal(name) + ", v); }\n"
+		} elif (op == "MARK_BINDING") {
+			name = symbols[operand]
+			out = out + "    Pycp::MarkBinding(env->globals, " + cpp_string_literal(name) + ");\n"
+		} elif (op == "LOAD_MODULE") {
+			dep = imports[operand]
+			out = out + "    { std::string imp_diag;\n"
+			out = out + "      Pycp::Module* m = Pycp::ImportModule(" + cpp_string_literal(dep) + ", nullptr, &imp_diag);\n"
+			out = out + "      if (m == nullptr) throw Pycp::ImportError(" + cpp_string_literal(src) + ", " + S(lineno) + ", \"No module named '\" + std::string(" + cpp_string_literal(dep) + ") + \"'.\" + imp_diag);\n"
+			out = out + "      Pycp::Incref(m); st.push_back(m); }\n"
+		} elif (op == "GET_ATTR") {
+			attr = symbols[operand]
+			out = out + "    { Pycp::Object* obj = st.back(); st.pop_back();\n"
+			out = out + "      Pycp::Object* v;\n"
+			out = out + "      try { v = Pycp::Module::GetAttr(static_cast<Pycp::Module*>(obj), " + cpp_string_literal(attr) + "); }\n"
+			out = out + "      catch (const Pycp::Exception& e) {\n"
+			out = out + "        if (e.file.empty()) throw Pycp::Exception(" + cpp_string_literal(src) + ", " + S(lineno) + ", e.what());\n"
+			out = out + "        throw;\n"
+			out = out + "      }\n"
+			out = out + "      Pycp::Decref(obj);\n"
+			out = out + "      st.push_back(v); Pycp::Incref(v); }\n"
+		} elif (op == "LOAD_ATTR") {
+			attr = symbols[operand]
+			out = out + "    { Pycp::Object* obj = st.back(); st.pop_back();\n"
+			out = out + "      Pycp::Object* v;\n"
+			out = out + "      try { v = Pycp::GetAttr(obj, " + cpp_string_literal(attr) + "); }\n"
+			out = out + "      catch (const Pycp::Exception& e) {\n"
+			out = out + "        if (e.file.empty()) throw Pycp::Exception(" + cpp_string_literal(src) + ", " + S(lineno) + ", e.what());\n"
+			out = out + "        throw;\n"
+			out = out + "      }\n"
+			out = out + "      Pycp::Decref(obj);\n"
+			out = out + "      st.push_back(v); }\n"
+		} elif (op == "STORE_ATTR") {
+			attr = symbols[operand]
+			out = out + "    { Pycp::Object* value = st.back(); st.pop_back();\n"
+			out = out + "      Pycp::Object* obj = st.back(); st.pop_back();\n"
+			out = out + "      try { Pycp::SetAttr(obj, " + cpp_string_literal(attr) + ", value); }\n"
+			out = out + "      catch (const Pycp::Exception& e) {\n"
+			out = out + "        if (e.file.empty()) throw Pycp::Exception(" + cpp_string_literal(src) + ", " + S(lineno) + ", e.what());\n"
+			out = out + "        throw;\n"
+			out = out + "      }\n"
+			out = out + "      Pycp::Decref(value);\n"
+			out = out + "      Pycp::Decref(obj); }\n"
+		} elif (op == "POP_TOP") {
+			out = out + "    Pycp::Decref(st.back()); st.pop_back();\n"
+		} elif (op == "DUP_TOP") {
+			out = out + "    st.push_back(st.back()); Pycp::Incref(st.back());\n"
+		} elif (op == "BINARY_ADD") {
+			out = out + emit_binary("Add")
+		} elif (op == "BINARY_SUB") {
+			out = out + emit_binary("Sub")
+		} elif (op == "BINARY_MUL") {
+			out = out + emit_binary("Mul")
+		} elif (op == "BINARY_DIV") {
+			out = out + emit_binary("Div")
+		} elif (op == "BINARY_POW") {
+			out = out + emit_binary("Pow")
+		} elif (op == "UNARY_NEG") {
+			out = out + "    { Pycp::Object* v = st.back(); st.pop_back();\n"
+			out = out + "      Pycp::Object* res = v->__negation__();\n"
+			out = out + "      Pycp::Decref(v);\n"
+			out = out + "      st.push_back(res); }\n"
+		} elif (op == "COMPARE_OP") {
+			out = out + "    { Pycp::Object* rhs = st.back(); st.pop_back();\n"
+			out = out + "      Pycp::Object* lhs = st.back(); st.pop_back();\n"
+			out = out + "      Pycp::Object* res = Pycp::Compare(lhs, rhs, " + S(operand) + ");\n"
+			out = out + "      Pycp::Decref(lhs); Pycp::Decref(rhs);\n"
+			out = out + "      st.push_back(res); }\n"
+		} elif (op == "JUMP") {
+			out = out + "    goto L_" + S(pc + operand) + ";\n"
+		} elif (op == "JUMP_IF_FALSE") {
+			out = out + "    { Pycp::Object* cond = st.back(); st.pop_back();\n"
+			out = out + "      bool f = Pycp::IsFalse(cond); Pycp::Decref(cond);\n"
+			out = out + "      if (f) goto L_" + S(pc + operand) + "; }\n"
+		} elif (op == "JUMP_IF_TRUE") {
+			out = out + "    { Pycp::Object* cond = st.back(); st.pop_back();\n"
+			out = out + "      bool f = Pycp::IsFalse(cond); Pycp::Decref(cond);\n"
+			out = out + "      if (!f) goto L_" + S(pc + operand) + "; }\n"
+		} elif (op == "BREAK") {
+			out = out + "    goto L_" + S(pc + operand) + ";\n"
+		} elif (op == "BUILD_LIST") {
+			n = operand
+			if (n > 0) {
+				out = out + "    { Pycp::Object* elems[" + S(n) + "];\n"
+				repeat n as i {
+					out = out + "      elems[" + S(n - 1 - i) + "] = st.back(); st.pop_back();\n"
+				}
+				out = out + "      Pycp::List* l = Pycp::List::New();\n"
+				repeat n as i {
+					out = out + "      l->append(elems[" + S(i) + "]); Pycp::Decref(elems[" + S(i) + "]);\n"
+				}
+				out = out + "      st.push_back(l); }\n"
+			} else {
+				out = out + "    { Pycp::List* l = Pycp::List::New();\n"
+				out = out + "      st.push_back(l); }\n"
+			}
+		} elif (op == "BUILD_MAP") {
+			n = operand
+			if (n > 0) {
+				out = out + "    { Pycp::Object* ks[" + S(n) + "]; Pycp::Object* vs[" + S(n) + "];\n"
+				repeat n as i {
+					out = out + "      vs[" + S(n - 1 - i) + "] = st.back(); st.pop_back();\n"
+					out = out + "      ks[" + S(n - 1 - i) + "] = st.back(); st.pop_back();\n"
+				}
+				out = out + "      Pycp::Map* m = Pycp::Map::New();\n"
+				repeat n as i {
+					out = out + "      m->__set_item__(ks[" + S(i) + "], vs[" + S(i) + "]);\n"
+					out = out + "      Pycp::Decref(ks[" + S(i) + "]); Pycp::Decref(vs[" + S(i) + "]);\n"
+				}
+				out = out + "      st.push_back(m); }\n"
+			} else {
+				out = out + "    { Pycp::Map* m = Pycp::Map::New();\n"
+				out = out + "      st.push_back(m); }\n"
+			}
+		} elif (op == "GET_ITEM") {
+			out = out + "    { Pycp::Object* key = st.back(); st.pop_back();\n"
+			out = out + "      Pycp::Object* obj = st.back(); st.pop_back();\n"
+			out = out + "      Pycp::Object* res = Pycp::GetItem(obj, key);\n"
+			out = out + "      Pycp::Decref(obj); Pycp::Decref(key);\n"
+			out = out + "      st.push_back(res); Pycp::Incref(res); }\n"
+		} elif (op == "SET_ITEM") {
+			out = out + "    { Pycp::Object* value = st.back(); st.pop_back();\n"
+			out = out + "      Pycp::Object* key = st.back(); st.pop_back();\n"
+			out = out + "      Pycp::Object* obj = st.back(); st.pop_back();\n"
+			out = out + "      Pycp::Object* res = Pycp::SetItem(obj, key, value);\n"
+			out = out + "      Pycp::Decref(obj); Pycp::Decref(key); Pycp::Decref(value);\n"
+			out = out + "      if (res) Pycp::Decref(res); }\n"
+		} elif (op == "MAKE_FUNCTION") {
+			mco = module.code_objects[operand]
+			out = out + "    { Pycp::BytecodeFunction* fn = new Pycp::BytecodeFunction(" + cpp_string_literal(mco.name) + ", " + FN_PREFIX + S(operand) + ", env);\n"
+			out = out + "      Pycp::GC_Track(fn);\n"
+			out = out + "      " + param_info_call("fn", mco) + "\n"
+			free_names = mco.free_names
+			if (free_names.length() > 0) {
+				out = out + "      { static const char* const s_keep[] = {"
+				fk = 0
+				for fnm in free_names {
+					if (fk > 0) {
+						out = out + ", "
+					}
+					out = out + cpp_string_literal(fnm)
+					fk = fk + 1
+				}
+				out = out + "};\n"
+				out = out + "        Pycp::Environment_KeepNames(env.get(), s_keep, " + S(free_names.length()) + "); }\n"
+			}
+			nd = mco.default_count
+			if (nd > 0) {
+				out = out + "      { std::vector<Pycp::Object*> defs;\n"
+				out = out + "        const std::size_t nd = " + S(nd) + ";\n"
+				out = out + "        const std::size_t db = st.size() - nd;\n"
+				out = out + "        for (std::size_t k = 0; k < nd; ++k) defs.push_back(st[db + k]);\n"
+				out = out + "        fn->set_defaults(defs);\n"
+				out = out + "        for (std::size_t k = 0; k < nd; ++k) { Pycp::Object* d = st.back(); st.pop_back(); if (d) Pycp::Decref(d); }\n"
+				out = out + "      }\n"
+			}
+			out = out + "      st.push_back(fn); }\n"
+		} elif (op == "CALL") {
+			nargs = operand
+			sz = nargs
+			if (sz == 0) {
+				sz = 1
+			}
+			out = out + "    { Pycp::Object* args[" + S(sz) + "];\n"
+			out = out + "      for (std::size_t i = 0; i < " + S(nargs) + "; ++i) { args[" + S(nargs) + " - 1 - i] = st.back(); st.pop_back(); }\n"
+			out = out + "      Pycp::Object* callee = st.back(); st.pop_back();\n"
+			out = out + "      Pycp::Object* ret = nullptr;\n"
+			out = out + "      try {\n"
+			out = out + "      if (dynamic_cast<Pycp::Class*>(callee) != nullptr) {\n"
+			out = out + "        ret = static_cast<Pycp::Class*>(callee)->instantiate(args, " + S(nargs) + ");\n"
+			out = out + "      } else {\n"
+			out = out + "        ret = Pycp::Call(callee, args, " + S(nargs) + ");\n"
+			out = out + "      }\n"
+			out = out + "      } catch (...) { Pycp::RethrowWithPosition(" + cpp_string_literal(src) + ", " + S(lineno) + "); }\n"
+			out = out + "      for (std::size_t i = 0; i < " + S(nargs) + "; ++i) Pycp::Decref(args[i]);\n"
+			out = out + "      Pycp::Decref(callee);\n"
+			out = out + "      st.push_back(ret); }\n"
+		} elif (op == "CALL_KW") {
+			npos = ins.arg_pos
+			nkw = ins.arg_kw
+			sz = npos
+			if (sz == 0) {
+				sz = 1
+			}
+			out = out + "    { Pycp::Object* args[" + S(sz) + "];\n"
+			out = out + "      Pycp::Map* kwargs = Pycp::NewKwargs();\n"
+			repeat nkw {
+				out = out + "      { Pycp::Object* kval = st.back(); st.pop_back();\n"
+				out = out + "        Pycp::Object* kname = st.back(); st.pop_back();\n"
+				out = out + "        Pycp::KwargsSet(kwargs, kname, kval);\n"
+				out = out + "        if (kname != nullptr) Pycp::Decref(kname);\n"
+				out = out + "        if (kval != nullptr) Pycp::Decref(kval); }\n"
+			}
+			out = out + "      for (std::size_t i = 0; i < " + S(npos) + "; ++i) { args[" + S(npos) + " - 1 - i] = st.back(); st.pop_back(); }\n"
+			out = out + "      Pycp::Object* callee = st.back(); st.pop_back();\n"
+			out = out + "      Pycp::Object* ret = nullptr;\n"
+			out = out + "      try {\n"
+			args_expr = "args"
+			if (npos == 0) {
+				args_expr = "nullptr"
+			}
+			out = out + "        ret = Pycp::CallKw(callee, " + args_expr + ", " + S(npos) + ", kwargs);\n"
+			out = out + "      } catch (...) { Pycp::RethrowWithPosition(" + cpp_string_literal(src) + ", " + S(lineno) + "); }\n"
+			out = out + "      Pycp::Decref(kwargs);\n"
+			out = out + "      for (std::size_t i = 0; i < " + S(npos) + "; ++i) Pycp::Decref(args[i]);\n"
+			out = out + "      Pycp::Decref(callee);\n"
+			out = out + "      st.push_back(ret); }\n"
+		} elif (op == "MAKE_CLASS") {
+			out = out + emit_make_class(module, operand, lineno)
+		} elif (op == "CHECK_INT") {
+			out = out + "    { Pycp::Object* v = st.back();\n"
+			out = out + "      if (v == nullptr || !v->is_type(\"Integer\"))\n"
+			out = out + "        throw Pycp::TypeError(\"repeat range value must be an integer.\"); }\n"
+		} elif (op == "CHECK_RANGE_DIRECTION") {
+			out = out + "    { Pycp::Object* so = st.back(); st.pop_back();\n"
+			out = out + "      Pycp::Object* bo = st.back(); st.pop_back();\n"
+			out = out + "      Pycp::Object* ao = st.back(); st.pop_back();\n"
+			out = out + "      if (ao == nullptr || bo == nullptr || so == nullptr ||\n"
+			out = out + "          !ao->is_type(\"Integer\") || !bo->is_type(\"Integer\") ||\n"
+			out = out + "          !so->is_type(\"Integer\"))\n"
+			out = out + "        throw Pycp::TypeError(\"repeat range value must be an integer.\");\n"
+			out = out + "      int64_t av = static_cast<Pycp::Integer*>(ao)->get_value();\n"
+			out = out + "      int64_t bv = static_cast<Pycp::Integer*>(bo)->get_value();\n"
+			out = out + "      int64_t sv = static_cast<Pycp::Integer*>(so)->get_value();\n"
+			out = out + "      Pycp::Decref(ao); Pycp::Decref(bo); Pycp::Decref(so);\n"
+			out = out + "      if ((av < bv && sv < 0) || (av > bv && sv > 0))\n"
+			out = out + "        throw Pycp::ValueError(\"repeat range step contradicts endpoints direction.\"); }\n"
+		} elif (op == "GET_ITER") {
+			out = out + "    { Pycp::Object* obj = st.back(); st.pop_back();\n"
+			out = out + "      Pycp::Object* it = obj->__iterator__();\n"
+			out = out + "      Pycp::Decref(obj);\n"
+			out = out + "      st.push_back(it); }\n"
+		} elif (op == "FOR_ITER") {
+			out = out + "    { Pycp::Object* it = st.back(); st.pop_back();\n"
+			out = out + "      try {\n"
+			out = out + "        Pycp::Object* elem = it->__next__();\n"
+			out = out + "        Pycp::Decref(it);\n"
+			out = out + "        st.push_back(elem);\n"
+			out = out + "      } catch (const Pycp::StopIteration&) {\n"
+			out = out + "        Pycp::Decref(it);\n"
+			out = out + "        goto L_" + S(pc + operand) + ";\n"
+			out = out + "      }\n"
+			out = out + "    }\n"
+		} elif (op == "RETURN") {
+			out = out + "    { Pycp::Object* ret = st.back(); st.pop_back();\n"
+			out = out + "      pycp_cleanup_env(env, st);\n"
+			out = out + "      return ret; }\n"
+		} elif (op == "RETURN_NONE") {
+			out = out + "    pycp_cleanup_env(env, st);\n"
+			out = out + "    return Pycp::None::instance;\n"
+		} elif (op == "HALT") {
+			out = out + "    pycp_cleanup_env(env, st);\n"
+			out = out + "    return Pycp::None::instance;\n"
+		} else {
+			// pycp 无法抛异常：把未知操作码写进产物，让生成的 C++ 编译期硬失败。
+			out = out + "#error \"AOT: unknown opcode " + op + "\"\n"
+		}
+	}
+
+	out = out + "    pycp_cleanup_env(env, st);\n"
+	out = out + "    return Pycp::None::instance;\n"
+	out = out + "}\n\n"
+	return out
+}
+
+// 二元算术指令的发射片段。
+func emit_binary(fn) {
+	return "    { Pycp::Object* rhs = st.back(); st.pop_back();\n" + "      Pycp::Object* lhs = st.back(); st.pop_back();\n" + "      Pycp::Object* res = Pycp::" + fn + "(lhs, rhs);\n" + "      Pycp::Decref(lhs); Pycp::Decref(rhs);\n" + "      st.push_back(res); }\n"
+}
+
+// MAKE_CLASS 指令的发射片段。
+func emit_make_class(module, cidx, lineno) {
+	classes = module.classes
+	src = module.source_path
+	if (cidx >= classes.length()) {
+		return "#error \"AOT: class index out of range.\"\n"
+	}
+	cdef = classes[cidx]
+	out = ""
+
+	// 方法默认值段：预统计总数与每方法偏移。
+	method_codes = cdef.method_code_indices
+	md_total = 0
+	md_offsets = []
+	for mi in method_codes {
+		md_offsets.append(md_total)
+		if (mi < module.code_objects.length()) {
+			md_total = md_total + module.code_objects[mi].default_count
+		}
+	}
+
+	out = out + "    { Pycp::Class* cls = Pycp::Class::New(" + cpp_string_literal(cdef.name) + ");\n"
+
+	// 继承：父类引用（单标识符或 模块.类 路径）。
+	parent_ref = cdef.parent_name
+	if (parent_ref == "") {
+		parent_ref = "pycp.Object"
+	}
+	out = out + "      Pycp::Object* parent_obj = nullptr;\n"
+	dot = find_dot(parent_ref)
+	if (dot < 0) {
+		out = out + "      parent_obj = Pycp::Environment_Lookup(env.get(), " + cpp_string_literal(parent_ref) + ");\n"
+	} else {
+		mod_name = substr(parent_ref, 0, dot)
+		attr_name = substr(parent_ref, dot + 1, str_len(parent_ref))
+		out = out + "      { Pycp::Object* mobj = Pycp::Environment_Lookup(env.get(), " + cpp_string_literal(mod_name) + ");\n"
+		// (attr_name 取 '模块.类' 路径中 '.' 之后的全部字符)
+		if (mod_name == "pycp") {
+			out = out + "        if (mobj == nullptr) mobj = Pycp::ImportModule(\"pycp\");\n"
+		}
+		out = out + "        if (mobj != nullptr && dynamic_cast<Pycp::Module*>(mobj) != nullptr) {\n"
+		out = out + "          Pycp::Module* mo = static_cast<Pycp::Module*>(mobj);\n"
+		out = out + "          parent_obj = mo->__get_attribute__(" + cpp_string_literal(attr_name) + ");\n"
+		out = out + "        }\n"
+		out = out + "      }\n"
+	}
+	out = out + "      if (parent_obj == nullptr || dynamic_cast<Pycp::Class*>(parent_obj) == nullptr) {\n"
+	out = out + "        Pycp::Decref(cls);\n"
+	out = out + "        throw Pycp::NameError(" + cpp_string_literal(src) + ", " + S(lineno) + ", \"parent class '" + parent_ref + "' is not defined\");\n"
+	out = out + "      }\n"
+	out = out + "      Pycp::Class* parent = static_cast<Pycp::Class*>(parent_obj);\n"
+	out = out + "      cls->set_parent(parent);\n"
+	out = out + "      for (const auto& mn : parent->get_member_names())\n"
+	out = out + "        cls->add_member_name(mn, parent->member_is_private(mn), parent->member_is_readonly(mn));\n"
+	out = out + "      for (const auto& mname : parent->method_names()) {\n"
+	out = out + "        Pycp::Function* pfn = parent->find_method(mname);\n"
+	out = out + "        if (pfn != nullptr) cls->add_method(mname, pfn, parent->method_is_private(mname));\n"
+	out = out + "      }\n"
+
+	// 装饰器段基址与方法默认值段基址。
+	deco_count = cdef.decorator_count
+	out = out + "      std::size_t deco_base = st.size() - " + S(deco_count) + ";\n"
+	if (md_total > 0) {
+		out = out + "      const std::size_t md_base = deco_base - " + S(md_total) + ";\n"
+	}
+
+	// 成员变量（声明顺序）。
+	member_names = cdef.member_names
+	member_decorators = cdef.member_decorators
+	i = 0
+	for mn in member_names {
+		group = None
+		if (i < member_decorators.length()) {
+			group = member_decorators[i]
+		}
+		has_deco = False
+		if ((group == None) == False) {
+			if (group.length() > 0) {
+				has_deco = True
+			}
+		}
+		if (has_deco) {
+			out = out + "      { Pycp::Object* dg" + S(i) + "[] = {"
+			fk = 0
+			for gi in group {
+				if (fk > 0) {
+					out = out + ", "
+				}
+				out = out + "st[deco_base + " + S(gi) + "]"
+				fk = fk + 1
+			}
+			out = out + "};\n"
+			out = out + "        Pycp::MemberFlags mf" + S(i) + " = Pycp::ApplyDecoratorMemberFlagsChain(dg" + S(i) + ", " + S(group.length()) + ", " + cpp_string_literal(src) + ", " + S(lineno) + ");\n"
+			out = out + "        cls->add_member_name(" + cpp_string_literal(mn) + ", mf" + S(i) + ".priv, mf" + S(i) + ".readonly); }\n"
+		} else {
+			out = out + "      cls->add_member_name(" + cpp_string_literal(mn) + ", false, false);\n"
+		}
+		i = i + 1
+	}
+
+	// 方法：native 模式 BytecodeFunction（带装饰器时经装饰器替换）。
+	method_names = cdef.method_names
+	method_decorators = cdef.method_decorators
+	i = 0
+	for mname in method_names {
+		co_idx = method_codes[i]
+		co = module.code_objects[co_idx]
+		group = None
+		if (i < method_decorators.length()) {
+			group = method_decorators[i]
+		}
+		has_deco = False
+		if ((group == None) == False) {
+			if (group.length() > 0) {
+				has_deco = True
+			}
+		}
+		if (has_deco) {
+			out = out + "      Pycp::BytecodeFunction* mfn" + S(i) + " = new Pycp::BytecodeFunction(" + cpp_string_literal(co.name) + ", " + FN_PREFIX + S(co_idx) + ", env);\n"
+			out = out + "      Pycp::GC_Track(mfn" + S(i) + ");\n"
+			out = out + "      mfn" + S(i) + "->set_param_info(" + S(co.nparams) + ", " + S(co.default_count) + ");\n"
+			if (co.default_count > 0) {
+				out = out + "      { std::vector<Pycp::Object*> defs;\n"
+				out = out + "        for (std::size_t k = 0; k < " + S(co.default_count) + "; ++k) defs.push_back(st[md_base + " + S(md_offsets[i]) + " + k]);\n"
+				out = out + "        mfn" + S(i) + "->set_defaults(defs);\n"
+				out = out + "      }\n"
+			}
+			out = out + "      { Pycp::Object* dg" + S(i) + "[] = {"
+			fk = 0
+			for gi in group {
+				if (fk > 0) {
+					out = out + ", "
+				}
+				out = out + "st[deco_base + " + S(gi) + "]"
+				fk = fk + 1
+			}
+			out = out + "};\n"
+			out = out + "        Pycp::Object* dm" + S(i) + " = Pycp::ApplyDecoratorChain(dg" + S(i) + ", " + S(group.length()) + ", mfn" + S(i) + ", " + cpp_string_literal(src) + ", " + S(lineno) + ");\n"
+			out = out + "        Pycp::Decref(mfn" + S(i) + ");\n"
+			out = out + "        Pycp::BytecodeFunction* mfn2_" + S(i) + " = static_cast<Pycp::BytecodeFunction*>(dm" + S(i) + ");\n"
+			out = out + "        cls->add_method(" + cpp_string_literal(mname) + ", mfn2_" + S(i) + ", mfn2_" + S(i) + "->is_private());\n"
+			out = out + "        mfn2_" + S(i) + "->set_owner_class(cls);\n"
+			out = out + "        Pycp::Decref(mfn2_" + S(i) + "); }\n"
+		} else {
+			out = out + "      Pycp::BytecodeFunction* mfn" + S(i) + " = new Pycp::BytecodeFunction(" + cpp_string_literal(co.name) + ", " + FN_PREFIX + S(co_idx) + ", env);\n"
+			out = out + "      Pycp::GC_Track(mfn" + S(i) + ");\n"
+			out = out + "      " + param_info_call("mfn" + S(i), co) + "\n"
+			if (co.default_count > 0) {
+				out = out + "      { std::vector<Pycp::Object*> defs;\n"
+				out = out + "        for (std::size_t k = 0; k < " + S(co.default_count) + "; ++k) defs.push_back(st[md_base + " + S(md_offsets[i]) + " + k]);\n"
+				out = out + "        mfn" + S(i) + "->set_defaults(defs);\n"
+				out = out + "      }\n"
+			}
+			out = out + "      cls->add_method(" + cpp_string_literal(mname) + ", mfn" + S(i) + ", mfn" + S(i) + "->is_private());\n"
+			out = out + "      mfn" + S(i) + "->set_owner_class(cls);\n"
+			out = out + "      Pycp::Decref(mfn" + S(i) + ");\n"
+		}
+		i = i + 1
+	}
+
+	// 弹出装饰器段与方法默认值段。
+	out = out + "      for (std::size_t d = 0; d < " + S(deco_count) + "; ++d) { Pycp::Object* deco = st.back(); st.pop_back(); if (deco) Pycp::Decref(deco); }\n"
+	if (md_total > 0) {
+		out = out + "      for (std::size_t d = 0; d < " + S(md_total) + "; ++d) { Pycp::Object* dv = st.back(); st.pop_back(); if (dv) Pycp::Decref(dv); }\n"
+	}
+	out = out + "      st.push_back(cls); }\n"
+	return out
+}
+
+// 首次出现的 '.' 下标；无则 -1。
+func find_dot(s) {
+	idx = 0
+	for ch in s {
+		if (ch == ".") {
+			return idx
+		}
+		idx = idx + 1
+	}
+	return -1
+}
+
+// 本模块 import 的、同批生成 .gen.cpp 的依赖（标准库扩展不在其中）。
+func resolve_deps(modules_map, mod) {
+	deps = []
+	for dep in mod.imports {
+		if (map_has(modules_map, dep)) {
+			deps.append(dep)
+		}
+	}
+	return deps
+}
+
+// 单个模块 -> .cpp 内容。
+func emit_module_cpp(module, modname, is_entry, entry_name, deps, kinds, program_entry, library_package_entry, is_package_module, reg_id, default_kind) {
+	code_objects = module.code_objects
+	if (code_objects.length() == 0) {
+		return "#error \"AOT: empty module (no code objects).\"\n"
+	}
+	out = ""
+	src = module.source_path
+	hdr_name = modname
+	if (hdr_name == "") {
+		hdr_name = MODULE_ENTRY_NAME
+	}
+
+	// ---- 文件头 ----
+	out = out + "// =====================================================\n"
+	out = out + "// Auto-generated by Pycp AOT compiler.\n"
+	out = out + "// Source: " + src + "\n"
+	out = out + "// Module: " + hdr_name + "\n"
+	out = out + "// Do not edit manually.\n"
+	out = out + "// =====================================================\n\n"
+
+	// ---- 头文件 ----
+	out = out + "#include \"abi/PycpABI.hpp\"\n"
+	out = out + "#include \"object/PycpGC.hpp\"\n"
+	out = out + "#include \"object/PycpFunction.hpp\"\n"
+	out = out + "#include \"object/PycpManager.hpp\"\n"
+	out = out + "#include \"object/PycpNone.hpp\"\n"
+	out = out + "#include \"object/PycpBoolean.hpp\"\n"
+	out = out + "#include \"object/PycpInteger.hpp\"\n"
+	out = out + "#include \"object/PycpString.hpp\"\n"
+	out = out + "#include \"object/PycpModule.hpp\"\n"
+	out = out + "#include \"object/PycpClass.hpp\"\n"
+	out = out + "#include \"object/PycpList.hpp\"\n"
+	out = out + "#include \"object/PycpMap.hpp\"\n"
+	out = out + "#include \"object/PycpFixedList.hpp\"\n"
+	out = out + "#include \"vm/PycpBytecodeVM.hpp\"\n"
+	out = out + "#include \"abi/PycpNativeExt.hpp\"\n"
+	out = out + "#include \"object/PycpException.hpp\"\n"
+	out = out + "#include \"object/PycpExtension.hpp\"\n"
+	out = out + "#include <vector>\n"
+	out = out + "#include <string>\n"
+	out = out + "#include <unordered_map>\n"
+	out = out + "#include <memory>\n"
+	out = out + "#include <iostream>\n"
+	out = out + "#include <cstddef>\n\n"
+
+	// ---- 全局状态 ----
+	pool = module.const_pool
+	pool_n = pool.length()
+	if (pool_n == 0) {
+		pool_n = 1
+	}
+	out = out + "// 全局常量池对象（对应 .pycp 编译期常量池，模块初始化时预构造）\n"
+	out = out + "static Pycp::Object* g_c[" + S(pool_n) + "];\n\n"
+	out = out + "// 全局变量表（冗余保留；顶层变量实际写入 g_mod_ns 指向的模块命名空间）\n"
+	out = out + "static std::unordered_map<std::string, Pycp::Object*> g_globals;\n\n"
+	out = out + "// 模块命名空间指针（指向本模块 Module 的 namespace）\n"
+	out = out + "static std::unordered_map<std::string, Pycp::Object*>* g_mod_ns = nullptr;\n\n"
+
+	// ---- 辅助函数：环境/栈清理 ----
+	out = out + "static void pycp_cleanup_env(std::shared_ptr<Pycp::BC::Environment>& env, std::vector<Pycp::Object*>& st) {\n"
+	out = out + "    Pycp::Environment_ReleaseFrame(env.get());\n"
+	out = out + "    for (Pycp::Object* v : st) Pycp::Decref(v);\n"
+	out = out + "    st.clear();\n"
+	out = out + "}\n\n"
+
+	// ---- 前向声明 ----
+	nco = code_objects.length()
+	repeat nco as i {
+		out = out + "static Pycp::Object* " + FN_PREFIX + S(i) + "(Pycp::Object* self, Pycp::Object** argv, std::size_t argc);\n"
+	}
+	out = out + "\n"
+
+	// ---- 各代码对象翻译（先 1..n-1，再顶层 0）----
+	repeat nco as ci {
+		if (ci >= 1) {
+			part = emit_function(module, code_objects[ci], ci)
+			out = out + part
+		}
+	}
+	out = out + emit_function(module, code_objects[0], 0)
+
+	// ---- 常量池预构造 ----
+	out = out + "static void pycp_init_consts() {\n"
+	i = 0
+	for c in pool {
+		kind = c.kind
+		if (kind == "INTEGER") {
+			out = out + "    g_c[" + S(i) + "] = Pycp::Integer::FromLong(" + S(c.int_value) + "LL);\n"
+		} elif (kind == "STRING") {
+			out = out + "    g_c[" + S(i) + "] = Pycp::String::FromCString(" + cpp_string_literal(c.str_value) + ");\n"
+		} elif (kind == "FLOAT") {
+			out = out + "    {\n"
+			out = out + "        double d; uint64_t bits = " + c.float_bits + "ULL;\n"
+			out = out + "        std::memcpy(&d, &bits, sizeof(d));\n"
+			out = out + "        g_c[" + S(i) + "] = Pycp::Float::FromDouble(d);\n"
+			out = out + "    }\n"
+		} elif (kind == "DECIMAL") {
+			out = out + "    g_c[" + S(i) + "] = Pycp::Decimal::FromString(" + cpp_string_literal(c.str_value) + ");\n"
+		} elif (kind == "NONE") {
+			out = out + "    g_c[" + S(i) + "] = Pycp::None::instance;\n"
+			out = out + "    Pycp::Incref(Pycp::None::instance);\n"
+		} else {
+			out = out + "    #error \"AOT: unknown constant kind.\"\n"
+		}
+		out = out + "    Pycp::GC_AddRoot(g_c[" + S(i) + "]);\n"
+		i = i + 1
+	}
+	out = out + "}\n\n"
+
+	// ---- 全局常量清理 ----
+	out = out + "static void pycp_fini_consts() {\n"
+	repeat pool.length() as j {
+		out = out + "    Pycp::GC_RemoveRoot(g_c[" + S(j) + "]);\n"
+		out = out + "    Pycp::Decref(g_c[" + S(j) + "]);\n"
+	}
+	out = out + "    for (auto& kv : g_globals) { if (kv.second) Pycp::Decref(kv.second); }\n"
+	out = out + "    g_globals.clear();\n"
+	out = out + "}\n\n"
+
+	// ---- 依赖模块的「链接拉入桩」 ----
+	for dep in deps {
+		if ((dep == modname) == False) {
+			if (is_shared_dep(kinds, default_kind, dep) == False) {
+				tag = S(reg_id) + "_" + sanitize_identifier(dep)
+				sym = module_init_symbol(dep)
+				out = out + "extern \"C\" Pycp::Module* " + sym + "();\n"
+				out = out + "namespace { struct PycpAotLink_" + tag + " {\n"
+				out = out + "  PycpAotLink_" + tag + "() {\n"
+				out = out + "    Pycp::RegisterAotModule(" + cpp_string_literal(dep) + ", &" + sym + ");\n"
+				out = out + "  }\n"
+				out = out + "}; PycpAotLink_" + tag + " _pycp_aot_link_" + tag + "; }\n"
+			}
+		}
+	}
+	if (deps.length() > 0) {
+		out = out + "\n"
+	}
+
+	// ---- 模块注册器 ----
+	self_sym = module_init_symbol(modname)
+	out = out + "// 静态初始化阶段注册本模块初始化函数，供 Pycp::ImportModule 经注册表调用。\n"
+	out = out + "PYCP_MODULE_EXPORT Pycp::Module* " + self_sym + "();\n"
+	out = out + "namespace { struct PycpAotReg_" + S(reg_id) + " {\n"
+	out = out + "  PycpAotReg_" + S(reg_id) + "() {\n"
+	out = out + "    Pycp::RegisterAotModule(" + cpp_string_literal(modname) + ", &" + self_sym + ");\n"
+	out = out + "  }\n"
+	out = out + "}; PycpAotReg_" + S(reg_id) + " _pycp_aot_reg_" + S(reg_id) + "; }\n\n"
+
+	// ---- 模块初始化函数 ----
+	out = out + "// 初始化并返回本模块的 Module（懒执行，首次调用运行顶层）。\n"
+	out = out + "PYCP_MODULE_EXPORT Pycp::Module* " + self_sym + "() {\n"
+	out = out + "    static Pycp::Module* mod = nullptr;\n"
+	out = out + "    static bool done = false;\n"
+	out = out + "    if (!done) {\n"
+	out = out + "        pycp_init_consts();\n"
+	out = out + "        mod = Pycp::Module::New(" + cpp_string_literal(modname) + ");\n"
+	if (is_package_module) {
+		out = out + "        mod->set_package(true);\n"
+	}
+	out = out + "        Pycp::GC_AddRoot(mod);\n"
+	out = out + "        g_mod_ns = mod->get_namespace();\n"
+	out = out + "        Pycp::BindGlobalsModule((void*)g_mod_ns, mod);\n"
+	if (is_entry) {
+		if (library_package_entry == False) {
+			out = out + "        mod->set_module_name(\"__main__\");\n"
+			out = out + "        (*g_mod_ns)[\"__name__\"] = Pycp::String::FromCString(\"__main__\");\n"
+		} else {
+			out = out + "        (*g_mod_ns)[\"__name__\"] = Pycp::String::FromCString(" + cpp_string_literal(modname) + ");\n"
+		}
+	} else {
+		out = out + "        (*g_mod_ns)[\"__name__\"] = Pycp::String::FromCString(" + cpp_string_literal(modname) + ");\n"
+	}
+	out = out + "        Pycp::Module* saved_current = Pycp::current_module_;\n"
+	out = out + "        Pycp::current_module_ = mod;\n"
+	out = out + "        Pycp::Object* r = " + FN_PREFIX + "0(nullptr, nullptr, 0);\n"
+	out = out + "        if (r) Pycp::Decref(r);\n"
+	out = out + "        Pycp::current_module_ = saved_current;\n"
+	out = out + "        done = true;\n"
+	out = out + "    }\n"
+	out = out + "    return mod;\n"
+	out = out + "}\n\n"
+
+	// ---- 入口 main ----
+	if (is_entry) {
+		out = out + "int " + entry_name + "(int argc, char** argv) {\n"
+		out = out + "    Pycp::Initialize();\n"
+		out = out + "    int pycp_exit_code = 0;\n"
+		out = out + "    try {\n"
+		out = out + "        // 注入命令行参数：pycp.argv == [程序完整路径, 程序参数...]，\n"
+		out = out + "        // 对齐 Python sys.argv（argv[0] 为程序路径）。须在模块初始化\n"
+		out = out + "        // 之前写入，供 pycp 内置模块构造时读取快照。\n"
+		out = out + "        std::vector<std::string> pycp_argv(argv, argv + argc);\n"
+		out = out + "        Pycp::SetArgv(pycp_argv);\n"
+		out = out + "        Pycp::Module* entry_mod = " + self_sym + "();\n"
+		if (program_entry) {
+			out = out + "        // 程序角色：调用清单的 main(argv)（argv 同 pycp.argv）。\n"
+			out = out + "        // 直接查命名空间而非 GetAttr：包可能覆写 __get_attribute__\n"
+			out = out + "        // （钩子未代理到命名空间时 GetAttr 会取不到 main）。\n"
+			out = out + "        Pycp::Object* main_fn = nullptr;\n"
+			out = out + "        {\n"
+			out = out + "            auto* ns = entry_mod->get_namespace();\n"
+			out = out + "            auto it = ns->find(\"main\");\n"
+			out = out + "            if (it != ns->end()) main_fn = it->second;  // Borrowed\n"
+			out = out + "        }\n"
+			out = out + "        if (main_fn == nullptr || !main_fn->is_type(\"Function\")) {\n"
+			out = out + "            std::cerr << \"Error: program has no func main(argv) in its manifest.\" << std::endl;\n"
+			out = out + "            return 1;\n"
+			out = out + "        }\n"
+			out = out + "        std::vector<Pycp::Object*> argv_objs;\n"
+			out = out + "        for (int i = 0; i < argc; ++i) {\n"
+			out = out + "            argv_objs.push_back(Pycp::String::FromCString(argv[i]));\n"
+			out = out + "        }\n"
+			out = out + "        Pycp::Object* argv_list = Pycp::FixedList::New(argv_objs);\n"
+			out = out + "        Pycp::Object* r = Pycp::Call(main_fn, &argv_list, 1);\n"
+			out = out + "        Pycp::Decref(argv_list);\n"
+			out = out + "        if (r != nullptr) {\n"
+			out = out + "            Pycp::Object* iv = r->__integer__();\n"
+			out = out + "            if (iv != nullptr) {\n"
+			out = out + "                pycp_exit_code = static_cast<int>(static_cast<Pycp::Integer*>(iv)->get_value());\n"
+			out = out + "                Pycp::Decref(iv);\n"
+			out = out + "            }\n"
+			out = out + "            Pycp::Decref(r);\n"
+			out = out + "        }\n"
+		}
+		out = out + "        pycp_fini_consts();\n"
+		out = out + "        Pycp::Finalize();\n"
+		out = out + "        return pycp_exit_code;\n"
+		out = out + "    } catch (const Pycp::Exception& e) {\n"
+		out = out + "        std::cerr << e.format() << std::endl;\n"
+		out = out + "        return 1;\n"
+		out = out + "    } catch (const std::exception& e) {\n"
+		out = out + "        std::cerr << \"Error: \" << e.what() << std::endl;\n"
+		out = out + "        return 1;\n"
+		out = out + "    }\n"
+		out = out + "}\n\n"
+		out = out + "int main(int argc, char** argv) {\n"
+		out = out + "    return " + entry_name + "(argc, argv);\n"
+		out = out + "}\n"
+	}
+	return out
+}
+
+// dep 是否为动态形态：kinds 显式声明优先，否则取全局默认（与
+// --compile-modules 的默认值一致；入口模块不在形态表内，恒为静态）。
+func is_shared_dep(kinds, default_kind, dep) {
+	if ((kinds == None) == False) {
+		if (map_has(kinds, dep)) {
+			if (kinds[dep] == "shared") {
+				return True
+			}
+			return False
+		}
+	}
+	return default_kind == "shared"
+}
+
+// 全模块 -> Map[模块名 -> .cpp 源码]（按模块名升序，注册器编号可复现）。
+func emit_all(modules_map, entry_name, kinds, default_kind, program_entry, library_package_entry, package_names) {
+	result = pycp.Map()
+	names = sorted_map_keys(modules_map)
+	reg_id = 0
+	for name in names {
+		mod = modules_map[name]
+		is_entry = False
+		if (name == entry_name) {
+			is_entry = True
+		}
+		is_pkg = False
+		if ((package_names == None) == False) {
+			for p in package_names {
+				if (p == name) {
+					is_pkg = True
+				}
+			}
+		}
+		deps = resolve_deps(modules_map, mod)
+		result[name] = emit_module_cpp(mod, name, is_entry, ENTRY_FN_NAME, deps, kinds, program_entry, library_package_entry, is_pkg, reg_id, default_kind)
+		reg_id = reg_id + 1
+	}
+	return result
+}

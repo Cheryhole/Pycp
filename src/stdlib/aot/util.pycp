@@ -1,0 +1,229 @@
+// =============================================================
+// aot.util：AOT 代码生成的公共工具（纯 pycp 实现）
+// -------------------------------------------------------------
+// 只依赖 bytecode 的字符原语与 pycp 基础类型，不依赖任何 C++ AOT 实现。
+// 说明：pycp 语言没有 ord/chr、位运算、字符串比较运算与 sort，故这里用
+// bytecode.char_code / code_char 与整除减法补齐所需的最小能力。
+// =============================================================
+
+import pycp
+import bytecode
+
+// 统一字符串化（pycp.String 的简写）。
+func S(x) {
+	return pycp.String(x)
+}
+
+// 拼接字符串片段列表。
+func join(parts) {
+	out = ""
+	for p in parts {
+		out = out + p
+	}
+	return out
+}
+
+// 字符串长度（pycp 的 String 无 length()，按字符迭代计数）。
+func str_len(s) {
+	n = 0
+	for ch in s {
+		n = n + 1
+	}
+	return n
+}
+
+// 子串（pycp 无切片，逐字符拼接）。
+func substr(s, start, stop) {
+	out = ""
+	repeat str_len(s) as idx {
+		if (idx >= start) {
+			if (idx < stop) {
+				out = out + s[idx]
+			}
+		}
+	}
+	return out
+}
+
+// 子串首次出现下标；无则 None（与 Python str.find 语义对齐）。
+func find(s, sub) {
+	n = str_len(s)
+	m = str_len(sub)
+	if (m == 0) {
+		return 0
+	}
+	lim = n - m + 1
+	repeat lim as p {
+		if (substr(s, p, p + m) == sub) {
+			return p
+		}
+	}
+	return None
+}
+
+// 字符串前缀判定（pycp 无 str.startswith）。
+func starts_with(s, pre) {
+	n = str_len(pre)
+	if (str_len(s) < n) {
+		return False
+	}
+	return substr(s, 0, n) == pre
+}
+
+// 2 位小写十六进制（n 取值 0..255）。
+func hex2(n) {
+	digits = "0123456789abcdef"
+	hi = n / 16
+	lo = n - hi * 16
+	return digits[hi] + digits[lo]
+}
+
+// 字节是否为 [A-Za-z0-9_]。
+func is_ident_byte(c) {
+	if (c == 95) {
+		return True
+	}
+	if (c >= 48) {
+		if (c <= 57) {
+			return True
+		}
+	}
+	if (c >= 65) {
+		if (c <= 90) {
+			return True
+		}
+	}
+	if (c >= 97) {
+		if (c <= 122) {
+			return True
+		}
+	}
+	return False
+}
+
+// C++ 字符串字面量（含外层引号）。与 C++ AOT 的 cpp_string_literal 逐字节一致：
+//   \ -> \\ ， " -> \" ，换行/回车/制表 -> \n \r \t ；
+//   其余字节 < 0x20 写作 \xHH ；>= 0x20（含 0x7f 与 UTF-8 多字节）原样保留。
+func cpp_string_literal(s) {
+	out = "\""
+	for ch in s {
+		if (ch == "\\") {
+			out = out + "\\\\"
+		} elif (ch == "\"") {
+			out = out + "\\\""
+		} elif (ch == "\n") {
+			out = out + "\\n"
+		} elif (ch == "\r") {
+			out = out + "\\r"
+		} elif (ch == "\t") {
+			out = out + "\\t"
+		} else {
+			c = bytecode.char_code(ch)
+			if (c < 32) {
+				out = out + "\\x" + hex2(c)
+			} else {
+				out = out + ch
+			}
+		}
+	}
+	return out + "\""
+}
+
+// 模块名 -> C++ 标识符片段：仅保留 [A-Za-z0-9_]，其余字节按 _xx（小写十六进制）
+// 转义，保证生成的标识符合法（与 sanitize_identifier 的 C++ 版一致）。
+func sanitize_identifier(s) {
+	out = ""
+	for ch in s {
+		c = bytecode.char_code(ch)
+		if (is_ident_byte(c)) {
+			out = out + ch
+		} else {
+			out = out + "_" + hex2(c)
+		}
+	}
+	return out
+}
+
+// 字节序字典序比较（等价 C++ std::string 的 operator<）。
+func str_less(a, b) {
+	n = str_len(a)
+	m = str_len(b)
+	lim = n
+	if (m < lim) {
+		lim = m
+	}
+	repeat lim as i {
+		ca = bytecode.char_code(a[i])
+		cb = bytecode.char_code(b[i])
+		if (ca < cb) {
+			return True
+		}
+		if (ca > cb) {
+			return False
+		}
+	}
+	return n < m
+}
+
+// 字符串列表按字节序升序排序（插入排序；用于对齐 C++ std::map 的遍历顺序，
+// 保证生成文件与注册器编号可复现）。
+func sort_strings(lst) {
+	out = []
+	for item in lst {
+		res = []
+		inserted = False
+		for cur in out {
+			if (inserted == False) {
+				if (str_less(item, cur)) {
+					res.append(item)
+					inserted = True
+				}
+			}
+			res.append(cur)
+		}
+		if (inserted == False) {
+			res.append(item)
+		}
+		out = res
+	}
+	return out
+}
+
+// Map 是否含指定键（pycp 的 Map 下标缺失时行为不确定，故显式探测）。
+func map_has(m, key) {
+	if (m == None) {
+		return False
+	}
+	for k in m.keys() {
+		if (k == key) {
+			return True
+		}
+	}
+	return False
+}
+
+// Map 的字符串键列表（按字节序排序）。
+func sorted_map_keys(m) {
+	keys = []
+	if (m == None) {
+		return keys
+	}
+	for k in m.keys() {
+		keys.append(S(k))
+	}
+	return sort_strings(keys)
+}
+
+// 模块名清洗（AOT 符号 / CMake target 名共用）：'.' -> '__'。
+// 与 C++ SanitizeModuleName 对齐；模块名本身（import 键 / __name__）保持原名。
+func sanitize_module_name(name) {
+	out = ""
+	for ch in name {
+		if (ch == ".") {
+			out = out + "__"
+		} else {
+			out = out + ch
+		}
+	}
+	return out
+}

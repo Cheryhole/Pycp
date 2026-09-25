@@ -1,0 +1,94 @@
+// plan.pycp —— 模块形态决策（对应前端的 PycpModulePlan）。
+//
+// 决定每个模块以「静态」（编译进主程序）还是「动态」（独立共享模块、运行期加载）
+// 形态参与链接。规则：
+//   - 入口模块恒静态（其符号恒在主程序 exe 内）；
+//   - __codegen__ 显式声明的形态优先（overrides）；
+//   - 其余取默认形态（default_kind，由 CLI --compile-modules 控制，默认 shared）；
+//   - 静态形态、且被 >=2 个链接目标引用的模块，保持静态（消除重复编译/加载）。
+//
+// 输入：
+//   modules_list : List[模块名]
+//   deps_map     : Map[模块名 -> List[依赖模块名]]（仅模块集内部依赖）
+//   entry        : 入口模块名
+//   default_kind : "shared" | "static"
+//   overrides    : Map[模块名 -> "static"|"shared"]（来自 __codegen__ module_kinds）
+//   strict_names : List[模块名]（必须静态；此处为内置静态扩展，通常为空）
+// 输出：Map { kinds: Map[名->kind], reasons: Map[名->原因串] }
+
+import pycp
+from util import map_has
+
+func build_plan(modules_list, deps_map, entry, default_kind, overrides, strict_names) {
+	out_kinds = pycp.Map()
+	out_reasons = pycp.Map()
+
+	// 1) 初值：默认 / 覆盖 / 入口 / 内置静态。
+	//    reason 记录「导致该形态的 CLI 开关」，与旧 C++ AOT 的注释格式一致
+	//    （--compile-modules=<kind> / --compile-module:<name>=<kind>）。
+	for m in modules_list {
+		kind = default_kind
+		reason = "--compile-modules=" + default_kind
+		if (overrides != None) {
+			if (map_has(overrides, m)) {
+				kind = overrides[m]
+				reason = "--compile-module:" + m + "=" + kind
+			}
+		}
+		if (m == entry) {
+			kind = "static"
+			reason = "entry"
+		}
+		if (strict_names != None) {
+			for s in strict_names {
+				if (s == m) {
+					kind = "static"
+					reason = "strict"
+				}
+			}
+		}
+		out_kinds[m] = kind
+		out_reasons[m] = reason
+	}
+
+	// 2) 固定点：被 >=2 链接目标引用的模块 -> 静态（消除重复编译/加载）。
+	//    无 while 循环：每轮至少提升一个（有限模块），故 iter_max 轮必收敛。
+	iter_max = modules_list.length() + 2
+	repeat iter_max as iter {
+		changed = False
+		for m in modules_list {
+			if (out_kinds[m] == "static") {
+				// 已静态，跳过
+			} else {
+				hosts = pycp.List()
+				for a in modules_list {
+					if (a == m) {
+						// 自身不算宿主
+					} else {
+						dm = deps_map[a]
+						if (dm != None) {
+							for d in dm {
+								if (d == m) {
+									hosts.append(a)
+								}
+							}
+						}
+					}
+				}
+				if (hosts.length() >= 2) {
+					out_kinds[m] = "static"
+					out_reasons[m] = "模块被 >=2 个链接目标引用，提升为静态（消除重复编译/加载）"
+					changed = True
+				}
+			}
+		}
+		if (changed == False) {
+			break
+		}
+	}
+
+	result = pycp.Map()
+	result["kinds"] = out_kinds
+	result["reasons"] = out_reasons
+	return result
+}

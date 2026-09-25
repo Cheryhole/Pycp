@@ -403,11 +403,23 @@ Object* InstrRef::BuildField(const std::string& name) {
 	if (name == "opcode") return Integer::FromLong(static_cast<long long>(op_));
 	if (name == "operand") return Integer::FromLong(operand_);
 	if (name == "line") return Integer::FromLong(line_);
+	// CALL_KW 的操作数把 (位置实参个数, 关键字实参个数) 打包为
+	// low16 | high16。pycp 语言无位运算，故在此解码暴露（其他指令的
+	// arg_pos 即 operand 本身，arg_kw 为 0）。
+	if (name == "arg_pos") {
+		return Integer::FromLong(static_cast<long long>(
+			static_cast<uint32_t>(operand_) & 0xFFFFu));
+	}
+	if (name == "arg_kw") {
+		return Integer::FromLong(static_cast<long long>(
+			static_cast<uint32_t>(operand_) >> 16));
+	}
 	return nullptr;
 }
 
 Object* InstrRef::__inspect__() {
-	static const std::vector<std::string> names = {"op", "opcode", "operand", "line"};
+	static const std::vector<std::string> names = {"op", "opcode", "operand",
+	                                               "arg_pos", "arg_kw", "line"};
 	return StrList(names);
 }
 

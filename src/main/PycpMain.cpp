@@ -45,10 +45,6 @@
 
 #include "parser/PycpAstNode.hpp"
 #include "codegen/PycpCodegen.hpp"
-#include "aot/PycpAot.hpp"
-#include "aot/PycpAotProject.hpp"
-#include "aot/PycpScriptCodegen.hpp"  // 包清单求值（__codegen__ / 角色）
-#include "aot/PycpAotSdkLocator.hpp" // LocateSdk：过滤内置扩展名的 unresolved 提示
 #include "loader/PycpModuleLoader.hpp"
 #include "loader/PycpSourceBridge.hpp"  // 向运行时注册源码字符串编译/执行钩子
 #include "parser/preprocessor/PycpPreprocessor.hpp"
@@ -81,6 +77,11 @@ extern int Pycp_parse_error_count;
 
 namespace {
 
+// --emit-cpp 的模块/运行时形态（原 AotModuleKind / LinkMode；C++ AOT
+// 自举为 pycp 版 aot 模块后，这里仅保留命令行解析用的本地枚举副本）。
+enum class AotModuleKind { kShared, kStatic };
+enum class AotLinkMode { kShared, kStatic };
+
 struct Options {
 	std::string input_file;
 	// 脚本参数（入口脚本之后的位置参数），传给 pycp.argv，不含 pycp 可执行
@@ -100,16 +101,16 @@ struct Options {
 	// ---- --emit-cpp 的模块形态与运行时形态 ----
 	// 依赖模块（.pycp 转译产物）的全局默认形态：默认 kShared（编成模块
 	// DLL，运行期加载）。要编进主程序请用 --compile-modules=static。
-	Pycp::AOT::ModuleKind compile_modules = Pycp::AOT::ModuleKind::kShared;
+	AotModuleKind compile_modules = AotModuleKind::kShared;
 	// 运行时库（libPycpRuntime）形态：默认 kShared。
-	Pycp::AOT::LinkMode compile_runtime = Pycp::AOT::LinkMode::kShared;
+	AotLinkMode compile_runtime = AotLinkMode::kShared;
 	// 是否显式指定过 --compile-modules / --compile-runtime（用于冲突检测）。
 	bool compile_modules_set = false;
 	bool compile_runtime_set = false;
 	// 旧兼容别名 --shared / --static 是否被使用（与 --compile-* 混用报错）。
 	bool legacy_link_set = false;
 	// --compile-module:<name>=shared|static 的按模块覆盖。
-	std::map<std::string, Pycp::AOT::ModuleKind> module_overrides;
+	std::map<std::string, AotModuleKind> module_overrides;
 	// --show-imports：转译期打印 import 解析清单后继续。
 	bool show_imports = false;
 };
@@ -243,15 +244,15 @@ bool parse_args(int argc, char** argv, Options& opt) {
 				return false;
 			}
 			if (opt.legacy_link_set &&
-			    opt.compile_runtime != (is_shared ? Pycp::AOT::LinkMode::kShared
-			                                      : Pycp::AOT::LinkMode::kStatic)) {
+			    opt.compile_runtime != (is_shared ? AotLinkMode::kShared
+			                                      : AotLinkMode::kStatic)) {
 				std::cerr << "Error: --static and --shared are mutually exclusive."
 				          << std::endl;
 				return false;
 			}
 			opt.compile_runtime =
-				is_shared ? Pycp::AOT::LinkMode::kShared
-				          : Pycp::AOT::LinkMode::kStatic;
+				is_shared ? AotLinkMode::kShared
+				          : AotLinkMode::kStatic;
 			opt.legacy_link_set = true;
 		} else if (starts_with(arg, "--compile-runtime=")) {
 			if (opt.legacy_link_set) {
@@ -267,7 +268,7 @@ bool parse_args(int argc, char** argv, Options& opt) {
 				return false;
 			}
 			opt.compile_runtime =
-				ok ? Pycp::AOT::LinkMode::kShared : Pycp::AOT::LinkMode::kStatic;
+				ok ? AotLinkMode::kShared : AotLinkMode::kStatic;
 			opt.compile_runtime_set = true;
 		} else if (starts_with(arg, "--compile-modules=")) {
 			if (opt.legacy_link_set) {
@@ -283,7 +284,7 @@ bool parse_args(int argc, char** argv, Options& opt) {
 				return false;
 			}
 			opt.compile_modules =
-				ok ? Pycp::AOT::ModuleKind::kShared : Pycp::AOT::ModuleKind::kStatic;
+				ok ? AotModuleKind::kShared : AotModuleKind::kStatic;
 			opt.compile_modules_set = true;
 		} else if (starts_with(arg, "--compile-module:") && arg.find('=') != std::string::npos) {
 			if (opt.legacy_link_set) {
@@ -302,7 +303,7 @@ bool parse_args(int argc, char** argv, Options& opt) {
 				return false;
 			}
 			opt.module_overrides[name] =
-				ok ? Pycp::AOT::ModuleKind::kShared : Pycp::AOT::ModuleKind::kStatic;
+				ok ? AotModuleKind::kShared : AotModuleKind::kStatic;
 		} else if (arg == "--show-imports") {
 			opt.show_imports = true;
 		} else if (arg == "-d" || arg == "--dump") {
@@ -928,223 +929,84 @@ int main(int argc, char** argv) {
 			Pycp::BC::DumpModule(module);
 		}
 		else if (opt.emit_cpp) {
-			// AOT 仅支持 .pycp 源码；.cpycp 是已编译字节码，无法再转译。
+			// --emit-cpp 现已驱动 pycp 版原生 AOT 模块（stdlib/aot，自举实现）：
+			// 本分支只负责解析入口、确定输出目录，并把控制权交给 aot 模块的
+			// main(argv) = [入口源路径, 输出目录]；形态决策 / SDK 定位 / CMake
+			// 生成 / 落盘全部在 pycp 侧完成（src/stdlib/aot/{sdk,plan,project}.pycp）。
 			if (has_suffix(opt.input_file, Pycp::EXT_CPYCP)) {
 				std::cerr << "Error: --emit-cpp only works on .pycp source files "
 				          << "(got " << opt.input_file << ")." << std::endl;
 				ret = 2;
 			}
 			else {
-			// AOT：收集入口与全部 import 依赖（含解析清单），生成可直接编译的
-			// CMake 项目文件夹。编排层（PycpAotProject）负责建目录、写 .gen.cpp、
-			// 形态决策（ModulePlan）与渲染构建脚本。
-			//   -o <dir> 指定整个项目目录（默认 ./<入口名>/）。
-			std::vector<Pycp::ImportResolution> resolutions;
-			// 入口解析同样支持模块文件夹：-m 与 --emit-cpp 可组合，目录入口
-			// 的清单即被转译的入口模块。
-			const EntryResolution er_aot =
-				resolve_entry_path(opt.input_file, opt.module_mode);
-			if (opt.module_mode &&
-			    !validate_module_entry(er_aot, opt.input_file,
-			                           "AOT 转译需要包的源码（"
-			                           "pycp.mpycp 清单文件）。")) {
-				ret = 2;
-				Pycp::Finalize();
-				return ret;
-			}
-			std::set<std::string> package_names_aot;
-			std::map<std::string, Pycp::BC::Module> modules =
-				Pycp::ModuleLoader::load_all(er_aot.entry_file, &resolutions,
-				                             &package_names_aot);
-			std::string entry_name = er_aot.entry_name;
-
-			// 未解析 import 的提示：无法 resolve 到 .pycp 的依赖会被转译产物
-			// 当作「运行期加载的动态库」处理；若本意是静态链接的源码模块，
-			// 说明拼写有误或源码未放置在入口目录/cwd。
-			// 内置扩展（io/Pycp/classtools）本就以 stdlib/ 动态库形式加载，
-			// 不在此列，避免对正常用法刷警告。
-			std::vector<std::string> builtin;
-			{
-				Pycp::AOT::SdkInfo sdk = Pycp::AOT::LocateSdk();
-				builtin = sdk.builtin_modules;
-			}
-			for (const auto& r : resolutions) {
-				if (r.kind != Pycp::ImportKind::kUnresolved) continue;
-				const bool is_builtin =
-					std::find(builtin.begin(), builtin.end(), r.name) !=
-					builtin.end();
-				if (is_builtin) continue;
-				std::cerr << "warning: import '" << r.name
-				          << "' 在入口目录与 cwd 未找到 " << r.name
-				          << Pycp::EXT_PYCP << " 源码；转译产物将把它作为运行期"
-				          << "加载的动态库解析（若它应是编译进主程序的模块，请检查"
-				          << "拼写或源码位置）。\n";
-			}
-			if (opt.show_imports) {
-				std::cout << "Import resolution (" << resolutions.size() << "):\n";
-				for (const auto& r : resolutions) {
-					const char* k = (r.kind == Pycp::ImportKind::kTranslated)
-						? "translated"
-						: (r.kind == Pycp::ImportKind::kExternal) ? "external"
-						                                          : "unresolved";
-					std::cout << "  " << k << "  " << r.name;
-					if (!r.path.empty()) std::cout << "  <- " << r.path;
-					std::cout << "\n";
+				// 入口解析（支持模块文件夹：-m 与 --emit-cpp 可组合）。
+				const EntryResolution er_aot_src =
+					resolve_entry_path(opt.input_file, opt.module_mode);
+				if (opt.module_mode &&
+					!validate_module_entry(er_aot_src, opt.input_file,
+							"AOT 转译需要包的源码（"
+							"pycp.mpycp 清单文件）。")) {
+					ret = 2;
+					Pycp::Finalize();
+					return ret;
 				}
-			}
-
-			// 输出目录：-o 指定则用之，否则默认 ./<入口名>/（位于当前工作目录）。
-			std::string out_dir = opt.output_file.empty()
-				? entry_name
-				: opt.output_file;
-
-			// 包清单求值（仅模块文件夹入口）：用独立 VM 执行清单顶层一趟，
-			// 读出角色与 __codegen__ 的项目描述。失败即中止转译。
-			Pycp::AOT::ScriptCodegenPlan cg;
-			bool have_cg = false;
-			if (er_aot.is_package) {
-				std::vector<std::string> translated;
-				for (const auto& kv : modules) {
-					if (kv.first != entry_name) translated.push_back(kv.first);
+				// 输出目录：-o 指定则用之，否则默认 ./<入口名>/。
+				std::string out_dir = opt.output_file.empty()
+					? er_aot_src.entry_name
+					: opt.output_file;
+				// 解析 aot 包（stdlib/aot/pycp.mpycp），稍后以程序角色运行。
+				const EntryResolution er_aot_pkg =
+					resolve_entry_path("aot", /*module_mode=*/true);
+				if (!validate_module_entry(er_aot_pkg, "aot",
+						"AOT 模块（stdlib/aot）缺失，"
+						"请确认 dist/stdlib/aot 完整。")) {
+					ret = 2;
+					Pycp::Finalize();
+					return ret;
 				}
-				std::string cg_err;
-				if (!Pycp::AOT::EvalPackageManifest(modules, entry_name,
-				                                    package_names_aot,
-				                                    translated, &cg, &cg_err)) {
-					throw Pycp::Exception(cg_err);
+				// 构建传给 aot 模块的 argv：与 `pycp -m aot` 完全一致，首元素是
+				// 程序/模块名（对应 -m 的 input_file="aot"），随后是
+				// [入口源路径, 输出目录]，故 aot 模块 main 里 argv[1]=入口、
+				// argv[2]=输出目录（缺一不可，否则 FixedList 越界）。
+				std::vector<std::string> aot_argv;
+				aot_argv.push_back(er_aot_pkg.entry_name);
+				// 与旧 C++ AOT 一致：写入 source_pycp 注释的是「原始输入」，
+				// 而非解析后的清单路径（模块文件夹模式下两者不同）。load_set
+				// 自身支持目录，故可直接使用原始输入。
+				aot_argv.push_back(opt.input_file);
+				aot_argv.push_back(out_dir);
+				// 追加形态选项：aot 模块自行解析这些 flag（与旧 C++ AOT 的
+				// Options 语义一一对应），仅转发「显式指定过」的项；默认值由
+				// 模块侧决定，避免覆盖模块的默认行为。
+				auto kind_str = [](AotModuleKind k) {
+					return k == AotModuleKind::kShared ? std::string("shared")
+					                                   : std::string("static");
+				};
+				if (opt.compile_runtime_set || opt.legacy_link_set) {
+					aot_argv.push_back(
+						std::string("--compile-runtime=") +
+						(opt.compile_runtime == AotLinkMode::kShared ? "shared"
+						                                             : "static"));
 				}
-				have_cg = true;
-			}
-
-			Pycp::AOT::AotProjectOptions aopt;
-			aopt.default_module_kind = opt.compile_modules;
-			aopt.runtime_link = opt.compile_runtime;
-			aopt.overrides = opt.module_overrides;
-			// 包名集合（入口本身是包、或入口 import 了包，都会非空）：
-			// 决定 AOT 输出是否按包分目录（<pkg>/...）。
-			aopt.package_names = package_names_aot;
-			if (have_cg) {
-				// __codegen__ 的配置（命令行 overrides 已在上面写入，优先级更高）。
-				aopt.executable_name = cg.executable_name;
-				aopt.script_kinds = cg.kinds;
-				for (const auto& kv : cg.kinds) aopt.strict_names.insert(kv.first);
-				aopt.program_entry = (cg.role == Pycp::PackageRole::kProgram);
-				if (!cg.role_declared) {
-					std::cerr
-						<< "note: 模块 '" << entry_name
-						<< "' 未声明角色，已按【库】生成（无可执行文件）；"
-						   "如需可执行项目，请在 "
-						<< Pycp::MODULE_MANIFEST_FILENAME
-						<< " 中调用 moduletools.as_program() 并定义 "
-						   "func main(argv)。\n";
+				if (opt.compile_modules_set) {
+					aot_argv.push_back(std::string("--compile-modules=") +
+							   kind_str(opt.compile_modules));
+				}
+				for (const auto& kv : opt.module_overrides) {
+					aot_argv.push_back(std::string("--compile-module:") + kv.first +
+							   "=" + kind_str(kv.second));
 				}
 				if (opt.show_imports) {
-					std::cout << "Package: " << entry_name << "  role="
-					          << (aopt.program_entry ? "program" : "library")
-					          << (cg.role_declared ? "  <- declared in manifest"
-					                               : "  <- default (AOT)")
-					          << "\n";
+					aot_argv.push_back("--show-imports");
 				}
-			}
-
-			std::vector<std::string> written;
-			std::string emsg;
-			Pycp::AOT::AotPlanReport report;
-			if (!Pycp::AOT::EmitProject(modules, entry_name, opt.input_file,
-			                            out_dir, aopt, {}, &written, &emsg,
-			                            &report)) {
-				throw Pycp::Exception(emsg);
-			}
-
-			// 实际形态统计（可能已被「≥2 宿主强制提升」改写，故取自回执
-			// 而非命令行参数）。
-			std::size_t n_static = 0;
-			std::size_t n_shared = 0;
-			for (const auto& kv : report.modules.kinds) {
-				if (kv.second == Pycp::AOT::ModuleKind::kShared) ++n_shared;
-				else ++n_static;
-			}
-
-			if (opt.show_imports) {
-				// 逐模块形态决策表：打印最终形态与决策来源（全局默认 /
-				// 按模块覆盖 / 强制提升及其覆盖的用户指定），使按模块覆盖
-				// 不再「看起来没生效」。
-				std::cout << "Module kinds (" << report.modules.kinds.size()
-				          << "):\n";
-				if (report.modules.kinds.empty()) {
-					std::cout << "  (no translated dependency module)\n";
-				}
-				for (const auto& kv : report.modules.kinds) {
-					auto rit = report.modules.reasons.find(kv.first);
-					std::cout << "  "
-					          << (kv.second == Pycp::AOT::ModuleKind::kShared
-					                  ? "shared"
-					                  : "static")
-					          << "  " << kv.first;
-					if (rit != report.modules.reasons.end() &&
-					    !rit->second.empty()) {
-						std::cout << "  <- " << rit->second;
-					}
-					std::cout << "\n";
-				}
-				std::cout << "Runtime (1):\n"
-				          << "  "
-				          << (report.runtime_link ==
-				                      Pycp::AOT::LinkMode::kStatic
-				                  ? "static"
-				                  : "shared")
-				          << "  libPycpRuntime  <- --compile-runtime\n";
-				std::cout << "Builtin extensions (" << report.builtin_static.size()
-				          << " static, " << report.builtin_shared.size()
-				          << " shared):\n";
-				for (const std::string& b : report.builtin_static) {
-					std::cout << "  static  " << b
-					          << "  <- linked from SDK (libPycpExt_" << b
-					          << ".a)\n";
-				}
-				for (const std::string& b : report.builtin_shared) {
-					std::cout << "  shared  " << b
-					          << "  <- loaded from stdlib/ at runtime\n";
-				}
-			}
-
-			// 覆盖与全局默认形态相同时是空操作（正是「指定 b=static 后
-			// 所有模块仍是静态」的成因）：给出「只让个别模块静态」的写法。
-			for (const auto& kv : opt.module_overrides) {
-				if (kv.second != opt.compile_modules) continue;
-				const bool is_static =
-					(kv.second == Pycp::AOT::ModuleKind::kStatic);
-				std::cerr << "note: --compile-module:" << kv.first << "="
-				          << (is_static ? "static" : "shared")
-				          << " 与全局默认形态相同，该覆盖为空操作；若要「只有 "
-				          << kv.first << (is_static ? " 静态" : " 动态")
-				          << "、其余相反」，请追加 --compile-modules="
-				          << (is_static ? "shared" : "static") << "\n";
-			}
-
-			std::cout << "Generated AOT project in: " << out_dir
-			          << "  [runtime: "
-			          << (opt.compile_runtime == Pycp::AOT::LinkMode::kStatic
-			                  ? "static"
-			                  : "shared")
-			          << ", modules default: "
-			          << (opt.compile_modules == Pycp::AOT::ModuleKind::kStatic
-			                  ? "static"
-			                  : "shared")
-			          << ", modules: " << n_static << " static + " << n_shared
-			          << " shared]\n";
-			for (const std::string& w : written) {
-				std::cout << "  " << w << std::endl;
-			}
-			std::cout << "Build it with:\n"
-			          << "  cd " << out_dir << " && cmake -S . -B build && cmake --build build\n";
-			// 自包含判定改用实际形态：runtime 静态且无任何动态模块/内置扩展。
-			if (report.runtime_link == Pycp::AOT::LinkMode::kStatic &&
-			    n_shared == 0 && report.builtin_shared.empty()) {
-				std::cout << "Self-contained executable: " << out_dir
-				          << "/build/" << entry_name
-				          << " (no stdlib/ or runtime DLL needed)\n";
-			}
+				Pycp::SetArgv(aot_argv);
+				std::set<std::string> aot_pkgs;
+				std::map<std::string, Pycp::BC::Module> aot_modules =
+					Pycp::ModuleLoader::load_all(er_aot_pkg.entry_file, nullptr,
+								&aot_pkgs);
+				ret = execute_program(aot_modules, er_aot_pkg.entry_name,
+							aot_pkgs, /*module_mode=*/true, aot_argv,
+							er_aot_pkg.found_dir);
 			}
 		}
 		else if (opt.compile) {

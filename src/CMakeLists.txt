@@ -323,15 +323,8 @@ set(PYCP_FRONTEND_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/PycpCodegen.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/loader/PycpModuleLoader.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/loader/PycpSourceBridge.cpp
-    # 原生编译（AOT）—— 迁移期临时保留的 C++ 实现，阶段 3 转 pycp 后删除
-    ${CMAKE_CURRENT_SOURCE_DIR}/aot/PycpAot.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/aot/PycpAotSdkLocator.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/aot/PycpModulePlan.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/aot/PycpProjectSpec.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/aot/PycpBuildScriptGenerator.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/aot/PycpCMakeGenerator.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/aot/PycpAotProject.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/aot/PycpScriptCodegen.cpp
+    # 原生编译（AOT）已自举为 pycp 版（src/stdlib/aot 下的 .pycp 模块），
+    # 由 CLI --emit-cpp 经 execute_program 驱动；C++ 实现已于阶段 3 删除。
     # Flex / Bison 生成物
     ${PYCP_GEN_PARSER_CPP}
     ${PYCP_GEN_LEXER_CPP}

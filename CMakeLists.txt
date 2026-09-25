@@ -363,6 +363,10 @@ foreach(_include_dir IN LISTS PYCP_RUNTIME_INCLUDE_DIRS)
     string(APPEND PYCP_DIST_INCLUDE_DIRS "${_include_dir}|")
 endforeach()
 
+# 纯 pycp 实现的标准库包（模块文件夹）-> dist/stdlib/<包名>/
+# 运行期由 GetStdlibDir() 按名查找，故必须保持包目录层级。
+set(PYCP_DIST_STDLIB_PACKAGE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/src/stdlib/aot")
+
 # 收集动作由独立脚本执行（建目录 / 覆盖复制 / 路径规范化 / 缺失即报错），
 # 多值参数以 '|' 分隔，避免路径中的分号被 CMake 列表吞掉。
 add_custom_target(pycp-dist ALL
@@ -376,6 +380,7 @@ add_custom_target(pycp-dist ALL
         -DRUNTIME_FILES=${PYCP_DIST_RUNTIME_FILES}
         -DSTDLIB_FILES=${PYCP_DIST_STDLIB_FILES}
         -DSTDLIB_STATIC_FILES=${PYCP_DIST_STDLIB_STATIC_FILES}
+        -DSTDLIB_PACKAGE_DIRS=${PYCP_DIST_STDLIB_PACKAGE_DIRS}
         -DINCLUDE_DIRS=${PYCP_DIST_INCLUDE_DIRS}
         -DWRITE_BUILD_INFO=${PYCP_DIST_WRITE_BUILD_INFO}
         -DBUILD_INFO_SYSTEM=${CMAKE_SYSTEM_NAME}
