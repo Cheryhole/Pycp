@@ -247,6 +247,17 @@ PYCP_API void Environment_KeepNames(BC::Environment* env,
 // （由 Environment 析构统一释放），避免闭包引用已释放对象 / 越界读取。
 PYCP_API void Environment_ReleaseFrame(BC::Environment* env);
 
+// =============================================================
+// 字节码模块执行（宿主 / stdlib compile 模块共用）
+// =============================================================
+// 在给定全局命名空间下执行一个字节码模块的顶层，返回其顶层结果（Owned；
+// 通常为 None）。module 须在调用期间保持有效（VM 在其生命周期内使用）。
+//   globals 为 Map    : 以其内容预置全局命名空间，执行后把新增 / 改动的名字
+//                       写回该 Map（对齐 Python exec(code, globals) 的读写语义）
+//   globals 为 nullptr / None : 使用全新全局命名空间
+//   globals 为其它类型 : 抛 TypeError
+PYCP_API Object* RunBytecodeModule(BC::Module* module, Object* globals);
+
 } // namespace Pycp
 
 // =============================================================

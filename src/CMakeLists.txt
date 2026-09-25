@@ -222,7 +222,9 @@ set(PYCP_RUNTIME_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/object/PycpExtension.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/bytecode/PycpBytecode.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/bytecode/PycpBytecodeDump.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/bytecode/PycpBytecodeObject.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/vm/PycpBytecodeVM.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/vm/PycpModuleRunner.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/abi/PycpABI.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/abi/PycpNativeExt.cpp
 )
