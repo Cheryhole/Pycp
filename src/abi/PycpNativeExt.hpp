@@ -20,6 +20,8 @@
 #include "object/PycpModule.hpp"
 
 #include <cstdint>
+#include <map>
+#include <set>
 #include <string>
 
 namespace Pycp {
@@ -95,6 +97,30 @@ PYCP_API Object* ExecSourceString(const std::string& source,
                                   const std::string& filename, Object* globals);
 PYCP_API Object* ParseSourceString(const std::string& source,
                                    const std::string& filename);
+
+// =============================================================
+// 源码「模块集」加载钩子（递归解析入口及其 import 依赖）
+// -------------------------------------------------------------
+// 对应前端的 ModuleLoader::load_all：aot 模块需要一次性拿到「入口 + 全部
+// 依赖模块」的字节码与包名集合，才能在 pycp 里做形态决策与逐模块翻译。
+// 与前三个钩子同理：运行时不含 parser/codegen，实现由宿主注册。
+// =============================================================
+
+//   entry_path     : 入口 .pycp 文件，或模块文件夹（目录 / pycp.mpycp 清单）
+//   out_entry_name : 入口模块名（包为包名，普通文件为去扩展名的 basename）
+//   out_modules    : 模块名 -> 堆分配 BC::Module*（所有权移交调用方）
+//   out_packages   : 模块文件夹（包）名集合
+using SourceModuleSetLoader = void (*)(const std::string& entry_path,
+                                       std::string* out_entry_name,
+                                       std::map<std::string, BC::Module*>* out_modules,
+                                       std::set<std::string>* out_packages);
+PYCP_API void SetSourceModuleSetLoader(SourceModuleSetLoader fn);
+
+// 便捷调用：钩子未注册时抛 RuntimeError。
+PYCP_API void LoadSourceModuleSet(const std::string& entry_path,
+                                  std::string* out_entry_name,
+                                  std::map<std::string, BC::Module*>* out_modules,
+                                  std::set<std::string>* out_packages);
 
 // =============================================================
 // 命令行参数（argv）注入

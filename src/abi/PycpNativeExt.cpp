@@ -55,6 +55,7 @@ std::atomic<SourceModuleCompiler> g_source_compiler{&default_source_compiler};
 std::atomic<SourceStringCompiler> g_string_compiler{nullptr};
 std::atomic<SourceExecutor> g_executor{nullptr};
 std::atomic<SourceParser> g_parser{nullptr};
+std::atomic<SourceModuleSetLoader> g_module_set_loader{nullptr};
 
 // 可执行文件所在目录（惰性计算并缓存）。
 std::string g_exe_dir;
@@ -189,6 +190,23 @@ Object* ParseSourceString(const std::string& source, const std::string& filename
 			"PycpFrontend to enable ast.parse.");
 	}
 	return fn(source, filename);
+}
+
+void SetSourceModuleSetLoader(SourceModuleSetLoader fn) {
+	g_module_set_loader.store(fn);
+}
+
+void LoadSourceModuleSet(const std::string& entry_path,
+                         std::string* out_entry_name,
+                         std::map<std::string, BC::Module*>* out_modules,
+                         std::set<std::string>* out_packages) {
+	SourceModuleSetLoader fn = g_module_set_loader.load();
+	if (fn == nullptr) {
+		throw RuntimeError(
+			"source module-set loader hook is not registered: the host must "
+			"link PycpFrontend to enable aot.");
+	}
+	fn(entry_path, out_entry_name, out_modules, out_packages);
 }
 
 // 写入命令行参数（宿主启动时调用一次）；复制入全局状态，调用方 vector 可释放。
