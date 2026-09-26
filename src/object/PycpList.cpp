@@ -11,8 +11,11 @@
 #include "object/PycpMagic.hpp"
 #include "object/PycpMap.hpp"
 #include "object/PycpExtension.hpp"   // Extension::CompileArgs / Arg 规范框架
+#include "abi/PycpABI.hpp"            // Compare / IsFalse（元素相等与排序）
 
 #include <sstream>
+#include <algorithm>
+#include <vector>
 
 namespace Pycp {
 
@@ -39,14 +42,196 @@ Object* _list_append(Object* self, FixedList* args, Map* kwargs) {
 
 } // anonymous namespace
 
-// List 全部方法的方法表（公开方法 length/append + 全部魔术方法）。
-// 方法名指向本文件 anonymous namespace 内的实现（公开方法）或由
-// GetMagicMethodFunction 统一分派（魔术方法，native 为 nullptr）。
-// 类型类注册与 __inspect__ 均以此表为唯一权威来源。
+namespace {
+
+// 元素相等（用 ABI Compare 的 EQ=2，语义与 `==` 一致）。
+bool _list_elem_eq(Object* a, Object* b) {
+	Object* r = Compare(a, b, 2);
+	bool eq = !IsFalse(r);
+	Decref(r);
+	return eq;
+}
+
+// 通用可迭代对象 -> Owned 元素列表（__iterator__/__next__，StopIteration 收尾）。
+std::vector<Object*> _collect_iterable(Object* it) {
+	if (it == nullptr) throw TypeError("object is not iterable.");
+	Object* iter = it->__iterator__();   // Owned
+	if (iter == nullptr) throw TypeError("object is not iterable.");
+	std::vector<Object*> out;
+	for (;;) {
+		Object* v = nullptr;
+		try {
+			v = iter->__next__();
+		} catch (const StopIteration&) {
+			break;
+		}
+		out.push_back(v);
+	}
+	Decref(iter);
+	return out;
+}
+
+Object* _list_extend(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"extend", { Extension::Arg::Required("iterable") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	List* l = static_cast<List*>(self);
+	std::vector<Object*> elems = _collect_iterable(r["iterable"]);
+	for (Object* e : elems) {
+		l->append(e);   // Borrowed
+		Decref(e);      // 释放本处 Owned
+	}
+	return None::instance;
+}
+
+Object* _list_insert(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"insert", { Extension::Arg::Required("index"),
+		            Extension::Arg::Required("item") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	Object* io = r["index"];
+	if (io == nullptr || !io->is_type("Integer")) {
+		throw TypeError("insert(): 'index' must be an Integer.");
+	}
+	List* l = static_cast<List*>(self);
+	long long n = static_cast<long long>(l->size());
+	long long i = static_cast<Integer*>(io)->get_value();
+	if (i < 0) i += n;
+	if (i < 0) i = 0;
+	if (i > n) i = n;
+	l->insert_item(static_cast<std::size_t>(i), r["item"]);
+	return None::instance;
+}
+
+Object* _list_remove(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"remove", { Extension::Arg::Required("value") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	List* l = static_cast<List*>(self);
+	for (std::size_t i = 0; i < l->size(); ++i) {
+		if (_list_elem_eq(l->at(i), r["value"])) {
+			Object* removed = l->pop_item(i);   // Owned
+			if (removed != nullptr) Decref(removed);
+			return None::instance;
+		}
+	}
+	throw ValueError("remove(): value not in list.");
+}
+
+Object* _list_pop(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"pop", { Extension::Arg::Optional("index") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	List* l = static_cast<List*>(self);
+	if (l->size() == 0) throw IndexError("pop from empty list.");
+	long long n = static_cast<long long>(l->size());
+	long long i = n - 1;
+	Object* io = r["index"];
+	if (io != nullptr && io->type_id() != PycpTypeId::None) {
+		if (!io->is_type("Integer")) {
+			throw TypeError("pop(): 'index' must be an Integer.");
+		}
+		i = static_cast<Integer*>(io)->get_value();
+		if (i < 0) i += n;
+	}
+	if (i < 0 || i >= n) throw IndexError("pop index out of range.");
+	return l->pop_item(static_cast<std::size_t>(i));   // Owned
+}
+
+Object* _list_index(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"index", { Extension::Arg::Required("value") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	List* l = static_cast<List*>(self);
+	for (std::size_t i = 0; i < l->size(); ++i) {
+		if (_list_elem_eq(l->at(i), r["value"])) {
+			return Integer::FromLong(static_cast<long long>(i));
+		}
+	}
+	throw ValueError("index(): value not in list.");
+}
+
+Object* _list_count(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"count", { Extension::Arg::Required("value") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	List* l = static_cast<List*>(self);
+	long long c = 0;
+	for (std::size_t i = 0; i < l->size(); ++i) {
+		if (_list_elem_eq(l->at(i), r["value"])) ++c;
+	}
+	return Integer::FromLong(c);
+}
+
+Object* _list_contains(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"contains", { Extension::Arg::Required("value") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	List* l = static_cast<List*>(self);
+	for (std::size_t i = 0; i < l->size(); ++i) {
+		if (_list_elem_eq(l->at(i), r["value"])) return Boolean::True();
+	}
+	return Boolean::False();
+}
+
+Object* _list_reverse(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec =
+		Extension::CompileArgs("reverse", {});
+	spec.Bind(args, kwargs);
+	static_cast<List*>(self)->reverse_items();
+	return None::instance;
+}
+
+Object* _list_sort(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"sort", { Extension::Arg::Optional("reverse") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	bool desc = false;
+	Object* ro = r["reverse"];
+	if (ro != nullptr && ro->type_id() != PycpTypeId::None) {
+		desc = IsFalse(ro->__boolean__()) == false;
+	}
+	static_cast<List*>(self)->sort_items(desc);
+	return None::instance;
+}
+
+Object* _list_clear(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs("clear", {});
+	spec.Bind(args, kwargs);
+	static_cast<List*>(self)->clear_items();
+	return None::instance;
+}
+
+Object* _list_copy(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs("copy", {});
+	spec.Bind(args, kwargs);
+	List* src = static_cast<List*>(self);
+	List* out = Pycp::New<List>();
+	for (std::size_t i = 0; i < src->size(); ++i) out->append(src->at(i));
+	return out;
+}
+
+} // anonymous namespace
+
+// List 全部方法的方法表（公开方法 + 全部魔术方法）。
+// 公开方法名指向本文件 anonymous namespace 内的实现；魔术方法 native 为
+// nullptr，由 GetMagicMethodFunction 统一分派。类型类注册与 __inspect__
+// 均以此表为唯一权威来源。
 const std::vector<MethodEntry>& List_method_table() {
 	static const std::vector<MethodEntry> table = {
 		{"length",               _list_length},
 		{"append",               _list_append},
+		{"extend",               _list_extend},
+		{"insert",               _list_insert},
+		{"remove",               _list_remove},
+		{"pop",                  _list_pop},
+		{"index",                _list_index},
+		{"count",                _list_count},
+		{"contains",             _list_contains},
+		{"reverse",              _list_reverse},
+		{"sort",                 _list_sort},
+		{"clear",                _list_clear},
+		{"copy",                 _list_copy},
 		{"__iterator__",         nullptr},
 		{"__list__",             nullptr},
 		{"__boolean__",          nullptr},
@@ -63,6 +248,11 @@ const std::vector<MethodEntry>& List_method_table() {
 		{"__delete_attribute__", nullptr},
 	};
 	return table;
+}
+
+// 通用方法分派入口（见 Object::__get_attribute__）。
+MethodTableFn List::method_table() const {
+	return List_method_table;
 }
 
 List* List::New() {
@@ -108,6 +298,43 @@ Object* List::at(std::size_t idx) const {
 		throw IndexError("list index out of range.");
 	}
 	return items_[idx];
+}
+
+void List::insert_item(std::size_t idx, Object* item) {
+	if (item == nullptr) throw TypeError("cannot insert null into list.");
+	if (idx > items_.size()) idx = items_.size();
+	items_.insert(items_.begin() + static_cast<std::ptrdiff_t>(idx), item);
+	Incref(item);
+}
+
+Object* List::pop_item(std::size_t idx) {
+	if (idx >= items_.size()) throw IndexError("list index out of range.");
+	Object* v = items_[idx];
+	// 引用转移：表内那份引用直接交给调用方（列表不再 Decref）。
+	items_.erase(items_.begin() + static_cast<std::ptrdiff_t>(idx));
+	return v;
+}
+
+void List::clear_items() {
+	for (Object* o : items_) { if (o != nullptr) Decref(o); }
+	items_.clear();
+}
+
+void List::reverse_items() {
+	std::reverse(items_.begin(), items_.end());
+}
+
+void List::sort_items(bool descending) {
+	std::stable_sort(items_.begin(), items_.end(),
+		[descending](Object* a, Object* b) {
+			// 严格弱序：取 x < y；降序用 (b < a) 表达，避免 <= 破坏 weak order。
+			Object* x = descending ? b : a;
+			Object* y = descending ? a : b;
+			Object* r = Compare(x, y, 0);   // 0 == less_than
+			bool lt = !IsFalse(r);
+			Decref(r);
+			return lt;
+		});
 }
 
 std::size_t List::normalize_index(Object* key) const {
@@ -242,6 +469,10 @@ Object* List::__get_attribute__(const std::string& name) {
 			append_fn_ = Pycp::New<Function>("append", _list_append);
 		}
 		return append_fn_;
+	}
+	// 2.1) 方法表分派：本类型的公开方法（native != nullptr）→ 共享缓存 Function。
+	if (Object* method = GetTableMethodFunction(List_method_table(), name)) {
+		return method;
 	}
 	// 3) 魔术方法：回退到通用分派（可调用 C++ 虚方法）。
 	if (Object* magic = GetMagicMethodFunction(name)) {

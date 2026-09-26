@@ -37,6 +37,9 @@ class PYCP_API String : public Object{
 	Object* __inspect__() override;
 	Object* __hash__() override;
 
+	// 通用方法分派（见 Object::method_table()）：返回 String 方法表。
+	MethodTableFn method_table() const override;
+
 	static void Initialize();
 		static void Finalize();
 

@@ -51,6 +51,16 @@ public:
 	void append(Object* item);   // 接管 item 所有权（内部 Incref）
 	Object* at(std::size_t idx) const;
 
+	// —— 供方法表实现使用的容器操作（内部管理引用计数）——
+	void insert_item(std::size_t idx, Object* item);  // item 为 Borrowed，内部 Incref
+	Object* pop_item(std::size_t idx);                // 移出并返回 Owned（引用自表转移）
+	void clear_items();                               // 清空并释放全部元素
+	void reverse_items();
+	void sort_items(bool descending);
+
+	// 通用方法分派（见 Object::method_table()）：返回 List 方法表。
+	MethodTableFn method_table() const override;
+
 	// 魔术方法。
 	Object* __get_item__(Object* key) override;
 	Object* __set_item__(Object* key, Object* value) override;

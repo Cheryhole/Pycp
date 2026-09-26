@@ -11,8 +11,10 @@
 #include "object/PycpMagic.hpp"
 #include "object/PycpMap.hpp"
 #include "object/PycpExtension.hpp"   // Extension::CompileArgs / Arg 规范框架
+#include "abi/PycpABI.hpp"            // Compare / IsFalse（元素相等）
 
 #include <sstream>
+#include <vector>
 
 namespace Pycp {
 
@@ -27,6 +29,50 @@ Object* _fixedlist_length(Object* self, FixedList* args, Map* kwargs) {
 	return Integer::FromLong(static_cast<long long>(l->size()));
 }
 
+// 元素相等（用 ABI Compare 的 EQ=2）。
+bool _fixedlist_elem_eq(Object* a, Object* b) {
+	Object* r = Compare(a, b, 2);
+	bool eq = !IsFalse(r);
+	Decref(r);
+	return eq;
+}
+
+Object* _fixedlist_index(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"index", { Extension::Arg::Required("value") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	FixedList* l = static_cast<FixedList*>(self);
+	for (std::size_t i = 0; i < l->size(); ++i) {
+		if (_fixedlist_elem_eq(l->at(i), r["value"])) {
+			return Integer::FromLong(static_cast<long long>(i));
+		}
+	}
+	throw ValueError("index(): value not in FixedList.");
+}
+
+Object* _fixedlist_count(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"count", { Extension::Arg::Required("value") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	FixedList* l = static_cast<FixedList*>(self);
+	long long c = 0;
+	for (std::size_t i = 0; i < l->size(); ++i) {
+		if (_fixedlist_elem_eq(l->at(i), r["value"])) ++c;
+	}
+	return Integer::FromLong(c);
+}
+
+Object* _fixedlist_contains(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"contains", { Extension::Arg::Required("value") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	FixedList* l = static_cast<FixedList*>(self);
+	for (std::size_t i = 0; i < l->size(); ++i) {
+		if (_fixedlist_elem_eq(l->at(i), r["value"])) return Boolean::True();
+	}
+	return Boolean::False();
+}
+
 } // anonymous namespace
 
 // FixedList 全部方法的方法表（公开方法 length + 全部魔术方法）。
@@ -34,6 +80,9 @@ Object* _fixedlist_length(Object* self, FixedList* args, Map* kwargs) {
 const std::vector<MethodEntry>& FixedList_method_table() {
 	static const std::vector<MethodEntry> table = {
 		{"length",               _fixedlist_length},
+		{"index",                _fixedlist_index},
+		{"count",                _fixedlist_count},
+		{"contains",             _fixedlist_contains},
 		{"__iterator__",         nullptr},
 		{"__boolean__",          nullptr},
 		{"__addition__",         nullptr},
@@ -48,6 +97,11 @@ const std::vector<MethodEntry>& FixedList_method_table() {
 		{"__delete_attribute__", nullptr},
 	};
 	return table;
+}
+
+// 通用方法分派入口（见 Object::__get_attribute__）。
+MethodTableFn FixedList::method_table() const {
+	return FixedList_method_table;
 }
 
 FixedList* FixedList::New(Object** items, std::size_t n) {
@@ -215,6 +269,10 @@ Object* FixedList::__get_attribute__(const std::string& name) {
 			length_fn_ = Pycp::New<Function>("length", _fixedlist_length);
 		}
 		return length_fn_;
+	}
+	// 2.1) 方法表分派：本类型的公开方法。
+	if (Object* method = GetTableMethodFunction(FixedList_method_table(), name)) {
+		return method;
 	}
 	// 3) 魔术方法：回退到通用分派。
 	if (Object* magic = GetMagicMethodFunction(name)) {

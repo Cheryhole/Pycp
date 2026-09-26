@@ -153,6 +153,14 @@ std::unordered_map<std::string, Function*>& magic_cache() {
 	return cache;
 }
 
+// 惰性创建并缓存各「公开方法」对应的 Function（GC 常驻，仅创建一次）。
+// key: native 函数指针（每个方法唯一，故跨实例/跨类型复用同一 Function；
+// 与魔术方法缓存同构，避免每实例各建一份）。
+std::unordered_map<PycpCFunction, Function*>& table_method_cache() {
+	static std::unordered_map<PycpCFunction, Function*> cache;
+	return cache;
+}
+
 } // anonymous namespace
 
 bool IsMagicMethodName(const std::string& name) {
@@ -169,6 +177,23 @@ Object* GetMagicMethodFunction(const std::string& name) {
 	cache[name] = f;
 	GC_AddRoot(f); // 常驻缓存，避免被回收
 	return f;
+}
+
+Object* GetTableMethodFunction(const std::vector<MethodEntry>& table,
+                               const std::string& name) {
+	for (const MethodEntry& e : table) {
+		// 仅「公开方法」参与属性访问分派；魔术方法（native == nullptr）
+		// 继续走 GetMagicMethodFunction 的统一 thunk。
+		if (e.native == nullptr || name != e.name) continue;
+		auto& cache = table_method_cache();
+		auto it = cache.find(e.native);
+		if (it != cache.end()) return it->second;
+		Function* f = New<Function>(e.name, e.native);
+		cache[e.native] = f;
+		GC_AddRoot(f); // 常驻缓存，避免被回收
+		return f;
+	}
+	return nullptr;
 }
 
 Object* BuildNameList(const std::vector<std::string>& names) {

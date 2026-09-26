@@ -6,9 +6,14 @@
 #include "object/PycpList.hpp"
 #include "object/PycpIterator.hpp"
 #include "object/PycpMagic.hpp"   // CollectUniqueName / CommonInspectNames
+#include "object/PycpFixedList.hpp"
+#include "object/PycpExtension.hpp"   // Extension::CompileArgs / Arg
 
 #include <iostream>
 #include <functional>
+#include <cctype>
+#include <string>
+#include <vector>
 
 namespace Pycp {
 
@@ -131,9 +136,354 @@ Object* String::__iterator__() {
 	return Pycp::New<StringIterator>(this);
 }
 
-// String 全部方法的方法表（全部为魔术方法，native 为 nullptr）。
+namespace {
+
+// =============================================================
+// String 公开方法（Python 同名同语义；见 docs/CORE_METHODS.md §1）
+// 说明：Pycp 的 String 是字节串（__get_item__/__list__/迭代均按字节），
+//       故 length/find 等下标与 Python 的「码点」语义在纯 ASCII 下一致，
+//       多字节 UTF-8 下按字节计（与既有语义保持一致）。
+// =============================================================
+
+// 校验并取字符串参数（借用其底层 std::string 值）。
+std::string _arg_str(const char* fn, const char* name, Object* o) {
+	if (o == nullptr || !o->is_type("String")) {
+		throw TypeError(std::string(fn) + "(): '" + name +
+		                "' must be a String.");
+	}
+	return static_cast<String*>(o)->get_value();
+}
+
+// 可选字符串参数：未给出或 None -> false；类型不符 -> TypeError。
+bool _opt_str(const char* fn, const char* name, Object* o, std::string* out) {
+	if (o == nullptr || o->type_id() == PycpTypeId::None) return false;
+	if (!o->is_type("String")) {
+		throw TypeError(std::string(fn) + "(): '" + name +
+		                "' must be a String or None.");
+	}
+	*out = static_cast<String*>(o)->get_value();
+	return true;
+}
+
+bool _is_ws(char c) {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r' ||
+	       c == '\v' || c == '\f';
+}
+
+bool _in_char_set(char c, const std::string& set) {
+	for (char s : set) { if (s == c) return true; }
+	return false;
+}
+
+// strip/lstrip/rstrip 共用内核：mode 0=两端 1=左 2=右。
+std::string _strip_core(const std::string& v, const std::string& set,
+                        bool has_set, int mode) {
+	std::size_t b = 0, e = v.size();
+	auto match = [&](char c) {
+		return has_set ? _in_char_set(c, set) : _is_ws(c);
+	};
+	if (mode != 2) { while (b < e && match(v[b])) ++b; }
+	if (mode != 1) { while (e > b && match(v[e - 1])) --e; }
+	return v.substr(b, e - b);
+}
+
+Object* _str_length(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs("length", {});
+	spec.Bind(args, kwargs);
+	return Integer::FromLong(static_cast<long long>(
+		static_cast<String*>(self)->get_value().size()));
+}
+
+Object* _str_upper(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs("upper", {});
+	spec.Bind(args, kwargs);
+	std::string v = static_cast<String*>(self)->get_value();
+	for (char& c : v) {
+		c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+	}
+	return String::FromCString(v.c_str());
+}
+
+Object* _str_lower(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs("lower", {});
+	spec.Bind(args, kwargs);
+	std::string v = static_cast<String*>(self)->get_value();
+	for (char& c : v) {
+		c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+	}
+	return String::FromCString(v.c_str());
+}
+
+Object* _str_strip(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"strip", { Extension::Arg::Optional("chars") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	std::string set;
+	bool has = _opt_str("strip", "chars", r["chars"], &set);
+	return String::FromCString(_strip_core(
+		static_cast<String*>(self)->get_value(), set, has, 0).c_str());
+}
+
+Object* _str_lstrip(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"lstrip", { Extension::Arg::Optional("chars") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	std::string set;
+	bool has = _opt_str("lstrip", "chars", r["chars"], &set);
+	return String::FromCString(_strip_core(
+		static_cast<String*>(self)->get_value(), set, has, 1).c_str());
+}
+
+Object* _str_rstrip(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"rstrip", { Extension::Arg::Optional("chars") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	std::string set;
+	bool has = _opt_str("rstrip", "chars", r["chars"], &set);
+	return String::FromCString(_strip_core(
+		static_cast<String*>(self)->get_value(), set, has, 2).c_str());
+}
+
+Object* _str_split(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"split", { Extension::Arg::Optional("sep"),
+		           Extension::Arg::Optional("maxsplit") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	const std::string v = static_cast<String*>(self)->get_value();
+	long long maxsplit = -1;
+	Object* mo = r["maxsplit"];
+	if (mo != nullptr && mo->type_id() != PycpTypeId::None) {
+		if (!mo->is_type("Integer")) {
+			throw TypeError("split(): 'maxsplit' must be an Integer.");
+		}
+		maxsplit = static_cast<Integer*>(mo)->get_value();
+	}
+	std::string sep;
+	bool has_sep = _opt_str("split", "sep", r["sep"], &sep);
+	if (has_sep && sep.empty()) {
+		throw ValueError("split(): empty separator.");
+	}
+	List* out = Pycp::New<List>();
+	auto push = [&](const std::string& part) {
+		Object* s = String::FromCString(part.c_str());
+		out->append(s);   // append 内部 Incref（Borrowed 语义）
+		Decref(s);        // 释放本处 Owned
+	};
+	if (!has_sep) {
+		std::size_t i = 0;
+		long long cnt = 0;
+		while (i < v.size()) {
+			while (i < v.size() && _is_ws(v[i])) ++i;
+			if (i >= v.size()) break;
+			if (maxsplit >= 0 && cnt >= maxsplit) {
+				push(v.substr(i));
+				break;
+			}
+			std::size_t j = i;
+			while (j < v.size() && !_is_ws(v[j])) ++j;
+			push(v.substr(i, j - i));
+			i = j;
+			++cnt;
+		}
+	} else {
+		std::size_t i = 0;
+		long long cnt = 0;
+		for (;;) {
+			if (maxsplit >= 0 && cnt >= maxsplit) {
+				push(v.substr(i));
+				break;
+			}
+			std::size_t p = v.find(sep, i);
+			if (p == std::string::npos) {
+				push(v.substr(i));
+				break;
+			}
+			push(v.substr(i, p - i));
+			i = p + sep.size();
+			++cnt;
+		}
+	}
+	return out;
+}
+
+Object* _str_join(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"join", { Extension::Arg::Required("iterable") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	Object* it = r["iterable"];
+	const bool is_list = (it != nullptr && it->is_type("List"));
+	const bool is_fixed = (it != nullptr && it->is_type("FixedList"));
+	if (!is_list && !is_fixed) {
+		throw TypeError("join(): 'iterable' must be a List or FixedList.");
+	}
+	const std::string sep = static_cast<String*>(self)->get_value();
+	const std::size_t n = is_list ? static_cast<List*>(it)->size()
+	                              : static_cast<FixedList*>(it)->size();
+	std::string out;
+	for (std::size_t i = 0; i < n; ++i) {
+		Object* elem = is_list ? static_cast<List*>(it)->at(i)
+		                       : static_cast<FixedList*>(it)->at(i);
+		if (i > 0) out += sep;
+		out += _arg_str("join", "element", elem);
+	}
+	return String::FromCString(out.c_str());
+}
+
+Object* _str_replace(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"replace", { Extension::Arg::Required("old"),
+		             Extension::Arg::Required("new"),
+		             Extension::Arg::Optional("count") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	const std::string old_s = _arg_str("replace", "old", r["old"]);
+	const std::string new_s = _arg_str("replace", "new", r["new"]);
+	long long count = -1;
+	Object* co = r["count"];
+	if (co != nullptr && co->type_id() != PycpTypeId::None) {
+		if (!co->is_type("Integer")) {
+			throw TypeError("replace(): 'count' must be an Integer.");
+		}
+		count = static_cast<Integer*>(co)->get_value();
+	}
+	const std::string v = static_cast<String*>(self)->get_value();
+	std::string res;
+	if (old_s.empty()) {
+		// 对齐 Python：空 old 在每个字符边界插入（受 count 限制）。
+		res = new_s;
+		for (char c : v) {
+			res += c;
+			res += new_s;
+		}
+		return String::FromCString(res.c_str());
+	}
+	std::size_t i = 0;
+	long long cnt = 0;
+	for (;;) {
+		if (count >= 0 && cnt >= count) {
+			res += v.substr(i);
+			break;
+		}
+		std::size_t p = v.find(old_s, i);
+		if (p == std::string::npos) {
+			res += v.substr(i);
+			break;
+		}
+		res += v.substr(i, p - i);
+		res += new_s;
+		i = p + old_s.size();
+		++cnt;
+	}
+	return String::FromCString(res.c_str());
+}
+
+Object* _str_find(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"find", { Extension::Arg::Required("sub"),
+		          Extension::Arg::Optional("start"),
+		          Extension::Arg::Optional("end") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	const std::string sub = _arg_str("find", "sub", r["sub"]);
+	const std::string v = static_cast<String*>(self)->get_value();
+	const long long n = static_cast<long long>(v.size());
+	long long start = 0, end = n;
+	Object* so = r["start"];
+	Object* eo = r["end"];
+	if (so != nullptr && so->type_id() != PycpTypeId::None) {
+		if (!so->is_type("Integer")) {
+			throw TypeError("find(): 'start' must be an Integer.");
+		}
+		start = static_cast<Integer*>(so)->get_value();
+	}
+	if (eo != nullptr && eo->type_id() != PycpTypeId::None) {
+		if (!eo->is_type("Integer")) {
+			throw TypeError("find(): 'end' must be an Integer.");
+		}
+		end = static_cast<Integer*>(eo)->get_value();
+	}
+	if (start < 0) start = 0;
+	if (end > n) end = n;
+	if (end < start) return Integer::FromLong(-1);
+	std::size_t p = v.find(sub, static_cast<std::size_t>(start));
+	if (p == std::string::npos) return Integer::FromLong(-1);
+	if (static_cast<long long>(p) + static_cast<long long>(sub.size()) > end) {
+		return Integer::FromLong(-1);
+	}
+	return Integer::FromLong(static_cast<long long>(p));
+}
+
+Object* _str_count(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"count", { Extension::Arg::Required("sub") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	const std::string sub = _arg_str("count", "sub", r["sub"]);
+	const std::string v = static_cast<String*>(self)->get_value();
+	long long cnt = 0;
+	if (sub.empty()) {
+		return Integer::FromLong(static_cast<long long>(v.size()) + 1);
+	}
+	std::size_t i = 0;
+	for (;;) {
+		std::size_t p = v.find(sub, i);
+		if (p == std::string::npos) break;
+		++cnt;
+		i = p + sub.size();
+	}
+	return Integer::FromLong(cnt);
+}
+
+Object* _str_startswith(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"startswith", { Extension::Arg::Required("prefix") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	const std::string pre = _arg_str("startswith", "prefix", r["prefix"]);
+	const std::string v = static_cast<String*>(self)->get_value();
+	const bool ok = v.size() >= pre.size() && v.compare(0, pre.size(), pre) == 0;
+	return ok ? Boolean::True() : Boolean::False();
+}
+
+Object* _str_endswith(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"endswith", { Extension::Arg::Required("suffix") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	const std::string suf = _arg_str("endswith", "suffix", r["suffix"]);
+	const std::string v = static_cast<String*>(self)->get_value();
+	const bool ok = v.size() >= suf.size() &&
+	                v.compare(v.size() - suf.size(), suf.size(), suf) == 0;
+	return ok ? Boolean::True() : Boolean::False();
+}
+
+Object* _str_contains(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"contains", { Extension::Arg::Required("sub") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	const std::string sub = _arg_str("contains", "sub", r["sub"]);
+	const std::string v = static_cast<String*>(self)->get_value();
+	return (v.find(sub) != std::string::npos) ? Boolean::True()
+	                                          : Boolean::False();
+}
+
+} // anonymous namespace
+
+// String 全部方法的方法表（公开方法 + 全部魔术方法）。
+// 公开方法名指向本文件 anonymous namespace 内的实现；魔术方法 native 为
+// nullptr，由 GetMagicMethodFunction 统一分派。类型类注册与 __inspect__
+// 均以此表为唯一权威来源。
 const std::vector<MethodEntry>& String_method_table() {
 	static const std::vector<MethodEntry> table = {
+		{"length",               _str_length},
+		{"upper",                _str_upper},
+		{"lower",                _str_lower},
+		{"strip",                _str_strip},
+		{"lstrip",               _str_lstrip},
+		{"rstrip",               _str_rstrip},
+		{"split",                _str_split},
+		{"join",                 _str_join},
+		{"replace",              _str_replace},
+		{"find",                 _str_find},
+		{"count",                _str_count},
+		{"startswith",           _str_startswith},
+		{"endswith",             _str_endswith},
+		{"contains",             _str_contains},
 		{"__integer__",          nullptr},
 		{"__string__",           nullptr},
 		{"__raw_string__",       nullptr},
@@ -152,6 +502,11 @@ const std::vector<MethodEntry>& String_method_table() {
 		{"__inspect__",          nullptr},
 	};
 	return table;
+}
+
+// 通用方法分派入口（见 Object::__get_attribute__）。
+MethodTableFn String::method_table() const {
+	return String_method_table;
 }
 
 Object* String::__inspect__() {

@@ -3,6 +3,7 @@
 
 #include "object/PycpException.hpp"
 #include "object/PycpConfig.hpp"
+#include "object/PycpMethodTable.hpp"   // MethodTableFn（通用方法分派）
 
 #include <cstdint>
 #include <functional>
@@ -212,6 +213,12 @@ class PYCP_API Object{
 		// 真值判定：返回 Boolean 对象（True/False）。默认返回 True（基类语义）。
 		virtual Object* __boolean__();
 		virtual Object* __negation__();
+		// 方法表访问器（供通用方法分派）：返回本类型的 Xxx_method_table()；
+		// 默认 nullptr 表示该类型无「公开方法」（仅有魔术方法）。
+		// 各内置类型 override（返回其方法表），使 __get_attribute__ 能统一
+		// 按方法表分派普通方法，无需每个类型手写分支。
+		virtual MethodTableFn method_table() const { return nullptr; }
+
 		virtual Object* __get_attribute__(const std::string& name);
 		virtual void __set_attribute__(const std::string& name, Object* value);
 		virtual Object* __call__(Object*);

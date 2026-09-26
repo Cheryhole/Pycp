@@ -92,7 +92,14 @@ Object* Object::__get_attribute__(const std::string& name){
     Incref(it->second);
     return it->second;
   }
-  // 2) 魔术方法：回退到通用分派（可调用 C++ 虚方法）。非魔术方法名抛错。
+  // 2) 方法表分派：命中本类型的「公开方法」（native != nullptr）时返回其
+  //    共享缓存的 Function（Borrowed；GetAttr 会包装成 BoundMethod）。
+  if (MethodTableFn table = method_table()) {
+    if (Object* method = GetTableMethodFunction(table(), name)) {
+      return method;
+    }
+  }
+  // 3) 魔术方法：回退到通用分派（可调用 C++ 虚方法）。非魔术方法名抛错。
   if (Object* magic = GetMagicMethodFunction(name)) {
     return magic;
   }

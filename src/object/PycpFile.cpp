@@ -11,6 +11,7 @@
 #include "object/PycpFixedList.hpp"
 #include "object/PycpExtension.hpp" // 扩展唯一对外头（参数规范框架 / set_*）
 #include "object/PycpModule.hpp"    // Module::set_type（FileTypeClass 用）
+#include "object/PycpBoolean.hpp"   // Boolean::True / False
 
 #include <sstream>
 #include <cstring>
@@ -469,6 +470,97 @@ namespace {
         f->open(AsString(path), AsString(mode));
         return None::instance;
     }
+
+    // writelines 方法原生实现：逐元素写出（元素经 __string__ 渲染，对齐
+    // Python file.writelines——它要求元素为 str，此处沿用 write 的渲染语义）。
+    Object* _file_writelines(Object* self, FixedList* args, Map* kwargs) {
+        static const Extension::ArgTable spec = Extension::CompileArgs(
+            "writelines", { Extension::Arg::Required("lines") });
+        Extension::ArgResult r = spec.Bind(args, kwargs);
+        File* f = static_cast<File*>(self);
+        Object* lines = r["lines"];
+        if (lines == nullptr) {
+            throw TypeError("writelines(): 'lines' is null.");
+        }
+        Object* it = lines->__iterator__();
+        if (it == nullptr) {
+            throw TypeError("writelines(): 'lines' is not iterable.");
+        }
+        for (;;) {
+            Object* e = nullptr;
+            try {
+                e = it->__next__();
+            } catch (const StopIteration&) {
+                break;
+            }
+            try {
+                f->write(e);   // 返回 Borrowed None，无需释放
+            } catch (...) {
+                Decref(e);
+                Decref(it);
+                throw;
+            }
+            Decref(e);
+        }
+        Decref(it);
+        return None::instance;
+    }
+
+    // seek 方法原生实现：offset 必填（Integer），whence 可选（0/1/2）。
+    Object* _file_seek(Object* self, FixedList* args, Map* kwargs) {
+        static const Extension::ArgTable spec = Extension::CompileArgs(
+            "seek", { Extension::Arg::Required("offset"),
+                      Extension::Arg::Optional("whence") });
+        Extension::ArgResult r = spec.Bind(args, kwargs);
+        Object* oo = r["offset"];
+        if (oo == nullptr || !IsIntegerExact(oo)) {
+            throw TypeError("seek(): 'offset' must be an Integer.");
+        }
+        long long off = static_cast<Integer*>(oo)->get_value();
+        int whence = 0;
+        Object* wo = r["whence"];
+        if (wo != nullptr && wo->type_id() != PycpTypeId::None) {
+            if (!IsIntegerExact(wo)) {
+                throw TypeError("seek(): 'whence' must be an Integer.");
+            }
+            whence = static_cast<int>(static_cast<Integer*>(wo)->get_value());
+        }
+        return Integer::FromLong(static_cast<File*>(self)->seek(off, whence));
+    }
+
+    Object* _file_tell(Object* self, FixedList* args, Map* kwargs) {
+        static const Extension::ArgTable spec = Extension::CompileArgs("tell", {});
+        spec.Bind(args, kwargs);
+        return Integer::FromLong(static_cast<File*>(self)->tell());
+    }
+
+    Object* _file_readable(Object* self, FixedList* args, Map* kwargs) {
+        static const Extension::ArgTable spec = Extension::CompileArgs("readable", {});
+        spec.Bind(args, kwargs);
+        return static_cast<File*>(self)->readable() ? Boolean::True()
+                                                    : Boolean::False();
+    }
+
+    Object* _file_writable(Object* self, FixedList* args, Map* kwargs) {
+        static const Extension::ArgTable spec = Extension::CompileArgs("writable", {});
+        spec.Bind(args, kwargs);
+        return static_cast<File*>(self)->writable() ? Boolean::True()
+                                                    : Boolean::False();
+    }
+
+    Object* _file_seekable(Object* self, FixedList* args, Map* kwargs) {
+        static const Extension::ArgTable spec = Extension::CompileArgs("seekable", {});
+        spec.Bind(args, kwargs);
+        return static_cast<File*>(self)->seekable() ? Boolean::True()
+                                                    : Boolean::False();
+    }
+
+    Object* _file_is_closed(Object* self, FixedList* args, Map* kwargs) {
+        static const Extension::ArgTable spec = Extension::CompileArgs("is_closed", {});
+        spec.Bind(args, kwargs);
+        return static_cast<File*>(self)->is_closed() ? Boolean::True()
+                                                     : Boolean::False();
+    }
 } // anonymous namespace
 
 // File 全部方法的方法表（公开方法 write/read/readline/readlines/close/open +
@@ -484,6 +576,13 @@ const std::vector<MethodEntry>& File_method_table() {
 		{"close",                _file_close},
 		{"flush",                _file_flush},
 		{"open",                 _file_open},
+		{"writelines",           _file_writelines},
+		{"seek",                 _file_seek},
+		{"tell",                 _file_tell},
+		{"readable",             _file_readable},
+		{"writable",             _file_writable},
+		{"seekable",             _file_seekable},
+		{"is_closed",            _file_is_closed},
 		{"__string__",           nullptr},
 		{"__raw_string__",       nullptr},
 		{"__inspect__",          nullptr},
@@ -494,6 +593,59 @@ const std::vector<MethodEntry>& File_method_table() {
 		{"__boolean__",          nullptr},
 	};
 	return table;
+}
+
+// 通用方法分派入口（见 Object::__get_attribute__）。
+MethodTableFn File::method_table() const {
+	return File_method_table;
+}
+
+// —— 供方法表实现使用的 io 语义 ——
+
+bool File::readable() const {
+	return mode_ == FileMode::READ || mode_ == FileMode::READ_WRITE ||
+	       mode_ == FileMode::WRITE_READ || mode_ == FileMode::APPEND_READ;
+}
+
+bool File::writable() const {
+	return mode_ == FileMode::WRITE || mode_ == FileMode::APPEND ||
+	       mode_ == FileMode::READ_WRITE || mode_ == FileMode::WRITE_READ ||
+	       mode_ == FileMode::APPEND_READ;
+}
+
+bool File::seekable() const {
+	return owns_stream_ && is_open_;
+}
+
+long long File::seek(long long offset, int whence) {
+	EnsureOpen();
+	if (!owns_stream_) {
+		throw ValueError("file '" + name_ + "' is not seekable.");
+	}
+	std::ios_base::seekdir dir = std::ios::beg;
+	if (whence == 1) {
+		dir = std::ios::cur;
+	} else if (whence == 2) {
+		dir = std::ios::end;
+	} else if (whence != 0) {
+		throw ValueError("seek(): invalid whence value.");
+	}
+	file_.clear();
+	file_.seekg(static_cast<std::streamoff>(offset), dir);
+	file_.seekp(static_cast<std::streamoff>(offset), dir);
+	auto pos = file_.tellg();
+	if (pos < 0) pos = file_.tellp();
+	return static_cast<long long>(pos);
+}
+
+long long File::tell() {
+	EnsureOpen();
+	if (!owns_stream_) {
+		throw ValueError("file '" + name_ + "' is not seekable.");
+	}
+	auto pos = file_.tellg();
+	if (pos < 0) pos = file_.tellp();
+	return static_cast<long long>(pos);
 }
 
 // File(path [, mode]) 的内建构造器（io / filesystem 共用，对齐 Python open）。
@@ -611,6 +763,10 @@ Object* File::__get_attribute__(const std::string& attr_name) {
         return fn;
     }
     
+    // 3.1) 方法表分派：本类型的公开方法（writelines/seek/tell/readable/...）
+    if (Object* method = GetTableMethodFunction(File_method_table(), attr_name)) {
+        return method;
+    }
     // 4) 魔术方法
     if (Object* magic = GetMagicMethodFunction(attr_name)) {
         return magic;

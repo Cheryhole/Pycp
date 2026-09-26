@@ -246,6 +246,9 @@ if(BUILD_RUNTIME_STATIC)
     target_include_directories(PycpRuntime_obj_static PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_definitions(PycpRuntime_obj_static PUBLIC PYCP_STATIC)
     target_link_libraries(PycpRuntime_obj_static PUBLIC mpdec)
+    # PIC：OBJECT 库可能被动态库（Linux .so）复用；非 PIC 的 thread_local 会
+    # 触发 R_X86_64_TPOFF32（local-exec）与 -shared 不兼容的链接错误。
+    set_target_properties(PycpRuntime_obj_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     add_library(PycpRuntime_static STATIC $<TARGET_OBJECTS:PycpRuntime_obj_static>)
     target_include_directories(PycpRuntime_static PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -276,6 +279,9 @@ if(BUILD_RUNTIME_SHARED)
     target_include_directories(PycpRuntime_obj_shared PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_definitions(PycpRuntime_obj_shared PRIVATE PYCP_BUILD_DLL)
     target_link_libraries(PycpRuntime_obj_shared PUBLIC mpdec)
+    # PIC：本 OBJECT 库直接聚合进 PycpRuntime_shared（.so/DLL）。缺 PIC 时
+    # Linux 下 thread_local 走 local-exec，与 -shared 冲突而链接失败。
+    set_target_properties(PycpRuntime_obj_shared PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     add_library(PycpRuntime_shared SHARED $<TARGET_OBJECTS:PycpRuntime_obj_shared>)
     target_include_directories(PycpRuntime_shared PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

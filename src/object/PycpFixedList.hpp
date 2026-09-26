@@ -73,6 +73,9 @@ public:
 	Object* __get_attribute__(const std::string& name) override;
 	Object* __inspect__() override;
 
+	// 通用方法分派（见 Object::method_table()）：返回 FixedList 方法表。
+	MethodTableFn method_table() const override;
+
 	// GC 子引用遍历：枚举全部元素（含懒创建的 length_fn_）。
 	void foreach_ref(const std::function<void(Object*)>& visit) override;
 };

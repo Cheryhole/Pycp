@@ -86,6 +86,17 @@ public:
     // 刷出底层输出流（对齐 Python file.flush()）；未打开时抛 ValueError。
     void flush();
 
+    // —— 供方法表实现使用（Python io 语义）——
+    bool is_closed() const { return !is_open_; }
+    bool readable() const;
+    bool writable() const;
+    bool seekable() const;
+    long long seek(long long offset, int whence);
+    long long tell();
+
+    // 通用方法分派（见 Object::method_table()）：返回 File 方法表。
+    MethodTableFn method_table() const override;
+
     // ---------- Object 虚方法重写 ----------
 
     Object* __get_attribute__(const std::string& name) override;

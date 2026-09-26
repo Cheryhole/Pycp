@@ -36,6 +36,8 @@
 
 #include <functional>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace Pycp {
 
@@ -98,6 +100,21 @@ public:
 	//   - 普通 Map：复制 items_ 的键值对（键/值各自 Incref）
 	//   - 视图模式：按 owner_ 的成员材料化为独立 Map（不再同步 owner）
 	Map* copy_shallow() const;
+
+	// —— 供方法表实现使用的访问器/操作（针对普通 Map；视图模式 items_ 为空）——
+	// 键值对只读视图（Borrowed 键/值指针）。
+	std::vector<std::pair<Object*, Object*>> entries() const;
+	// 查找：命中写 *found=true 返回 Borrowed 值；未命中 *found=false 返回 nullptr。
+	Object* lookup(Object* key, bool* found) const;
+	// 删除并返回被删值（Owned，引用自表转移）；未命中返回 nullptr。
+	Object* remove_item(Object* key);
+	// 清空并释放全部键值引用。
+	void clear_items();
+	// 插入或替换（key/value 均为 Borrowed，内部 Incref）。
+	void put_item(Object* key, Object* value);
+
+	// 通用方法分派（见 Object::method_table()）：返回 Map 方法表。
+	MethodTableFn method_table() const override;
 
 	// 魔术方法。
 	Object* __get_item__(Object* key) override;

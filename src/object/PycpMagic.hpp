@@ -17,11 +17,19 @@
 // =============================================================
 
 #include "object/PycpObject.hpp"
+#include "object/PycpMethodTable.hpp"   // MethodEntry
 
 #include <string>
 #include <vector>
 
 namespace Pycp {
+
+// 在给定方法表中查找「公开方法」（native != nullptr），按 native 函数指针
+// 共享缓存返回其 Function（Borrowed，GC 常驻；仅创建一次）；未找到返回
+// nullptr。供各类型 __get_attribute__ 的通用方法分派使用（与魔术方法缓存
+// 同构）。
+Object* GetTableMethodFunction(const std::vector<MethodEntry>& table,
+                               const std::string& name);
 
 // 返回一个可调用的魔术方法 Function（缓存的，仅创建一次）。
 // 若 name 是已识别的魔术方法名则返回其 Function（Borrowed，

@@ -34,6 +34,97 @@ Object* _map_keys(Object* self, FixedList* args, Map* kwargs) {
 	return m->keys();
 }
 
+Object* _map_values(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs("values", {});
+	spec.Bind(args, kwargs);
+	Map* m = static_cast<Map*>(self);
+	List* out = Pycp::New<List>();
+	for (const auto& kv : m->entries()) {
+		if (kv.second != nullptr) out->append(kv.second);   // Borrowed
+	}
+	return out;
+}
+
+Object* _map_items(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs("items", {});
+	spec.Bind(args, kwargs);
+	Map* m = static_cast<Map*>(self);
+	List* out = Pycp::New<List>();
+	for (const auto& kv : m->entries()) {
+		std::vector<Object*> pair;
+		if (kv.first != nullptr) { Incref(kv.first); pair.push_back(kv.first); }
+		if (kv.second != nullptr) { Incref(kv.second); pair.push_back(kv.second); }
+		FixedList* fl = FixedList::New(pair);   // 接管元素引用
+		out->append(fl);
+		Decref(fl);
+	}
+	return out;
+}
+
+Object* _map_get(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"get", { Extension::Arg::Required("key"),
+		         Extension::Arg::Optional("default") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	Map* m = static_cast<Map*>(self);
+	bool found = false;
+	Object* v = m->lookup(r["key"], &found);
+	if (found && v != nullptr) {
+		Incref(v);
+		return v;
+	}
+	Object* d = r["default"];
+	if (d == nullptr) return None::instance;
+	Incref(d);
+	return d;
+}
+
+Object* _map_has(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"has", { Extension::Arg::Required("key") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	bool found = false;
+	static_cast<Map*>(self)->lookup(r["key"], &found);
+	return found ? Boolean::True() : Boolean::False();
+}
+
+Object* _map_remove(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"remove", { Extension::Arg::Required("key") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	Object* v = static_cast<Map*>(self)->remove_item(r["key"]);  // Owned 或 nullptr
+	if (v == nullptr) throw KeyError("remove(): key not found.");
+	return v;
+}
+
+Object* _map_update(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs(
+		"update", { Extension::Arg::Required("other") });
+	Extension::ArgResult r = spec.Bind(args, kwargs);
+	Object* o = r["other"];
+	if (o == nullptr || !o->is_type("Map")) {
+		throw TypeError("update(): 'other' must be a Map.");
+	}
+	Map* m = static_cast<Map*>(self);
+	for (const auto& kv : static_cast<Map*>(o)->entries()) {
+		m->put_item(kv.first, kv.second);
+	}
+	return None::instance;
+}
+
+Object* _map_clear(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs("clear", {});
+	spec.Bind(args, kwargs);
+	static_cast<Map*>(self)->clear_items();
+	return None::instance;
+}
+
+Object* _map_copy(Object* self, FixedList* args, Map* kwargs) {
+	static const Extension::ArgTable spec = Extension::CompileArgs("copy", {});
+	spec.Bind(args, kwargs);
+	return static_cast<Map*>(self)->copy_shallow();   // Owned
+}
+
 } // anonymous namespace
 
 // Map 全部方法的方法表（公开方法 length/keys + 全部魔术方法）。
@@ -43,6 +134,14 @@ const std::vector<MethodEntry>& Map_method_table() {
 	static const std::vector<MethodEntry> table = {
 		{"length",               _map_length},
 		{"keys",                 _map_keys},
+		{"values",               _map_values},
+		{"items",                _map_items},
+		{"get",                  _map_get},
+		{"has",                  _map_has},
+		{"remove",               _map_remove},
+		{"update",               _map_update},
+		{"clear",                _map_clear},
+		{"copy",                 _map_copy},
 		{"__map__",              nullptr},
 		{"__boolean__",          nullptr},
 		{"__string__",           nullptr},
@@ -56,6 +155,64 @@ const std::vector<MethodEntry>& Map_method_table() {
 		{"__inspect__",          nullptr},
 	};
 	return table;
+}
+
+// 通用方法分派入口（见 Object::__get_attribute__）。
+MethodTableFn Map::method_table() const {
+	return Map_method_table;
+}
+
+// —— 方法表实现所需的访问器/操作 ——
+
+std::vector<std::pair<Object*, Object*>> Map::entries() const {
+	std::vector<std::pair<Object*, Object*>> out;
+	out.reserve(items_.size());
+	for (const auto& kv : items_) out.emplace_back(kv.first, kv.second);
+	return out;
+}
+
+Object* Map::lookup(Object* key, bool* found) const {
+	auto it = items_.find(key);
+	if (it == items_.end()) {
+		if (found != nullptr) *found = false;
+		return nullptr;
+	}
+	if (found != nullptr) *found = true;
+	return it->second;
+}
+
+Object* Map::remove_item(Object* key) {
+	auto it = items_.find(key);
+	if (it == items_.end()) return nullptr;
+	Object* k = it->first;
+	Object* v = it->second;
+	items_.erase(it);
+	if (k != nullptr) Decref(k);   // 键引用丢弃；值引用转移给调用方
+	return v;
+}
+
+void Map::clear_items() {
+	for (auto& kv : items_) {
+		if (kv.first != nullptr) Decref(kv.first);
+		if (kv.second != nullptr) Decref(kv.second);
+	}
+	items_.clear();
+}
+
+void Map::put_item(Object* key, Object* value) {
+	if (key == nullptr || value == nullptr) {
+		throw TypeError("cannot use null key/value in Map.");
+	}
+	auto it = items_.find(key);
+	if (it == items_.end()) {
+		Incref(key);
+		Incref(value);
+		items_[key] = value;
+	} else {
+		Incref(value);
+		if (it->second != nullptr) Decref(it->second);
+		it->second = value;
+	}
 }
 
 Map* Map::New() {
@@ -315,6 +472,10 @@ Object* Map::__get_attribute__(const std::string& name) {
 			keys_fn_ = Pycp::New<Function>("keys", _map_keys);
 		}
 		return keys_fn_;
+	}
+	// 2.1) 方法表分派：本类型的公开方法。
+	if (Object* method = GetTableMethodFunction(Map_method_table(), name)) {
+		return method;
 	}
 	// 3) 魔术方法：回退到通用分派（可调用 C++ 虚方法）。
 	if (Object* magic = GetMagicMethodFunction(name)) {
