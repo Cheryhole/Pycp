@@ -183,7 +183,7 @@ foreach(_f IN LISTS _stdlib_static_files)
 endforeach()
 
 # =====================================================================
-# 2c. 纯 pycp 实现的标准库包（模块文件夹：pycp.mpycp + *.pycp）
+# 2c. 纯 pycp 实现的标准库包（模块文件夹：package.mpycp + *.pycp）
 # ---------------------------------------------------------------------
 # 运行期经 GetStdlibDir() 按名查找（`import <name>` / `pycp -m <name>`），
 # 故保持 <stdlib>/<包名>/ 的目录层级整体复制（含子模块与子目录）。

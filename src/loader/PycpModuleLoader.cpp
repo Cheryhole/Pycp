@@ -155,13 +155,13 @@ std::string last_segment(const std::string& path) {
 	return (slash == std::string::npos) ? p : p.substr(slash + 1);
 }
 
-// 该路径是否为包清单（pycp.mpycp）。
+// 该路径是否为包清单（package.mpycp）。
 bool is_manifest(const std::string& path) {
 	return last_segment(path) == Pycp::MODULE_MANIFEST_FILENAME;
 }
 
 // 在单一目录下按「包优先、其次源码、再次字节码」解析模块名。
-//   <dir>/<name>/pycp.mpycp  -> 包（模块名不变，pkg = 限定名）
+//   <dir>/<name>/package.mpycp  -> 包（模块名不变，pkg = 限定名）
 //   <dir>/<name>.pycp        -> 普通源码模块
 //   <dir>/<name>.cpycp       -> 已编译字节码模块（与 .pycp 等价，只是省去
 //                               编译步骤；加载时反序列化而非解析源码）

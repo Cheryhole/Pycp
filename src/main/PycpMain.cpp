@@ -94,7 +94,7 @@ struct Options {
 	bool dump = false;       // -d / --dump
 	bool preprocess = false; // -p / --preprocess
 	bool show_help = false;
-	// -m / --module：把位置参数当作【模块文件夹】（目录 + pycp.mpycp 清单）
+	// -m / --module：把位置参数当作【模块文件夹】（目录 + package.mpycp 清单）
 	// 执行。默认角色为「程序」（解释执行语义），AOT 下默认仍为「库」。
 	bool module_mode = false;
 
@@ -122,7 +122,7 @@ void print_help(const char* prog) {
 		<< "  " << prog << " [options] <input_file>\n\n"
 		<< "Options:\n"
 		<< "  -m, --module      Treat <input_file> as a module folder (a directory\n"
-		<< "                    containing pycp.mpycp); runs it as a program by\n"
+		<< "                    containing package.mpycp); runs it as a program by\n"
 		<< "                    default (its manifest must define func main(argv)).\n"
 		<< "                    With --emit-cpp the folder defaults to a library\n"
 		<< "                    unless the manifest calls moduletools.as_program().\n"
@@ -315,7 +315,7 @@ bool parse_args(int argc, char** argv, Options& opt) {
 			opt.compile = false;
 			opt.interpret = false;
 		} else if (arg == "-m" || arg == "--module") {
-			// 模块文件夹模式：位置参数指向目录（内含 pycp.mpycp 清单）。
+			// 模块文件夹模式：位置参数指向目录（内含 package.mpycp 清单）。
 			opt.module_mode = true;
 		} else if (!arg.empty() && arg[0] == '-') {
 			std::cerr << "Error: unknown option '" << arg << "'." << std::endl;
@@ -382,7 +382,7 @@ std::string entry_module_name(const std::string& path);
 // =============================================================
 // 模块文件夹（package）入口解析
 // =============================================================
-// 目录（内含 pycp.mpycp 清单）与清单文件本身都解析为「包入口」：
+// 目录（内含 package.mpycp 清单）与清单文件本身都解析为「包入口」：
 //   entry_file : 实际要编译执行的源文件（清单路径）
 //   entry_name : 入口模块名（包取包名，普通文件取 basename）
 struct EntryResolution {
@@ -945,7 +945,7 @@ int main(int argc, char** argv) {
 				if (opt.module_mode &&
 					!validate_module_entry(er_aot_src, opt.input_file,
 							"AOT 转译需要包的源码（"
-							"pycp.mpycp 清单文件）。")) {
+							"package.mpycp 清单文件）。")) {
 					ret = 2;
 					Pycp::Finalize();
 					return ret;
@@ -954,7 +954,7 @@ int main(int argc, char** argv) {
 				std::string out_dir = opt.output_file.empty()
 					? er_aot_src.entry_name
 					: opt.output_file;
-				// 解析 aot 包（stdlib/aot/pycp.mpycp），稍后以程序角色运行。
+				// 解析 aot 包（stdlib/aot/package.mpycp），稍后以程序角色运行。
 				const EntryResolution er_aot_pkg =
 					resolve_entry_path("aot", /*module_mode=*/true);
 				if (!validate_module_entry(er_aot_pkg, "aot",

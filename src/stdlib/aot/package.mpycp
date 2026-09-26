@@ -1,4 +1,4 @@
-// aot/pycp.mpycp —— AOT 编译器的 pycp 实现（对应前端 src/aot/ 的 C++ AOT）。
+// aot/package.mpycp —— AOT 编译器的 pycp 实现（当前无 C++ AOT，纯 pycp 自举）。
 //
 // 用法：pycp -m aot <入口 .pycp | 模块文件夹> <输出目录> [形态选项]
 //   形态选项（与 CLI --emit-cpp 同名，由宿主转发）：

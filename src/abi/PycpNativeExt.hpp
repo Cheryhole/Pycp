@@ -106,7 +106,7 @@ PYCP_API Object* ParseSourceString(const std::string& source,
 // 与前三个钩子同理：运行时不含 parser/codegen，实现由宿主注册。
 // =============================================================
 
-//   entry_path     : 入口 .pycp 文件，或模块文件夹（目录 / pycp.mpycp 清单）
+//   entry_path     : 入口 .pycp 文件，或模块文件夹（目录 / package.mpycp 清单）
 //   out_entry_name : 入口模块名（包为包名，普通文件为去扩展名的 basename）
 //   out_modules    : 模块名 -> 堆分配 BC::Module*（所有权移交调用方）
 //   out_packages   : 模块文件夹（包）名集合
@@ -148,7 +148,7 @@ Module* LoadLinkedModule(const std::string& name);
 // 单目录探测原语：仅在 dir 指定的单一目录下查找模块，不跨目录回退。
 //   dir 为空时表示当前工作目录。
 // 同一目录内的探测顺序（源码形态优先于原生扩展，包优先于同名文件）：
-//   ① <dir>/<name（点号转目录）>/pycp.mpycp  ：模块文件夹的清单
+//   ① <dir>/<name（点号转目录）>/package.mpycp  ：模块文件夹的清单
 //   ② <dir>/<name（点号转目录）>.pycp        ：源码（经 SourceModuleCompiler）
 //   ③ <dir>/<name（点号转目录）>.cpycp       ：已编译字节码（运行时自身
 //      反序列化，【不】依赖宿主编译器钩子，AOT 独立程序同样可用）

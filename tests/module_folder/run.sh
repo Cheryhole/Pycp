@@ -208,7 +208,7 @@ if [[ -d "$DIST/include" && -d "$DIST/lib" ]]; then
 		cp -r "$DIST"/. "$WORK/dist"/
 		mkdir -p "$WORK/dist/stdlib/stdpkg" "$WORK/dist/stdlib/stdlib_lib"
 
-		cat > "$WORK/dist/stdlib/stdpkg/pycp.mpycp" <<'EOF'
+		cat > "$WORK/dist/stdlib/stdpkg/package.mpycp" <<'EOF'
 import io
 import moduletools
 
@@ -221,7 +221,7 @@ func main(argv) {
 }
 EOF
 
-		cat > "$WORK/dist/stdlib/stdlib_lib/pycp.mpycp" <<'EOF'
+		cat > "$WORK/dist/stdlib/stdlib_lib/package.mpycp" <<'EOF'
 import io
 import moduletools
 
@@ -239,12 +239,12 @@ EOF
 			"$WORK" -- "$WORK/dist/pycp" -m stdlib_lib
 
 		check_in "-m 未命中 → 列出候选路径与用法提示" 2 \
-			"未找到|./no_such_pkg/pycp.mpycp|只接受模块文件夹" \
+			"未找到|./no_such_pkg/package.mpycp|只接受模块文件夹" \
 			"$WORK" -- "$WORK/dist/pycp" -m no_such_pkg
 
 		# cwd 同名包优先于 stdlib（本地优先）
 		mkdir -p "$WORK/stdpkg"
-		cat > "$WORK/stdpkg/pycp.mpycp" <<'EOF'
+		cat > "$WORK/stdpkg/package.mpycp" <<'EOF'
 import io
 import moduletools
 

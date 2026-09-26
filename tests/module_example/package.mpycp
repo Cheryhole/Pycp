@@ -1,5 +1,5 @@
 /*
-模块文件夹（package）示例：一个目录即一个模块，pycp.mpycp 是清单。
+模块文件夹（package）示例：一个目录即一个模块，package.mpycp 是清单。
 
 用法：
 	pycp -m module_example      // 作为程序直接执行（调用清单的 main(argv)）

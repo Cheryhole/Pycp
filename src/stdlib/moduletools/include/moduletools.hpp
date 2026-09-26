@@ -5,7 +5,7 @@
 // Pycp moduletools 标准库公开头（moduletools.so / libPycpExt_moduletools.a）
 //
 // moduletools 是「模块文件夹（package）」特性的配套工具库，只在包清单
-// （pycp.mpycp）及其子文件中使用：
+// （package.mpycp）及其子文件中使用：
 //
 //   - this()：返回当前包模块对象（等价于 Python 模块内的模块自身），
 //     供清单里覆写 __get_attribute__ / __string__ 等钩子时访问自身命名空间。

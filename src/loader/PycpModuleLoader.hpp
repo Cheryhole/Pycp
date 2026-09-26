@@ -45,7 +45,7 @@ class ModuleLoader {
 public:
 	// 加载入口及其全部 import 依赖。
 	//   entry_path  : 入口路径。可以是 .pycp 文件，也可以是【模块文件夹】
-	//                 （目录下含 pycp.mpycp 清单，此时入口即该清单）。
+	//                 （目录下含 package.mpycp 清单，此时入口即该清单）。
 	//   resolutions : 可选输出；按 import 语句出现的模块名逐条记录
 	//                 kTranslated / kUnresolved（按名去重，稳定顺序），
 	//                 供 AOT 闭包校验与 --show-imports 诊断使用。

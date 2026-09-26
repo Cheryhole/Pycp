@@ -513,7 +513,7 @@ readonly(CONST)        # 等价于 @readonly CONST = 3（不可重赋值）
 | — | 全部未命中 | 抛 `ImportError`（附各层候选目录诊断） |
 
 > 上表是**运行期**查找。编译期（`ModuleLoader`）解析 import 时同样按 cwd → 入口目录查找，
-> 并额外支持两种形态：**模块文件夹**（`xxx/pycp.mpycp`，见下文
+> 并额外支持两种形态：**模块文件夹**（`xxx/package.mpycp`，见下文
 > [模块文件夹（package）](#模块文件夹package)）与**包内兄弟子模块**（`pkg.sub`，在包目录内优先于 cwd）。
 
 说明：
@@ -539,11 +539,11 @@ readonly(CONST)        # 等价于 @readonly CONST = 3（不可重赋值）
 
 ### 模块文件夹（package）
 
-一个**目录**即一个模块：目录下的 `pycp.mpycp` 是清单（普通 `.pycp` 源码），其余 `.pycp` 是包内子文件（子模块，模块名为点号全名 `pkg.sub`，对齐 Python）。
+一个**目录**即一个模块：目录下的 `package.mpycp` 是清单（普通 `.pycp` 源码），其余 `.pycp` 是包内子文件（子模块，模块名为点号全名 `pkg.sub`，对齐 Python）。
 
 ```
 module_example/
-├── pycp.mpycp      # 清单：import、模块名、属性钩子、__codegen__、main
+├── package.mpycp   # 清单：import、模块名、属性钩子、__codegen__、main
 ├── obj_a.pycp      # 子模块，模块名 module_example.obj_a
 └── method_b.pycp
 ```
@@ -552,7 +552,7 @@ module_example/
 
 ```bash
 # 1) 作为程序直接执行：默认程序角色，入口为清单的 main(argv)
-pycp -m module_example arg1 arg2      # 也可写 --module；也接受路径（-m ./dir、-m dir/pycp.mpycp）
+pycp -m module_example arg1 arg2      # 也可写 --module；也接受路径（-m ./dir、-m dir/package.mpycp）
 
 # 2) 作为库被导入（在任意 .pycp 中）
 import module_example                 # module_example.__name__ 为模块名
@@ -560,7 +560,7 @@ from module_example import objA       # 子模块同理
 ```
 
 `-m` 的目标既可以是路径，也可以是**包名**：字面路径不存在时按 `cwd → 可执行文件同级 stdlib/`
-查找 `<name>/pycp.mpycp`（点号名映射为目录层级，如 `a.b` → `a/b`），因此可以像
+查找 `<name>/package.mpycp`（点号名映射为目录层级，如 `a.b` → `a/b`），因此可以像
 `python -m` 一样直接运行标准库里的包；`cwd` 下的同名包优先，便于本地覆盖 stdlib。
 
 - `-m` 只接受**模块文件夹**；普通模块仍须写成文件路径（如 `pycp foo.pycp`）。
@@ -612,7 +612,7 @@ func __codegen__() {
 > `-m` 的默认角色与 AOT 不同（解释态默认程序、AOT 默认库），这是刻意设计：AOT 下"库"是更安全的默认，要生成可执行文件请显式 `as_program()`。
 
 **运行期查找与 `.cpycp`**：`import` 在运行期按下列顺序探测每个候选目录（与编译期规则一致）：
-`<name>/pycp.mpycp`（模块文件夹）→ `<name>.pycp`（源码）→ `<name>.cpycp`（字节码）→ `<name>.so`（原生扩展）。
+`<name>/package.mpycp`（模块文件夹）→ `<name>.pycp`（源码）→ `<name>.cpycp`（字节码）→ `<name>.so`（原生扩展）。
 点号全名会映射为目录层级（`pkg.sub` → `pkg/sub`），因此包内子模块可按需加载——这也是 `pycp foo.cpycp`（无编译期依赖收集）仍能 `import` 到包的原因。
 
 `.cpycp` 与 `.pycp` **语义等价**：`.pycp` 执行时同样要先编译为字节码再交给 VM，`.cpycp` 只是省去了这一步（预先 `pycp -c` 的产物）。`.cpycp` 的反序列化由运行时自身完成，**不依赖前端解析器**，因此 AOT 生成的独立程序同样能加载 `.cpycp` 模块。

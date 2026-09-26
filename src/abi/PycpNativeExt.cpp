@@ -384,7 +384,7 @@ Module* LoadNativeModuleFrom(const std::string& dir, const std::string& name,
 		return dir.empty() ? ("./" + p) : (dir + "/" + p);
 	};
 
-	// ---- ① 模块文件夹：<dir>/<rel>/pycp.mpycp ----
+	// ---- ① 模块文件夹：<dir>/<rel>/package.mpycp ----
 	// 命中即编译清单（需宿主编译器钩子；AOT 独立程序无钩子则继续下探），
 	// 并把清单里对兄弟文件的 import 改写为点号全名。
 	if (out_source != nullptr) {

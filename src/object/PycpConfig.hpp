@@ -27,7 +27,7 @@ constexpr const char* EXT_PP_PYCP = ".pp.pycp"; // 预处理输出的源文件
 // 模块文件夹（package）的清单文件名：目录下存在该文件即为「包」。
 // 不新增后缀：清单本身是普通 .pycp 源（可被既有解析/预处理链路处理），
 // 只是文件名固定，便于「目录 -> 入口」的解析。
-constexpr const char* MODULE_MANIFEST_FILENAME = "pycp.mpycp";
+constexpr const char* MODULE_MANIFEST_FILENAME = "package.mpycp";
 // 包内子模块的限定名分隔符（对齐 Python 的 pkg.sub）。
 constexpr char MODULE_NAME_SEPARATOR = '.';
 
