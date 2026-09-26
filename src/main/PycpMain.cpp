@@ -237,9 +237,9 @@ bool parse_args(int argc, char** argv, Options& opt) {
 			if (opt.compile_runtime_set || opt.compile_modules_set ||
 			    !opt.module_overrides.empty()) {
 				std::cerr << "Error: " << arg
-				          << "（旧别名）不能与 --compile-modules / "
-				             "--compile-module:<name> / --compile-runtime 混用，"
-				             "请使用新的 --compile-* 参数。"
+				          << " (legacy alias) cannot be combined with "
+				             "--compile-modules / --compile-module:<name> / "
+				             "--compile-runtime; use the new --compile-* options."
 				          << std::endl;
 				return false;
 			}
@@ -256,15 +256,15 @@ bool parse_args(int argc, char** argv, Options& opt) {
 			opt.legacy_link_set = true;
 		} else if (starts_with(arg, "--compile-runtime=")) {
 			if (opt.legacy_link_set) {
-				std::cerr << "Error: --compile-runtime 不能与 --shared/--static "
-				             "（旧别名）混用。" << std::endl;
+				std::cerr << "Error: --compile-runtime cannot be combined with the "
+				             "--shared/--static legacy aliases." << std::endl;
 				return false;
 			}
 			bool ok = false;
 			const std::string v = arg.substr(std::string("--compile-runtime=").size());
 			if (!parse_shared_static(v, &ok)) {
-				std::cerr << "Error: --compile-runtime 只接受 shared 或 static（得到 '"
-				          << v << "'）。" << std::endl;
+				std::cerr << "Error: --compile-runtime accepts only 'shared' or "
+				             "'static' (got '" << v << "')." << std::endl;
 				return false;
 			}
 			opt.compile_runtime =
@@ -272,15 +272,15 @@ bool parse_args(int argc, char** argv, Options& opt) {
 			opt.compile_runtime_set = true;
 		} else if (starts_with(arg, "--compile-modules=")) {
 			if (opt.legacy_link_set) {
-				std::cerr << "Error: --compile-modules 不能与 --shared/--static "
-				             "（旧别名）混用。" << std::endl;
+				std::cerr << "Error: --compile-modules cannot be combined with the "
+				             "--shared/--static legacy aliases." << std::endl;
 				return false;
 			}
 			bool ok = false;
 			const std::string v = arg.substr(std::string("--compile-modules=").size());
 			if (!parse_shared_static(v, &ok)) {
-				std::cerr << "Error: --compile-modules 只接受 shared 或 static（得到 '"
-				          << v << "'）。" << std::endl;
+				std::cerr << "Error: --compile-modules accepts only 'shared' or "
+				             "'static' (got '" << v << "')." << std::endl;
 				return false;
 			}
 			opt.compile_modules =
@@ -288,8 +288,8 @@ bool parse_args(int argc, char** argv, Options& opt) {
 			opt.compile_modules_set = true;
 		} else if (starts_with(arg, "--compile-module:") && arg.find('=') != std::string::npos) {
 			if (opt.legacy_link_set) {
-				std::cerr << "Error: --compile-module:<name> 不能与 --shared/--static "
-				             "（旧别名）混用。" << std::endl;
+				std::cerr << "Error: --compile-module:<name> cannot be combined with "
+				             "the --shared/--static legacy aliases." << std::endl;
 				return false;
 			}
 			const std::string body = arg.substr(std::string("--compile-module:").size());
@@ -298,8 +298,8 @@ bool parse_args(int argc, char** argv, Options& opt) {
 			const std::string v = body.substr(eq + 1);
 			bool ok = false;
 			if (name.empty() || !parse_shared_static(v, &ok)) {
-				std::cerr << "Error: 用法 --compile-module:<name>=shared|static"
-				             "（得到 '" << arg << "'）。" << std::endl;
+				std::cerr << "Error: usage --compile-module:<name>=shared|static "
+				             "(got '" << arg << "')." << std::endl;
 				return false;
 			}
 			opt.module_overrides[name] =
@@ -488,7 +488,7 @@ bool validate_module_entry(const EntryResolution& er, const std::string& input,
                            const char* ctx_hint) {
 	auto list_tried = [&]() {
 		if (er.tried_paths.empty()) return;
-		std::cerr << "  已尝试的候选：\n";
+		std::cerr << "  Tried:\n";
 		for (const std::string& p : er.tried_paths) {
 			std::cerr << "    " << p << "\n";
 		}
@@ -496,18 +496,18 @@ bool validate_module_entry(const EntryResolution& er, const std::string& input,
 	if (!er.is_package) {
 		std::cerr << "Error: -m/--module expects a module folder (a directory "
 		             "containing " << Pycp::MODULE_MANIFEST_FILENAME
-		          << "): '" << input << "' 未找到。\n";
+		          << "): '" << input << "' not found.\n";
 		list_tried();
-		std::cerr << "  提示：-m 只接受模块文件夹；普通模块请写成文件路径"
-		             "（如 " << "pycp foo.pycp" << "）。\n";
-		if (ctx_hint != nullptr) std::cerr << "  提示：" << ctx_hint << "\n";
+		std::cerr << "  Hint: -m accepts only module folders; for a plain module "
+		             "pass a file path (e.g. " << "pycp foo.pycp" << ").\n";
+		if (ctx_hint != nullptr) std::cerr << "  Hint: " << ctx_hint << "\n";
 		return false;
 	}
 	std::error_code ec;
 	if (!std::filesystem::is_regular_file(er.entry_file, ec)) {
 		std::cerr << "Error: module folder '" << er.found_dir << "' has no "
-		          << Pycp::MODULE_MANIFEST_FILENAME << " manifest。\n";
-		if (ctx_hint != nullptr) std::cerr << "  提示：" << ctx_hint << "\n";
+		          << Pycp::MODULE_MANIFEST_FILENAME << " manifest.\n";
+		if (ctx_hint != nullptr) std::cerr << "  Hint: " << ctx_hint << "\n";
 		return false;
 	}
 	return true;
@@ -585,14 +585,15 @@ int execute_program(std::map<std::string, Pycp::BC::Module>& modules,
 	// 用 import 引用，或定义 main(argv) + as_program() 使其可运行。
 	const std::string where =
 		entry_dir.empty() ? std::string()
-		                  : ("\n  包目录：" + entry_dir);
+		                  : ("\n  Package dir: " + entry_dir);
 	if (Pycp::GetPackageRole() == Pycp::PackageRole::kLibrary) {
 		throw Pycp::RuntimeError(
-			"'" + entry_name + "' 是库（清单声明了 moduletools.as_library()），"
-			"不可作为程序运行。" + where +
-			"\n  - 作为库使用：import " + entry_name +
-			"\n  - 改为可运行：在 " + Pycp::MODULE_MANIFEST_FILENAME +
-			" 中定义 func main(argv) 并调用 moduletools.as_program()。");
+			"'" + entry_name + "' is a library (the manifest calls "
+			"moduletools.as_library()) and cannot be run as a program." + where +
+			"\n  - Use it as a library: import " + entry_name +
+			"\n  - Make it runnable: define func main(argv) in " +
+			Pycp::MODULE_MANIFEST_FILENAME +
+			" and call moduletools.as_program().");
 	}
 
 	// ---- 调用程序入口 main(argv) ----
@@ -601,11 +602,12 @@ int execute_program(std::map<std::string, Pycp::BC::Module>& modules,
 	if (it == ns->end() || it->second == nullptr ||
 	    !it->second->is_type("Function")) {
 		throw Pycp::RuntimeError(
-			"'" + entry_name + "' 没有程序入口：清单中未定义 func main(argv)，"
-			"不可作为程序运行。" + where +
-			"\n  - 作为库使用：import " + entry_name +
-			"\n  - 改为可运行：在 " + Pycp::MODULE_MANIFEST_FILENAME +
-			" 中定义 func main(argv) 并调用 moduletools.as_program()。");
+			"'" + entry_name + "' has no program entry: the manifest defines no "
+			"func main(argv), so it cannot be run as a program." + where +
+			"\n  - Use it as a library: import " + entry_name +
+			"\n  - Make it runnable: define func main(argv) in " +
+			Pycp::MODULE_MANIFEST_FILENAME +
+			" and call moduletools.as_program().");
 	}
 
 	// main 只接收【一个】argv（内容同 pycp.argv），故把命令行参数打包成
@@ -944,8 +946,8 @@ int main(int argc, char** argv) {
 					resolve_entry_path(opt.input_file, opt.module_mode);
 				if (opt.module_mode &&
 					!validate_module_entry(er_aot_src, opt.input_file,
-							"AOT 转译需要包的源码（"
-							"package.mpycp 清单文件）。")) {
+							"AOT translation needs the package source "
+							"(the package.mpycp manifest).")) {
 					ret = 2;
 					Pycp::Finalize();
 					return ret;
@@ -958,8 +960,8 @@ int main(int argc, char** argv) {
 				const EntryResolution er_aot_pkg =
 					resolve_entry_path("aot", /*module_mode=*/true);
 				if (!validate_module_entry(er_aot_pkg, "aot",
-						"AOT 模块（stdlib/aot）缺失，"
-						"请确认 dist/stdlib/aot 完整。")) {
+						"The AOT module (stdlib/aot) is missing; make sure "
+						"dist/stdlib/aot is complete.")) {
 					ret = 2;
 					Pycp::Finalize();
 					return ret;

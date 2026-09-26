@@ -94,7 +94,7 @@ check "program 被 import → ImportError" 1 \
 	"ImportError|declared as a program" \
 	-- "$PYCP" use_program.pycp
 check "-m 一个未声明程序的包 → RuntimeError（无 main）" 1 \
-	"RuntimeError|没有程序入口|不可作为程序运行|import plain_lib_pkg" \
+	"RuntimeError|has no program entry|cannot be run as a program|import plain_lib_pkg" \
 	-- "$PYCP" -m plain_lib_pkg
 check "入口 __name__ 可写（清单可覆盖为自定义模块名）" 0 \
 	"name=RenamedByManifest" \
@@ -139,13 +139,13 @@ if [[ -d "$DIST/include" && -d "$DIST/lib" ]]; then
 
 	echo "== 5) AOT：用途与形态错误 =="
 	check_emit "库角色写 set_executable_name → 转译中止" 1 \
-		"按【库】角色转译" \
+		"translating as a library package" \
 		-- "$PYCP" --emit-cpp -m aot_badgen_pkg -o "$WORK/badgen_aot"
 	check_emit "__codegen__ 指定的 static 被 ≥2 链接目标引用 → 转译中止" 1 \
-		"由 __codegen__ 指定为 static" \
+		"declared static by __codegen__" \
 		-- "$PYCP" --emit-cpp -m aot_conf_pkg -o "$WORK/conf_aot"
 	check_emit "未声明角色 → 按库生成并打印 note" 0 \
-		"未声明角色，已按【库】生成" \
+		"no role declared" \
 		-- "$PYCP" --emit-cpp -m lib_pkg -o "$WORK/lib_aot"
 
 	echo "== 6) AOT：包输出到 <pkg>/ 子目录并一起编译 =="
@@ -235,11 +235,11 @@ EOF
 			"$WORK" -- "$WORK/dist/pycp" -m stdpkg a b
 
 		check_in "stdlib 里的库 → 明确报错「是库、不可运行」" 1 \
-			"没有程序入口|不可作为程序运行|import stdlib_lib|main(argv)" \
+			"has no program entry|cannot be run as a program|import stdlib_lib|main(argv)" \
 			"$WORK" -- "$WORK/dist/pycp" -m stdlib_lib
 
 		check_in "-m 未命中 → 列出候选路径与用法提示" 2 \
-			"未找到|./no_such_pkg/package.mpycp|只接受模块文件夹" \
+			"not found|./no_such_pkg/package.mpycp|accepts only module folders" \
 			"$WORK" -- "$WORK/dist/pycp" -m no_such_pkg
 
 		# cwd 同名包优先于 stdlib（本地优先）

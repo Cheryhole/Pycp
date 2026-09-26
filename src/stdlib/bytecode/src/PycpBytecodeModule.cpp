@@ -310,20 +310,22 @@ Object* _builtin_eval_manifest(Object*, FixedList* args, Map* kwargs) {
 		if (it_fn == ns->end() || it_fn->second == nullptr ||
 		    !it_fn->second->is_type("Function")) {
 			Decref(kinds);
-			throw ValueError("包清单 '" + entry_name + "' 未定义可调用的 " +
-			                 kCodegenFn + "()。");
+			throw ValueError("package manifest '" + entry_name +
+			                 "' does not define a callable " + kCodegenFn +
+			                 "().");
 		}
 		Object* proj = Call(it_fn->second, nullptr, 0); // Owned
 		if (proj == nullptr) {
 			Decref(kinds);
-			throw ValueError("包清单 '" + entry_name + "' 的 " + kCodegenFn +
-			                 "() 返回了空值。");
+			throw ValueError("package manifest '" + entry_name + "': " +
+			                 kCodegenFn + "() returned nothing.");
 		}
 		if (proj->type_name() != kProjectType) {
 			Decref(proj);
 			Decref(kinds);
-			throw ValueError("包清单 '" + entry_name + "' 的 " + kCodegenFn +
-			                 "() 必须返回 moduletools.Project。");
+			throw ValueError("package manifest '" + entry_name + "': " +
+			                 kCodegenFn +
+			                 "() must return a moduletools.Project.");
 		}
 
 		// 可执行名
@@ -336,7 +338,8 @@ Object* _builtin_eval_manifest(Object*, FixedList* args, Map* kwargs) {
 					Decref(exe);
 					Decref(proj);
 					Decref(kinds);
-					throw ValueError("set_executable_name() 的参数必须是字符串。");
+					throw ValueError(
+						"set_executable_name() expects a string argument.");
 				}
 				Decref(exe);
 			}
@@ -350,7 +353,8 @@ Object* _builtin_eval_manifest(Object*, FixedList* args, Map* kwargs) {
 					Decref(kinds_obj);
 					Decref(proj);
 					Decref(kinds);
-					throw ValueError("__codegen__() 返回的 Project.module_kinds 不是 Map。");
+					throw ValueError("Project.module_kinds returned by "
+					                 "__codegen__() is not a Map.");
 				}
 				for (const std::string& name : MapStringKeys(km)) {
 					Object* key = String::FromCString(name.c_str()); // Owned
@@ -360,17 +364,19 @@ Object* _builtin_eval_manifest(Object*, FixedList* args, Map* kwargs) {
 						Decref(kinds_obj);
 						Decref(proj);
 						Decref(kinds);
-						throw ValueError("__codegen__() 中模块 '" + name +
-						                 "' 的形态必须为 \"static\" 或 \"shared\"。");
+						throw ValueError("__codegen__(): module '" + name +
+						                 "' kind must be \"static\" or "
+						                 "\"shared\".");
 					}
 					const std::string kind = AsString(v);
 					if (kind != "static" && kind != "shared") {
 						Decref(kinds_obj);
 						Decref(proj);
 						Decref(kinds);
-						throw ValueError("__codegen__() 中模块 '" + name +
-						                 "' 的形态 '" + kind +
-						                 "' 非法（只接受 static / shared）。");
+						throw ValueError("__codegen__(): module '" + name +
+						                 "' has invalid kind '" + kind +
+						                 "' (only static / shared are "
+						                 "accepted).");
 					}
 					MapPut(kinds, name.c_str(), String::FromCString(kind.c_str()));
 				}

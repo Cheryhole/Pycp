@@ -1,30 +1,36 @@
 // plan.pycp —— 模块形态决策（对应前端的 PycpModulePlan）。
 //
-// 决定每个模块以「静态」（编译进主程序）还是「动态」（独立共享模块、运行期加载）
-// 形态参与链接。规则：
+// 决定每个模块以「静态」（编进某个链接目标：主程序或某个动态库镜像）还是
+// 「动态」（独立共享模块、运行期加载）形态参与链接。规则（README「AOT 形态与链接」）：
 //   - 入口模块恒静态（其符号恒在主程序 exe 内）；
-//   - __codegen__ 显式声明的形态优先（overrides）；
+//   - __codegen__ / CLI --compile-module 显式声明的形态优先（overrides）；
 //   - 其余取默认形态（default_kind，由 CLI --compile-modules 控制，默认 shared）；
-//   - 静态形态、且被 >=2 个链接目标引用的模块，保持静态（消除重复编译/加载）。
+//   - **冲突自动裁决**：被 >=2 个链接目标（主程序 / 多个动态库）引用的「静态」
+//     模块强制改为 shared —— 否则同一模块会被复制进多个目标，产生两份模块对象
+//     与注册表覆盖。若该静态来自 __codegen__，则不静默改写脚本意图：记入
+//     conflicts，由调用方报错中止；若来自 CLI --compile-module:<name>=static，
+//     则保留裁决并在原因里附 [overrides ...] 标记。
 //
 // 输入：
-//   modules_list : List[模块名]
-//   deps_map     : Map[模块名 -> List[依赖模块名]]（仅模块集内部依赖）
-//   entry        : 入口模块名
-//   default_kind : "shared" | "static"
-//   overrides    : Map[模块名 -> "static"|"shared"]（来自 __codegen__ module_kinds）
-//   strict_names : List[模块名]（必须静态；此处为内置静态扩展，通常为空）
-// 输出：Map { kinds: Map[名->kind], reasons: Map[名->原因串] }
+//   modules_list     : List[模块名]
+//   deps_map         : Map[模块名 -> List[依赖模块名]]（仅模块集内部依赖）
+//   entry            : 入口模块名
+//   default_kind     : "shared" | "static"
+//   overrides        : Map[模块名 -> "static"|"shared"]（__codegen__ 与 CLI 合并，CLI 优先）
+//   strict_names     : List[模块名]（由 __codegen__ 声明为 static；发生裁决即报错）
+//   cli_static_names : List[模块名]（由 CLI --compile-module:<name>=static 声明）
+// 输出：Map { kinds: Map[名->kind], reasons: Map[名->原因串], conflicts: List[串] }
 
 from pycp import List, Map
-from util import map_has
+from util import map_has, list_has, join_sep, S
 
-func build_plan(modules_list, deps_map, entry, default_kind, overrides, strict_names) {
+func build_plan(modules_list, deps_map, entry, default_kind, overrides, strict_names, cli_static_names) {
 	out_kinds = Map()
 	out_reasons = Map()
+	conflicts = List()
 
-	// 1) 初值：默认 / 覆盖 / 入口 / 内置静态。
-	//    reason 记录「导致该形态的 CLI 开关」，与旧 C++ AOT 的注释格式一致
+	// 1) 初值：默认 / 覆盖（__codegen__ 与 CLI 合并，CLI 优先）/ 入口。
+	//    reason 记录「导致该形态的开关」，与旧 C++ AOT 的注释格式一致
 	//    （--compile-modules=<kind> / --compile-module:<name>=<kind>）。
 	for m in modules_list {
 		kind = default_kind
@@ -39,45 +45,57 @@ func build_plan(modules_list, deps_map, entry, default_kind, overrides, strict_n
 			kind = "static"
 			reason = "entry"
 		}
-		if (strict_names != None) {
-			for s in strict_names {
-				if (s == m) {
-					kind = "static"
-					reason = "strict"
-				}
-			}
-		}
 		out_kinds[m] = kind
 		out_reasons[m] = reason
 	}
 
-	// 2) 固定点：被 >=2 链接目标引用的模块 -> 静态（消除重复编译/加载）。
-	//    无 while 循环：每轮至少提升一个（有限模块），故 iter_max 轮必收敛。
+	// 2) 冲突自动裁决：静态模块被 >=2 个链接目标引用 -> 强制 shared。
+	//    链接目标 = 主程序（入口）+ 每个「动态」宿主模块；静态宿主与主程序同属
+	//    一个目标，故不计入。裁决会改变宿主形态，可能引发下一轮，故取固定点。
 	iter_max = modules_list.length() + 2
 	repeat iter_max as iter {
 		changed = False
 		for m in modules_list {
-			if (out_kinds[m] == "static") {
-				// 已静态，跳过
-			} else {
-				hosts = List()
+			if (m == entry) {
+				// 入口即主程序自身，恒静态
+			} elif (out_kinds[m] == "static") {
+				targets = List()
+				if (map_has(deps_map, entry)) {
+					for ed in deps_map[entry] {
+						if (ed == m) {
+							targets.append("the program")
+						}
+					}
+				}
 				for a in modules_list {
 					if (a == m) {
 						// 自身不算宿主
-					} else {
-						dm = deps_map[a]
-						if (dm != None) {
-							for d in dm {
-								if (d == m) {
-									hosts.append(a)
+					} elif (a == entry) {
+						// 主程序已单独计
+					} elif (out_kinds[a] == "shared") {
+						host_deps = deps_map[a]
+						if (host_deps != None) {
+							for hd in host_deps {
+								if (hd == m) {
+									targets.append(a)
 								}
 							}
 						}
 					}
 				}
-				if (hosts.length() >= 2) {
-					out_kinds[m] = "static"
-					out_reasons[m] = "模块被 >=2 个链接目标引用，提升为静态（消除重复编译/加载）"
+				if (targets.length() >= 2) {
+					out_kinds[m] = "shared"
+					mark = ""
+					if (list_has(strict_names, m)) {
+						mark = " [__codegen__ static]"
+					} elif (list_has(cli_static_names, m)) {
+						mark = " [overrides --compile-module:" + m + "=static]"
+					}
+					out_reasons[m] = "referenced by " + S(targets.length()) + " link targets; forced to shared" + mark
+					if (list_has(strict_names, m)) {
+						detail = m + ": declared static by __codegen__ but referenced by " + S(targets.length()) + " link targets (" + join_sep(targets, ", ") + ")"
+						conflicts.append(detail)
+					}
 					changed = True
 				}
 			}
@@ -90,5 +108,6 @@ func build_plan(modules_list, deps_map, entry, default_kind, overrides, strict_n
 	result = Map()
 	result["kinds"] = out_kinds
 	result["reasons"] = out_reasons
+	result["conflicts"] = conflicts
 	return result
 }

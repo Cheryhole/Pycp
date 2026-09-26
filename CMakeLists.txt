@@ -59,12 +59,12 @@ find_package(FLEX)
 if(NOT BISON_FOUND OR NOT FLEX_FOUND)
     if(WIN32)
         message(FATAL_ERROR
-            "在 Windows 下未找到 Bison/Flex。请安装 win_flex_bison 并将其 bin 目录加入 PATH，"
-            "或显式指定：\n"
+            "Bison/Flex not found on Windows. Install win_flex_bison and add its "
+            "bin directory to PATH, or specify them explicitly:\n"
             "  cmake -S . -B build -DBISON_EXECUTABLE=<path>/win_bison.exe "
             "-DFLEX_EXECUTABLE=<path>/win_flex.exe")
     else()
-        message(FATAL_ERROR "未找到 Bison/Flex，请先安装（如 apt install bison flex）。")
+        message(FATAL_ERROR "Bison/Flex not found. Install them first (e.g. apt install bison flex).")
     endif()
 endif()
 
@@ -389,6 +389,12 @@ add_custom_target(pycp-dist ALL
         -DBUILD_INFO_COMPILER=${CMAKE_CXX_COMPILER_ID}
         -DBUILD_INFO_VERSION=${PROJECT_VERSION}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PycpDist.cmake
+    # 构建树同构：把纯 pycp 标准库包也放进 <build>/stdlib/，使 build/pycp
+    # 与 dist/pycp 行为一致（运行期按 GetStdlibDir() = <exe 同级>/stdlib 查找
+    # 包，如 `pycp -m aot`）。否则只有 dist 树可用，构建树会报「未找到」。
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/stdlib/aot
+        ${CMAKE_BINARY_DIR}/stdlib/aot
     COMMENT "Collecting final artifacts into ${PYCP_DIST_OUT_DIR}"
     VERBATIM
 )

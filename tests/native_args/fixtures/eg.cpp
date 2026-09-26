@@ -12,7 +12,7 @@
 // 由 tests/native_args/run.sh 编译为 eg.so 并放入沙箱后被脚本 import。
 // =============================================================
 
-#include "PycpExtension.hpp"
+#include "object/PycpExtension.hpp"
 
 #include <vector>
 

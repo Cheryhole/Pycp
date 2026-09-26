@@ -98,7 +98,7 @@ endif()
 # 工作进程模式：校验分片参数（由驱动进程写入，必给）。
 if(WORKER)
 	if(WORKER_COUNT EQUAL 0 OR RESULT_FILE STREQUAL "")
-		message(FATAL_ERROR "pycp-aot-equiv: WORKER=1 时必须提供 WORKER_COUNT 与 RESULT_FILE。")
+		message(FATAL_ERROR "pycp-aot-equiv: WORKER=1 requires WORKER_COUNT and RESULT_FILE.")
 	endif()
 endif()
 
@@ -259,7 +259,7 @@ foreach(_case IN LISTS _cases)
 				if(NOT EXISTS "${_exe}")
 					math(EXPR _skipped "${_skipped} + 1")
 					string(APPEND _failure_report
-						"[SKIP] ${_case_name} [${_mode}]: 未找到产物 ${_exe}(.exe)\n")
+						"[SKIP] ${_case_name} [${_mode}]: artifact not found ${_exe}(.exe)\n")
 					continue()
 				endif()
 			else()
@@ -326,8 +326,8 @@ if(WORKER)
 		"\nskipped=${_skipped}"
 		"\nxfail=${_xfail}"
 		"\nreport<<EOF\n${_failure_report}")
-	message(STATUS "  [worker ${WORKER_INDEX}] 通道 ${_passed}/${_total}"
-		"（不一致 ${_failed}，跳过 ${_skipped}，XFAIL ${_xfail}）")
+	message(STATUS "  [worker ${WORKER_INDEX}] channel ${_passed}/${_total}"
+		" (mismatch ${_failed}, skipped ${_skipped}, XFAIL ${_xfail})")
 	return()
 endif()
 
@@ -343,7 +343,7 @@ if(JOBS GREATER 1)
 	string(REPLACE ";" "|" _modes_pipe "${_modes}")
 	string(REPLACE ";" "|" _xfail_pipe "${_xfail_patterns}")
 
-	message(STATUS "并行执行: ${JOBS} 个工作进程（分片日志 ${WORK_DIR}/_worker_*.log）")
+	message(STATUS "Parallel run: ${JOBS} worker processes (shard logs ${WORK_DIR}/_worker_*.log)")
 
 	set(_spawn_rc 0)
 	if(WIN32)
@@ -417,7 +417,7 @@ if(JOBS GREATER 1)
 		execute_process(COMMAND sh "${_runner}" RESULT_VARIABLE _spawn_rc)
 	endif()
 	if(NOT _spawn_rc EQUAL 0)
-		message(STATUS "警告: 工作进程调度脚本返回 ${_spawn_rc}，按已产出的分片结果继续合并。")
+		message(STATUS "Warning: worker dispatch script returned ${_spawn_rc}; merging with the shard results produced so far.")
 	endif()
 
 	# ---- 合并：计数求和，差异明细按 worker 序号拼接（顺序稳定，便于比对）----
@@ -472,25 +472,25 @@ endif()
 # =====================================================================
 # 汇总
 # =====================================================================
-message(STATUS "================ Pycp AOT / 解释器一致性 ================")
-message(STATUS "总用例 : ${_total}")
-message(STATUS "通过   : ${_passed}")
-message(STATUS "不一致 : ${_failed}")
-message(STATUS "XFAIL  : ${_xfail}（已知缺陷，预期不一致）")
-message(STATUS "跳过   : ${_skipped}（生成/构建失败，非一致性问题）")
+message(STATUS "============ Pycp AOT / interpreter equivalence ============")
+message(STATUS "Total   : ${_total}")
+message(STATUS "Passed  : ${_passed}")
+message(STATUS "Mismatch: ${_failed}")
+message(STATUS "XFAIL   : ${_xfail} (known defects, mismatch expected)")
+message(STATUS "Skipped : ${_skipped} (generate/build failure, not an equivalence issue)")
 message(STATUS "==========================================================")
 
 if(NOT _failure_report STREQUAL "")
-	message(STATUS "\n差异明细:\n${_failure_report}")
+	message(STATUS "\nDiff details:\n${_failure_report}")
 endif()
 
 if(NOT _failed EQUAL 0)
 	message(FATAL_ERROR
-		"pycp-aot-equiv: ${_failed} 个用例在 AOT 与解释器下行为不一致，"
-		"详见上方差异明细。")
+		"pycp-aot-equiv: ${_failed} case(s) behave differently under AOT and the "
+		"interpreter; see the diff details above.")
 endif()
 if(_total EQUAL 0)
-	message(FATAL_ERROR "pycp-aot-equiv: 没有任何用例被实际执行。")
+	message(FATAL_ERROR "pycp-aot-equiv: no case was actually executed.")
 endif()
 
-message(STATUS "pycp-aot-equiv: 全部 ${_passed} 个用例行为一致。")
+message(STATUS "pycp-aot-equiv: all ${_passed} case(s) behave identically.")

@@ -7,7 +7,7 @@
 // 采用新导出 API：容器形态原生函数 + Module::set_function。
 // =============================================================
 
-#include "PycpExtension.hpp"
+#include "object/PycpExtension.hpp"
 
 namespace {
 

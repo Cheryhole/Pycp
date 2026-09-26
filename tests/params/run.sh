@@ -119,7 +119,7 @@ check_ok "**kwargs 收集（按名匹配形参后剩余入 Map）" kwargs.pycp \
 
 check_reject "缺必填关键字-only -> TypeError" err_missing_kwonly.pycp \
 	"TypeError: f() missing 1 required keyword-only argument: 'kw'" \
-	'File "err_missing_kwonly.pycp"' "line 5"
+	'File "err_missing_kwonly.pycp"' "line 4"
 check_reject "位置实参过多 -> TypeError" err_too_many_positional.pycp \
 	"TypeError: f() takes 2 positional arguments but 3 were given"
 check_reject "未知关键字实参 -> TypeError" err_unexpected_keyword.pycp \

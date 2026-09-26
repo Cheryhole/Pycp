@@ -183,7 +183,7 @@ rm -rf "$WORK/form_bad"
 out="$("$PYCP" --emit-cpp "$ENTRY" --compile-runtime=static \
 	--compile-modules=shared -o "$WORK/form_bad" 2>&1)"
 rc=$?
-if [[ $rc -ne 0 && "$out" == *"静态"* ]]; then
+if [[ $rc -ne 0 && "$out" == *"statically linked"* ]]; then
 	echo "[PASS] runtime=static + 动态模块组合被拒（两份运行时防护）"
 	pass=$((pass + 1))
 else

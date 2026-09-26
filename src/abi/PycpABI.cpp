@@ -621,7 +621,7 @@ Module* ImportModule(const std::string& name, BC::Module** out_source,
 			const std::string shown = dir.empty() ? std::string("./") : dir;
 			*diagnostics += "\n  - " + std::string(label) + ": " + shown +
 			                name + Pycp::EXT_PYCP + "/" + Pycp::EXT_CPYCP +
-			                " 或同名动态库均未找到";
+			                " or same-named shared library: not found";
 		}
 		return Probe::kMiss;
 	};
@@ -640,21 +640,21 @@ Module* ImportModule(const std::string& name, BC::Module** out_source,
 	}
 	if (m != nullptr) return cached(m);
 	if (diagnostics != nullptr) {
-		*diagnostics += "\n  - 进程内符号 / 静态注册表: 未找到 " +
+		*diagnostics += "\n  - in-process symbol / static registry: " +
 		                std::string(AOT_MODULE_INIT_PREFIX) + name +
-		                "（未静态链接进本程序）";
+		                " not found (not statically linked into this binary)";
 	}
 
 	// ---- ② 当前工作目录 ----
 	Module* hit = nullptr;
-	if (probe_dir(std::string(), "当前工作目录", &hit) != Probe::kMiss) {
+	if (probe_dir(std::string(), "current working directory", &hit) != Probe::kMiss) {
 		return hit; // kSource 时为 nullptr（源码交由 VM 执行）
 	}
 
 	// ---- ③ 脚本所在目录（为 "." 时与 cwd 重合，已在上一步覆盖）----
 	const std::string script_dir = module_search_dir();
 	if (!script_dir.empty() && script_dir != ".") {
-		if (probe_dir(script_dir, "脚本所在目录", &hit) != Probe::kMiss) {
+		if (probe_dir(script_dir, "script directory", &hit) != Probe::kMiss) {
 			return hit;
 		}
 	}
@@ -662,7 +662,7 @@ Module* ImportModule(const std::string& name, BC::Module** out_source,
 	// ---- ④ 可执行文件所在目录的 stdlib/ ----
 	const std::string& stdlib_dir = GetStdlibDir();
 	if (!stdlib_dir.empty()) {
-		if (probe_dir(stdlib_dir, "exe 目录 stdlib/", &hit) != Probe::kMiss) {
+		if (probe_dir(stdlib_dir, "exe directory stdlib/", &hit) != Probe::kMiss) {
 			return hit;
 		}
 	}

@@ -20,7 +20,7 @@ from pycp import List, Map
 import bytecode
 import filesystem
 import moduletools
-from util import S, sorted_map_keys, map_has, starts_with, str_len, substr, find
+from util import S, sorted_map_keys, map_has, list_has, starts_with, str_len, substr, find
 from util import sanitize_identifier, cpp_string_literal
 from sdk import locate
 from plan import build_plan
@@ -36,12 +36,16 @@ func cfg(key) {
 }
 
 // 模块名 -> 生成的 C++ 文件相对路径。
-//   入口模块固定为 __pycp_main.gen.cpp（含 main 函数）；
-//   依赖模块把模块名的 '.' 映射为路径分隔符（包内子模块落到同名子目录），
-//   与旧 C++ AOT 的 <pkg>/<sub>.gen.cpp 布局一致。
-func module_cpp_filename(entry_name, name) {
+//   入口模块     固定为 __pycp_main.gen.cpp（含 main 函数）；
+//   包清单模块（包根，如 lib_pkg）落在包目录内 <pkg>/pycp.gen.cpp，与子模块同处
+//                 一个目录（旧 C++ AOT 的布局约定，测试据此校验）；
+//   其余依赖模块 把模块名的 '.' 映射为路径分隔符（lib_pkg.util -> lib_pkg/util.gen.cpp）。
+func module_cpp_filename(entry_name, name, pkgs) {
 	if (name == entry_name) {
 		return cfg("aot_entry_cpp_filename")
+	}
+	if (list_has(pkgs, name)) {
+		return name + "/pycp.gen.cpp"
 	}
 	rel = ""
 	for ch in name {
@@ -101,11 +105,11 @@ func emit_builtin_reg(mods) {
 // 落盘：把 sources（Map[模块名 -> 源码]）与 CMakeLists.txt 写入 out_dir。
 // 用二进制写（"wb"）：不随平台做换行改写，保证与旧 C++ AOT（二进制 ofstream）
 // 逐字节一致——Windows 下若用文本模式会把 \n 写成 \r\n。
-func write_all(out_dir, entry_name, sources, cmake_txt) {
+func write_all(out_dir, entry_name, sources, cmake_txt, pkgs) {
 	filesystem.mkdir(out_dir)
 	for mk in sources.keys() {
 		nm = S(mk)
-		fname = module_cpp_filename(entry_name, nm)
+		fname = module_cpp_filename(entry_name, nm, pkgs)
 		ensure_parent_dirs(out_dir, fname)
 		fpath = filesystem.join(out_dir, fname)
 		f = filesystem.File(fpath, "wb")
@@ -119,7 +123,7 @@ func write_all(out_dir, entry_name, sources, cmake_txt) {
 
 func main(argv) {
 	if (argv.length() < 3) {
-		io.print("usage: pycp -m aot <entry.pycp | 模块文件夹> <out_dir> [--compile-* ...]")
+		io.print("usage: pycp -m aot <entry.pycp | module folder> <out_dir> [--compile-* ...]")
 		return 2
 	}
 	entry_path = argv[1]
@@ -163,8 +167,34 @@ func main(argv) {
 	man = bytecode.eval_manifest(modules_map, entry_name, pkgs)
 	has_codegen = man["has_codegen"]
 	role = man["role"]
+	role_declared = man["role_declared"]
 	executable_name = man["executable_name"]
 	module_kinds = man["module_kinds"]
+
+	// 2a) 角色诊断与用途校验（见 README「AOT 形态与链接」）：
+	//   - 未声明角色：AOT 默认按【库】转译，打印提示；
+	//   - 库角色不得写 set_executable_name()（可执行名由入口项目决定）→ 中止。
+	is_package = list_has(pkgs, entry_name)
+	if (is_package == True) {
+		if (role_declared == True) {
+			// 清单已声明角色（moduletools.as_program() / as_library()）
+		} else {
+			io.print("note: no role declared; generating as a library (the AOT default).")
+		}
+		if (role == "library") {
+			io.print("note: translating as a library package (no program entry).")
+		}
+	}
+	if (role == "library") {
+		if (executable_name == None) {
+			// 未指定可执行名
+		} elif (executable_name == "") {
+			// 未指定可执行名
+		} else {
+			io.print("AOT error: set_executable_name() is not allowed for a library package '" + entry_name + "' (the executable name is decided by the entry project).")
+			return 1
+		}
+	}
 
 	// 形态标志必须是布尔 False（而非 None）：emit 侧用 `library_package_entry
 	// == False` 判定是否给入口写 __main__；None 与布尔不可比较，会误判。
@@ -190,10 +220,28 @@ func main(argv) {
 		plan_overrides[ok] = overrides[ok]
 	}
 
+	// 2c) 冲突裁决所需的「来源」标记：
+	//   strict_names     —— 由 __codegen__ 声明为 static（冲突即报错中止）；
+	//   cli_static_names —— 由 CLI --compile-module:<name>=static 声明（冲突附标记）。
+	strict_names = List()
+	if (module_kinds != None) {
+		for sk in module_kinds.keys() {
+			if (module_kinds[sk] == "static") {
+				strict_names.append(S(sk))
+			}
+		}
+	}
+	cli_static_names = List()
+	for ck in overrides.keys() {
+		if (overrides[ck] == "static") {
+			cli_static_names.append(S(ck))
+		}
+	}
+
 	// 3) 定位运行时 SDK（提供 include/lib/stdlib 与运行时库）。
 	sdk_info = locate()
 	if (sdk_info["valid"] != True) {
-		io.print("AOT error: 找不到 Pycp 运行时 SDK（可执行文件同级目录需含 include/lib/stdlib）。")
+		io.print("AOT error: Pycp runtime SDK not found (the directory next to the executable must contain include/, lib/ and stdlib/).")
 		for td in sdk_info["tried"] {
 			io.print("  - " + td)
 		}
@@ -230,9 +278,20 @@ func main(argv) {
 	}
 
 	// 6) 形态决策：每个模块静态 / 动态。
-	plan_res = build_plan(names, deps_map, entry_name, default_kind, plan_overrides, List())
+	plan_res = build_plan(names, deps_map, entry_name, default_kind, plan_overrides, strict_names, cli_static_names)
 	kinds = plan_res["kinds"]
 	reasons = plan_res["reasons"]
+
+	// 6b) __codegen__ 指定的 static 若必须改为 shared -> 报错中止（不静默改写
+	//     脚本意图；附宿主演算明细）。
+	conflicts = plan_res["conflicts"]
+	if (conflicts.length() > 0) {
+		io.print("AOT error: these modules are declared static by __codegen__ but are referenced by >=2 link targets, so they must be shared; refusing to silently rewrite the script's intent:")
+		for cf in conflicts {
+			io.print("  - " + cf)
+		}
+		return 1
+	}
 
 	// 7) 两份运行时防护：runtime=static 时不允许任何动态形态（静态运行时的
 	//    符号与动态模块各自链接的运行时互不共享，会产生两份运行时状态）。
@@ -247,7 +306,7 @@ func main(argv) {
 			dyn_modules.append(bm)
 		}
 		if (dyn_modules.length() > 0) {
-			io.print("AOT error: --compile-runtime=static 需要全部模块静态链接（两份运行时防护）；检测到动态形态，请改用 --compile-modules=static：")
+			io.print("AOT error: --compile-runtime=static requires every module to be statically linked (two-runtime guard); dynamic modules were detected, use --compile-modules=static instead:")
 			for dm in dyn_modules {
 				io.print("  - " + dm)
 			}
@@ -278,7 +337,7 @@ func main(argv) {
 			} else {
 				mf["kind"] = default_kind
 			}
-			mf["source_file"] = module_cpp_filename(entry_name, nm)
+			mf["source_file"] = module_cpp_filename(entry_name, nm, pkgs)
 			if (map_has(deps_map, nm)) {
 				mf["deps"] = deps_map[nm]
 			} else {
@@ -326,10 +385,37 @@ func main(argv) {
 	cmake_txt = emit_cmake(spec)
 
 	// 11) 落盘。
-	write_all(out_dir, entry_name, sources, cmake_txt)
+	write_all(out_dir, entry_name, sources, cmake_txt, pkgs)
 
 	// 12) --show-imports：打印逐模块形态决策表（与旧 C++ AOT 同格式）。
 	if (show_imports == True) {
+		if (is_package == True) {
+			decl = "default"
+			if (role_declared == True) {
+				decl = "declared"
+			}
+			io.print("Package: " + entry_name + "  role=" + role + "  <- " + decl)
+		}
+		// 编译期 import 解析清单：模块集内 -> translated（会生成 .gen.cpp）；
+		// 集外 import（原生扩展等）-> unresolved（运行期按名解析）。
+		for tn in names {
+			io.print("translated  " + tn)
+		}
+		outside = List()
+		for sn in names {
+			for imp in modules_map[sn].imports {
+				if (map_has(modules_map, imp)) {
+					// 集内模块，已计入 translated
+				} elif (list_has(outside, imp)) {
+					// 已记录，去重
+				} else {
+					outside.append(imp)
+				}
+			}
+		}
+		for on in outside {
+			io.print("unresolved  " + on)
+		}
 		io.print("Module kinds (" + S(cmake_modules.length()) + "):")
 		for mt in cmake_modules {
 			reason = mt["reason"]

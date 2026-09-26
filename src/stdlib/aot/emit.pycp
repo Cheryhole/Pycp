@@ -776,11 +776,11 @@ func emit_module_cpp(module, modname, is_entry, entry_name, deps, kinds, program
 	if (pool_n == 0) {
 		pool_n = 1
 	}
-	out = out + "// 全局常量池对象（对应 .pycp 编译期常量池，模块初始化时预构造）\n"
+	out = out + "// Global constant pool (mirrors the .pycp compile-time pool; built during module init)\n"
 	out = out + "static Pycp::Object* g_c[" + S(pool_n) + "];\n\n"
-	out = out + "// 全局变量表（冗余保留；顶层变量实际写入 g_mod_ns 指向的模块命名空间）\n"
+	out = out + "// Global variable table (kept for compatibility; top-level names actually go into the module namespace referenced by g_mod_ns)\n"
 	out = out + "static std::unordered_map<std::string, Pycp::Object*> g_globals;\n\n"
-	out = out + "// 模块命名空间指针（指向本模块 Module 的 namespace）\n"
+	out = out + "// Pointer to this module's namespace (Module::get_namespace())\n"
 	out = out + "static std::unordered_map<std::string, Pycp::Object*>* g_mod_ns = nullptr;\n\n"
 
 	// ---- 辅助函数：环境/栈清理 ----
@@ -865,7 +865,7 @@ func emit_module_cpp(module, modname, is_entry, entry_name, deps, kinds, program
 
 	// ---- 模块注册器 ----
 	self_sym = module_init_symbol(modname)
-	out = out + "// 静态初始化阶段注册本模块初始化函数，供 Pycp::ImportModule 经注册表调用。\n"
+	out = out + "// Register this module's init function during static initialization so Pycp::ImportModule can reach it through the registry.\n"
 	out = out + "PYCP_MODULE_EXPORT Pycp::Module* " + self_sym + "();\n"
 	out = out + "namespace { struct PycpAotReg_" + S(reg_id) + " {\n"
 	out = out + "  PycpAotReg_" + S(reg_id) + "() {\n"
@@ -874,7 +874,7 @@ func emit_module_cpp(module, modname, is_entry, entry_name, deps, kinds, program
 	out = out + "}; PycpAotReg_" + S(reg_id) + " _pycp_aot_reg_" + S(reg_id) + "; }\n\n"
 
 	// ---- 模块初始化函数 ----
-	out = out + "// 初始化并返回本模块的 Module（懒执行，首次调用运行顶层）。\n"
+	out = out + "// Initialize and return this module's Module (lazy: the first call runs the top level).\n"
 	out = out + "PYCP_MODULE_EXPORT Pycp::Module* " + self_sym + "() {\n"
 	out = out + "    static Pycp::Module* mod = nullptr;\n"
 	out = out + "    static bool done = false;\n"
@@ -913,16 +913,16 @@ func emit_module_cpp(module, modname, is_entry, entry_name, deps, kinds, program
 		out = out + "    Pycp::Initialize();\n"
 		out = out + "    int pycp_exit_code = 0;\n"
 		out = out + "    try {\n"
-		out = out + "        // 注入命令行参数：pycp.argv == [程序完整路径, 程序参数...]，\n"
-		out = out + "        // 对齐 Python sys.argv（argv[0] 为程序路径）。须在模块初始化\n"
-		out = out + "        // 之前写入，供 pycp 内置模块构造时读取快照。\n"
+		out = out + "        // Inject command-line arguments: pycp.argv == [program path, args...],\n"
+		out = out + "        // matching Python's sys.argv (argv[0] is the program path). Must be\n"
+		out = out + "        // set before module initialization so builtin modules can snapshot it.\n"
 		out = out + "        std::vector<std::string> pycp_argv(argv, argv + argc);\n"
 		out = out + "        Pycp::SetArgv(pycp_argv);\n"
 		out = out + "        Pycp::Module* entry_mod = " + self_sym + "();\n"
 		if (program_entry) {
-			out = out + "        // 程序角色：调用清单的 main(argv)（argv 同 pycp.argv）。\n"
-			out = out + "        // 直接查命名空间而非 GetAttr：包可能覆写 __get_attribute__\n"
-			out = out + "        // （钩子未代理到命名空间时 GetAttr 会取不到 main）。\n"
+			out = out + "        // Program role: call the manifest's main(argv) (same argv as pycp.argv).\n"
+			out = out + "        // Look the name up in the namespace instead of using GetAttr: a package\n"
+			out = out + "        // may override __get_attribute__, in which case GetAttr cannot find main.\n"
 			out = out + "        Pycp::Object* main_fn = nullptr;\n"
 			out = out + "        {\n"
 			out = out + "            auto* ns = entry_mod->get_namespace();\n"

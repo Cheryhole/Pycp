@@ -113,10 +113,10 @@ if(EXPECT)
 		file(REMOVE "${FILE}")
 		message(FATAL_ERROR
 			"pycp-check-generated: ${LABEL}\n"
-			"  生成物内容异常：未找到应有特征 \"${EXPECT}\"。\n"
-			"  通常是两份生成物互相串了内容（win_flex 并发写同一临时文件）。\n"
-			"  已删除损坏文件：${FILE}\n"
-			"  处理：直接重新构建即可；若仍有残留，请删除 build/generated 后重建。")
+			"  Generated file looks wrong: expected signature \"${EXPECT}\" not found.\n"
+			"  Usually two generated files got mixed up (win_flex writing the same temp file concurrently).\n"
+			"  Removed the corrupt file: ${FILE}\n"
+			"  Fix: just rebuild; if it persists, delete build/generated and build again.")
 	endif()
 endif()
 

@@ -92,19 +92,19 @@ func validate_sdk_root(root) {
 	res["tried"] = List()
 
 	if (_is_dir(root) == False) {
-		res["tried"].append("不是目录: " + root)
+		res["tried"].append("not a directory: " + root)
 		return res
 	}
 	if (_is_dir(res["include_dir"]) == False) {
-		res["tried"].append("缺少 include/: " + root)
+		res["tried"].append("missing include/: " + root)
 		return res
 	}
 	if (_is_dir(res["lib_dir"]) == False) {
-		res["tried"].append("缺少 lib/: " + root)
+		res["tried"].append("missing lib/: " + root)
 		return res
 	}
 	if (_is_dir(res["stdlib_dir"]) == False) {
-		res["tried"].append("缺少 stdlib/: " + root)
+		res["tried"].append("missing stdlib/: " + root)
 		return res
 	}
 
@@ -202,7 +202,7 @@ func locate() {
 		}
 	}
 	if (result["tried"].length() == 0) {
-		result["tried"].append("(无候选路径)")
+		result["tried"].append("(no candidate paths)")
 	}
 	return result
 }
