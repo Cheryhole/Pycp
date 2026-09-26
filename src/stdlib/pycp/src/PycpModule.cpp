@@ -1,4 +1,5 @@
 #include "pycp_stdlib.hpp"
+#include "visibility.hpp"          // common：private/public/readonly 的唯一实现
 #include "object/PycpModule.hpp"   // runtime 的 Module 完整定义
 #include "object/PycpFunction.hpp"
 #include "object/PycpString.hpp"    // String_method_table
@@ -363,62 +364,12 @@ Object* _builtin_typeof(Object*, FixedList* args, Map* kwargs) {
 }
 
 // =============================================================
-// private / public：可见性装饰器函数
+// private / public / readonly：可见性 / 只读装饰器
 //
-// 作为通用装饰器语法糖：@private / @public 把被装饰对象（函数或任意
-// 对象）作为参数传给本函数，本函数设置该对象的可见性后原样返回，由
-// 装饰器替换逻辑用返回值替换原对象。可见性经对象通用的
-// is_private()/set_private() 属性（C++ ABI 底层）设置。
-//
-//   - 类内成员：控制该成员在类外的访问可见性（公开/私有）。
-//   - 模块顶层符号：控制其他文件 import 时是否可访问。
-//
-// 注意：本实现与 classtools 库中的 private/public 功能完全一致，
-// 两库均导出同名装饰器函数以保证 `from classtools import public`
-// 与 `from Pycp import public` 行为一致。
+// 实现已上提到 stdlib/common（visibility.hpp）：本库与 classtools 库曾
+// 逐字重复同一实现，现共用一份；此处仅在 make_pycp_module 中注册，
+// 保证 `from pycp import public` 与 `from classtools import public` 等价。
 // =============================================================
-// 内部辅助（非注册函数）：参数个数与类型已由 private/public 的框架 thunk 校验。
-Object* _builtin_visibility(Object* target, bool priv) {
-	if (target == nullptr) {
-		throw TypeError("visibility decorator expects exactly 1 argument.");
-	}
-	target->set_private(priv);
-	// 原样返回被装饰对象（装饰器替换逻辑用返回值替换原对象）。
-	Incref(target);
-	return target;
-}
-
-Object* _builtin_private(Object*, FixedList* args, Map* kwargs) {
-	static const Extension::ArgTable spec = Extension::CompileArgs(
-		"private", { Extension::Arg::Required("target") });
-	Extension::ArgResult r = spec.Bind(args, kwargs);
-	return _builtin_visibility(r["target"], /*priv=*/true);
-}
-
-Object* _builtin_public(Object*, FixedList* args, Map* kwargs) {
-	static const Extension::ArgTable spec = Extension::CompileArgs(
-		"public", { Extension::Arg::Required("target") });
-	Extension::ArgResult r = spec.Bind(args, kwargs);
-	return _builtin_visibility(r["target"], /*priv=*/false);
-}
-
-// @readonly 装饰器：把被装饰对象（变量/函数/类/实例/任意对象）设为只读
-// 后原样返回（与 classtools.readonly 行为一致）。只读语义由底层
-// readonly_ 标志承载：任意对象冻结（属性写/删被拒）、模块常量绑定
-// （不可再赋值覆盖）、类成员只读字段。
-Object* _builtin_readonly(Object*, FixedList* args, Map* kwargs) {
-	static const Extension::ArgTable spec = Extension::CompileArgs(
-		"readonly", { Extension::Arg::Required("target") });
-	Extension::ArgResult r = spec.Bind(args, kwargs);
-	Object* target = r["target"];
-	if (target == nullptr) {
-		throw TypeError("readonly decorator expects exactly 1 argument.");
-	}
-	target->set_readonly(true);
-	// 原样返回被装饰对象（装饰器替换逻辑用返回值替换原对象）。
-	Incref(target);
-	return target;
-}
 
 // Object 的默认 __initialize__（空实现，接受 self，供子类 super() 调用）。
 Object* _object_init(Object*, FixedList* args, Map* kwargs) {
@@ -541,12 +492,9 @@ Module* make_pycp_module() {
 	                                  Object_method_table);
 	RegisterObjectClass(object_cls); // 类对象的 typeof/__class__ 返回它
 
-	// 可见性装饰器函数：@private / @public（与 classtools 库功能一致）。
-	mod->set_function("private", _builtin_private);
-	mod->set_function("public",  _builtin_public);
-
-	// 只读装饰器：@readonly（对象冻结 / 模块常量绑定 / 只读成员）。
-	mod->set_function("readonly", _builtin_readonly);
+	// 可见性/只读装饰器：@private / @public / @readonly
+	// （与 classtools 库功能一致；实现见 stdlib/common/visibility.hpp）。
+	RegisterVisibilityDecorators(mod);
 
 	// insp(obj)：返回对象所有成员名称（含方法）的 List。
 	mod->set_function("insp", _builtin_insp);

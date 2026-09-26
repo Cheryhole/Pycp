@@ -28,6 +28,9 @@ target_include_directories(PycpBuiltin_filesystem_obj PUBLIC
 )
 set_target_properties(PycpBuiltin_filesystem_obj PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# 复用 stdlib/common 的头（file_common.hpp：File 类型类绑定样板）。
+target_link_libraries(PycpBuiltin_filesystem_obj PUBLIC PycpCommon)
+
 add_library(PycpBuiltin_filesystem_shared SHARED $<TARGET_OBJECTS:PycpBuiltin_filesystem_obj>)
 set_target_properties(PycpBuiltin_filesystem_shared PROPERTIES
     OUTPUT_NAME "filesystem"
@@ -60,6 +63,7 @@ target_include_directories(PycpBuiltin_filesystem_obj_static PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../..
 )
 target_compile_definitions(PycpBuiltin_filesystem_obj_static PUBLIC PYCP_STATIC)
+target_link_libraries(PycpBuiltin_filesystem_obj_static PUBLIC PycpCommon)
 
 add_library(PycpBuiltin_filesystem_static STATIC $<TARGET_OBJECTS:PycpBuiltin_filesystem_obj_static>)
 set_target_properties(PycpBuiltin_filesystem_static PROPERTIES

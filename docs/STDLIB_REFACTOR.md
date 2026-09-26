@@ -238,3 +238,34 @@ add_library(PycpBuiltin_io_static STATIC
 - [ ] `build/dist` 无旧产物残留（`pycp.mmycp`/`pycp.mpycp` 等）。
 - [ ] AOT 模块 `from pycp import X` 改造后，产物与改造前**逐字节一致**。
 - [ ] `tests/**` 解释器用例回归通过；AOT 端到端（生成→构建→运行）通过。
+
+---
+
+## 9. 落地修订（实现轮记录）
+
+本文 §2/§3/§4 为初始设计。实现时对 **common 的交付形态**做了一处修订，其余（接口语义、去重范围、验收标准）均按原文执行。
+
+### 9.1 修订：common 改为「头文件内联 + INTERFACE 目标」，放弃「两份 OBJECT」
+- **原文**：common 产 `PycpBuiltin_common_obj` / `_obj_static` 两个 OBJECT 库，各模块 `$<TARGET_OBJECTS:...>` 聚合（§3.2/§3.3）。
+- **问题**：静态 AOT 会把**全部**扩展归档（`libPycpExt_*.a`，当前 8 个）链入同一个 exe。若 common 以「外部链接的普通函数」提供，`Pycp::RegisterVisibilityDecorators` / `Pycp::BindFileType` 会在**多份归档中各持一份强符号**，静态链接期直接报 `multiple definition`（实测风险，非理论）。`-fvisibility=hidden` 或 `PYCP_API` 都**不能**消除静态归档的重复定义。
+- **修订**：common 不产 `.o`，实现全部 **`inline`**（helpers 置于匿名命名空间）：
+  - `include/visibility.hpp`：`inline void RegisterVisibilityDecorators(Module*)`
+  - `include/file_common.hpp`：`inline void BindFileType(Module*)`
+  - `CMakeLists.txt`：`add_library(PycpCommon INTERFACE)` + `target_include_directories(... INTERFACE <include> <../..>)`
+  - 消费方改为 `target_link_libraries(<模块>_obj PUBLIC PycpCommon)`（io / filesystem / classtools / pycp 各自的动态与静态 OBJECT）。
+- **效果**：每个扩展各持一份内部链接/vague-linkage 副本，既无跨库多重定义，也不必新增任何可加载产物 —— 正是 §5 R1 声明的对策「仅扩展内部链接可见」。
+
+### 9.2 验收结果（本轮实测）
+| 项 | 结果 |
+|---|---|
+| `cmake -S . -B build` + `cmake --build build` | 通过，无告警升级；`pycp-dist` 收集 58 文件 |
+| 目标清单 | `dist/stdlib` = 8 个 `.so`（io/pycp/classtools/moduletools/ast/bytecode/filesystem/maths）+ `aot/`；`dist/lib` = 8 个 `libPycpExt_*.a` + runtime —— **与改造前一致** |
+| visibility 行为 | `tests/modules/import_tests/readonly_decorator.pycp`、`access_control.pycp`、`tests/classes_objects/stacked_decorator.pycp` 全 PASS |
+| File 行为 | `tests/native_args/ok_file.pycp` PASS；自建用例确认 `io.File == filesystem.File` 为 `True`（同一类型类对象） |
+| AOT 全静态（关键） | `--emit-cpp --compile-runtime=static --compile-modules=static` → 生成→构建→运行 `AOT IMPORT PASS`，**无 multiple definition** |
+| AOT 动态 | `--emit-cpp` → 生成→构建→运行 `AOT IMPORT PASS` |
+| AOT `from pycp import X`（§6） | 已完成并验证（书写风格变化，产物语义不变） |
+
+### 9.3 与 §3.1 的取舍对照
+§3.1 曾以「无跨 DLL 导出问题」为理由推荐方案 A（OBJECT 聚合）。实测表明方案 A 在**静态**侧会引入多重定义；「头文件内联」同时满足方案 A 的全部优点，并额外规避静态归档重复符号，故最终采用之。
+

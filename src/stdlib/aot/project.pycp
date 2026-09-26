@@ -14,7 +14,7 @@
 //   builtin_shared     : List[模块名]（空）
 // 输出：CMakeLists.txt 的完整文本内容。
 
-import pycp
+from pycp import List, Map
 import filesystem
 from util import S, sanitize_module_name, map_has, str_less
 
@@ -52,13 +52,13 @@ func module_target(name) {
 
 // 某链接目标（入口或模块）的「静态依赖闭包」：需要链入该目标的静态模块名集合。
 func static_closure(start, modules, deps) {
-	kinds = pycp.Map()
+	kinds = Map()
 	for mt in modules {
 		kinds[mt["name"]] = mt["kind"]
 	}
-	out = pycp.List()
-	visited = pycp.Map()
-	stack = pycp.List()
+	out = List()
+	visited = Map()
+	stack = List()
 	d = deps[start]
 	if (d != None) {
 		for x in d {
@@ -103,8 +103,8 @@ func emit_cmake(spec) {
 	aux = spec["aux_sources"]
 	bsl = spec["builtin_static_lib_paths"]
 
-	mod_static = pycp.List()
-	mod_shared = pycp.List()
+	mod_static = List()
+	mod_shared = List()
 	for mt in modules {
 		if (mt["kind"] == "shared") {
 			mod_shared.append(mt)
@@ -113,13 +113,13 @@ func emit_cmake(spec) {
 		}
 	}
 
-	deps = pycp.Map()
+	deps = Map()
 	for mt in modules {
 		deps[mt["name"]] = mt["deps"]
 	}
 	deps[exe] = entry_deps
 
-	closure = pycp.Map()
+	closure = Map()
 	closure[exe] = static_closure(exe, modules, deps)
 	for mt in modules {
 		closure[mt["name"]] = static_closure(mt["name"], modules, deps)
@@ -391,7 +391,7 @@ func emit_cmake(spec) {
 
 // 运行时 DLL 候选名（去重）：SDK 实际产出名优先，其后补两种编译器约定名。
 func dll_candidates(sdk) {
-	out = pycp.List()
+	out = List()
 	root_dll = sdk["root_dll"]
 	if (root_dll == "") {
 		// 无运行时 DLL（纯静态 SDK）

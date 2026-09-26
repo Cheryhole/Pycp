@@ -16,12 +16,12 @@
 //   strict_names : List[模块名]（必须静态；此处为内置静态扩展，通常为空）
 // 输出：Map { kinds: Map[名->kind], reasons: Map[名->原因串] }
 
-import pycp
+from pycp import List, Map
 from util import map_has
 
 func build_plan(modules_list, deps_map, entry, default_kind, overrides, strict_names) {
-	out_kinds = pycp.Map()
-	out_reasons = pycp.Map()
+	out_kinds = Map()
+	out_reasons = Map()
 
 	// 1) 初值：默认 / 覆盖 / 入口 / 内置静态。
 	//    reason 记录「导致该形态的 CLI 开关」，与旧 C++ AOT 的注释格式一致
@@ -60,7 +60,7 @@ func build_plan(modules_list, deps_map, entry, default_kind, overrides, strict_n
 			if (out_kinds[m] == "static") {
 				// 已静态，跳过
 			} else {
-				hosts = pycp.List()
+				hosts = List()
 				for a in modules_list {
 					if (a == m) {
 						// 自身不算宿主
@@ -87,7 +87,7 @@ func build_plan(modules_list, deps_map, entry, default_kind, overrides, strict_n
 		}
 	}
 
-	result = pycp.Map()
+	result = Map()
 	result["kinds"] = out_kinds
 	result["reasons"] = out_reasons
 	return result

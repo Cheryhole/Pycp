@@ -8,6 +8,9 @@
 # 由顶层 CMakeLists.txt 在 add_subdirectory(src) 之后引入。
 # =====================================================================
 
+# common 先于各模块引入：它提供被 ≥2 个模块复用的共性实现（仅头文件的
+# INTERFACE 目标 PycpCommon），各模块 target_link_libraries 取用其头搜索路径。
+add_subdirectory(common)
 add_subdirectory(io)
 add_subdirectory(pycp)
 add_subdirectory(classtools)

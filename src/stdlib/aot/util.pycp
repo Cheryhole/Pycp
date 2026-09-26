@@ -6,12 +6,12 @@
 // bytecode.char_code / code_char 与整除减法补齐所需的最小能力。
 // =============================================================
 
-import pycp
+from pycp import String
 import bytecode
 
 // 统一字符串化（pycp.String 的简写）。
 func S(x) {
-	return pycp.String(x)
+	return String(x)
 }
 
 // 拼接字符串片段列表。

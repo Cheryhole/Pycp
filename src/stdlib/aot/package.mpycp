@@ -16,7 +16,7 @@
 // 用 moduletools 声明本清单为程序入口（pycp -m aot 调用 main(argv)）。
 
 import io
-import pycp
+from pycp import List, Map
 import bytecode
 import filesystem
 import moduletools
@@ -128,7 +128,7 @@ func main(argv) {
 	// 0) 解析形态选项（宿主把 CLI 的 --compile-* / --show-imports 原样转发）。
 	runtime_link = "shared"
 	default_kind = "shared"
-	overrides = pycp.Map()
+	overrides = Map()
 	show_imports = False
 	argc = argv.length()
 	repeat argc as ai {
@@ -156,7 +156,7 @@ func main(argv) {
 	modules_map = res["modules"]
 	pkgs = res["package_names"]
 	if (pkgs == None) {
-		pkgs = pycp.List()
+		pkgs = List()
 	}
 
 	// 2) 形态决策所需的清单信息（受控 VM 执行顶层）。
@@ -180,7 +180,7 @@ func main(argv) {
 
 	// 2b) 合并「清单 __codegen__ 声明的形态」与「命令行 --compile-module 覆盖」
 	//     （后者优先），作为 build_plan 的显式形态表。
-	plan_overrides = pycp.Map()
+	plan_overrides = Map()
 	if (module_kinds != None) {
 		for mk in module_kinds.keys() {
 			plan_overrides[S(mk)] = module_kinds[mk]
@@ -204,9 +204,9 @@ func main(argv) {
 	//    静态者需要其 .a 绝对路径参与链接（避免 MinGW 选中同目录 DLL 导入库）。
 	builtin_mods = sdk_info["builtin_modules"]
 	lib_map = sdk_info["builtin_lib_map"]
-	builtin_static = pycp.List()
-	builtin_shared = pycp.List()
-	builtin_static_lib_paths = pycp.List()
+	builtin_static = List()
+	builtin_shared = List()
+	builtin_static_lib_paths = List()
 	for bm in builtin_mods {
 		bk = default_kind
 		if (map_has(plan_overrides, bm)) {
@@ -224,20 +224,20 @@ func main(argv) {
 
 	// 5) 模块直接依赖图（仅模块集内部依赖，用于形态决策与链接闭包）。
 	names = sorted_map_keys(modules_map)
-	deps_map = pycp.Map()
+	deps_map = Map()
 	for nm in names {
 		deps_map[nm] = resolve_deps(modules_map, modules_map[nm])
 	}
 
 	// 6) 形态决策：每个模块静态 / 动态。
-	plan_res = build_plan(names, deps_map, entry_name, default_kind, plan_overrides, pycp.List())
+	plan_res = build_plan(names, deps_map, entry_name, default_kind, plan_overrides, List())
 	kinds = plan_res["kinds"]
 	reasons = plan_res["reasons"]
 
 	// 7) 两份运行时防护：runtime=static 时不允许任何动态形态（静态运行时的
 	//    符号与动态模块各自链接的运行时互不共享，会产生两份运行时状态）。
 	if (runtime_link == "static") {
-		dyn_modules = pycp.List()
+		dyn_modules = List()
 		for nm in names {
 			if (kinds[nm] == "shared") {
 				dyn_modules.append(nm)
@@ -259,19 +259,19 @@ func main(argv) {
 	sources = emit_all(modules_map, entry_name, kinds, default_kind, program_entry, library_package_entry, pkgs)
 
 	// 8b) 静态内置扩展：追加链接拉入 / 注册桩源。
-	aux_sources = pycp.List()
+	aux_sources = List()
 	if (builtin_static.length() > 0) {
 		sources["__pycp_builtin_reg"] = emit_builtin_reg(builtin_static)
 		aux_sources.append("__pycp_builtin_reg.gen.cpp")
 	}
 
 	// 9) 组装 CMake 模块列表（入口编进 exe，不在此列）。
-	cmake_modules = pycp.List()
+	cmake_modules = List()
 	for nm in names {
 		if (nm == entry_name) {
 			// 入口编进 exe，不在此列
 		} else {
-			mf = pycp.Map()
+			mf = Map()
 			mf["name"] = nm
 			if (map_has(kinds, nm)) {
 				mf["kind"] = kinds[nm]
@@ -282,7 +282,7 @@ func main(argv) {
 			if (map_has(deps_map, nm)) {
 				mf["deps"] = deps_map[nm]
 			} else {
-				mf["deps"] = pycp.List()
+				mf["deps"] = List()
 			}
 			if (map_has(reasons, nm)) {
 				mf["reason"] = reasons[nm]
@@ -293,7 +293,7 @@ func main(argv) {
 		}
 	}
 
-	entry_deps = pycp.List()
+	entry_deps = List()
 	if (map_has(deps_map, entry_name)) {
 		entry_deps = deps_map[entry_name]
 	}
@@ -311,7 +311,7 @@ func main(argv) {
 			exe_name = executable_name
 		}
 	}
-	spec = pycp.Map()
+	spec = Map()
 	spec["sdk"] = sdk_info
 	spec["runtime_link"] = runtime_link
 	spec["name"] = exe_name

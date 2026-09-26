@@ -1,4 +1,5 @@
 #include "io.hpp"
+#include "file_common.hpp"       // common：File 类型类模块绑定样板
 #include "object/PycpFile.hpp"   // File 实现已上提至运行时
 #include "object/PycpModule.hpp"   // runtime 的 Module 完整定义
 #include "object/PycpClass.hpp"    // 类型对象注册（Module::set_type）
@@ -188,17 +189,9 @@ Module* make_io_module() {
 	mod->set_function("input", _builtin_input);
 
 	// File 类型类：io.File(path [, mode]) 打开文件并返回 File 对象。
-	// 注册为 BuiltinTypeClass（而非普通 Function），使 io.File 显示为
-	// "<class "File">" 且 io.File.__inspect__() 返回其方法名（write/read/
-	// readline/readlines/close/open），而非空结果。
-	// File 类型类：绑定运行时唯一的 File 类型类——与 filesystem.File 指向
-	// 同一对象（别名）。类型类由 FileTypeClass() 首次创建并登记 / root；
-	// set_object 会把它同时登记进运行时类型类注册表（typeof / __class__）。
-	{
-		Object* file_cls = FileTypeClass(); // Borrowed（运行时 root 持有）
-		Incref(file_cls);                   // set_object 接管所有权
-		mod->set_object("File", file_cls);
-	}
+	// 绑定运行时唯一的 File 类型类——与 filesystem.File 指向同一对象
+	// （别名）；该样板已上提到 stdlib/common/file_common.hpp。
+	BindFileType(mod);
 
 	return mod;
 }

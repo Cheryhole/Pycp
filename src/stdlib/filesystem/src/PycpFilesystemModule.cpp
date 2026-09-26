@@ -1,4 +1,5 @@
 #include "filesystem_stdlib.hpp"
+#include "file_common.hpp"            // common：File 类型类模块绑定样板
 
 #include "object/PycpModule.hpp"
 #include "object/PycpFunction.hpp"
@@ -209,12 +210,9 @@ Module* make_filesystem_module() {
 	mod->set_function("exe_dir", _builtin_exe_dir, /*with_keywords=*/true);
 	mod->set_function("stdlib_dir", _builtin_stdlib_dir, /*with_keywords=*/true);
 
-	// File：绑定运行时唯一的 File 类型类——与 io.File 指向同一对象（别名）。
-	{
-		Object* file_cls = FileTypeClass(); // Borrowed（运行时 root 持有）
-		Incref(file_cls);                   // set_object 接管所有权
-		mod->set_object("File", file_cls);
-	}
+	// File：绑定运行时唯一的 File 类型类——与 io.File 指向同一对象
+	// （别名）；样板已上提到 stdlib/common/file_common.hpp。
+	BindFileType(mod);
 
 	return mod;
 }

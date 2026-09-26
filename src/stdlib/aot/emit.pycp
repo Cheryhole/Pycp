@@ -11,7 +11,7 @@
 //   - 「链接拉入桩」仅对静态形态的同类模块生成（动态形态运行期 dlopen）。
 // =============================================================
 
-import pycp
+from pycp import Map
 import bytecode
 from util import S, join, cpp_string_literal, sanitize_identifier, sort_strings
 from util import map_has, sorted_map_keys, str_len, substr, find
@@ -983,7 +983,7 @@ func is_shared_dep(kinds, default_kind, dep) {
 
 // 全模块 -> Map[模块名 -> .cpp 源码]（按模块名升序，注册器编号可复现）。
 func emit_all(modules_map, entry_name, kinds, default_kind, program_entry, library_package_entry, package_names) {
-	result = pycp.Map()
+	result = Map()
 	names = sorted_map_keys(modules_map)
 	reg_id = 0
 	for name in names {

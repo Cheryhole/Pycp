@@ -31,6 +31,9 @@ target_include_directories(PycpBuiltin_classtools_obj PUBLIC
 )
 set_target_properties(PycpBuiltin_classtools_obj PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# 复用 stdlib/common 的头（visibility.hpp：private/public/readonly 实现）。
+target_link_libraries(PycpBuiltin_classtools_obj PUBLIC PycpCommon)
+
 # 动态库
 add_library(PycpBuiltin_classtools_shared SHARED $<TARGET_OBJECTS:PycpBuiltin_classtools_obj>)
 set_target_properties(PycpBuiltin_classtools_shared PROPERTIES
@@ -74,6 +77,7 @@ target_include_directories(PycpBuiltin_classtools_obj_static PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../..
 )
 target_compile_definitions(PycpBuiltin_classtools_obj_static PUBLIC PYCP_STATIC)
+target_link_libraries(PycpBuiltin_classtools_obj_static PUBLIC PycpCommon)
 
 add_library(PycpBuiltin_classtools_static STATIC $<TARGET_OBJECTS:PycpBuiltin_classtools_obj_static>)
 set_target_properties(PycpBuiltin_classtools_static PROPERTIES
