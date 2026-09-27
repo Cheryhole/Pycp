@@ -199,8 +199,8 @@ func main(argv) {
 		print_help()
 		return 0
 	}
-	// 参数不足（缺入口或输出目录）-> 打印用法并退出 2。
-	if (n < 3) {
+	// 参数不足（缺入口；输出目录可选，缺省取入口 basename）-> 打印用法并退出 2。
+	if (n < 2) {
 		print_help()
 		return 2
 	}
