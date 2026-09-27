@@ -330,7 +330,7 @@ set(PYCP_FRONTEND_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/loader/PycpModuleLoader.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/loader/PycpSourceBridge.cpp
     # 原生编译（AOT）已自举为 pycp 版（src/stdlib/aot 下的 .pycp 模块），
-    # 由 CLI --emit-cpp 经 execute_program 驱动；C++ 实现已于阶段 3 删除。
+    # 由 pycp -m aot 经 execute_program 驱动；C++ 实现已于阶段 3 删除。
     # Flex / Bison 生成物
     ${PYCP_GEN_PARSER_CPP}
     ${PYCP_GEN_LEXER_CPP}

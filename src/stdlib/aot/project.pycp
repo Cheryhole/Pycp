@@ -149,7 +149,7 @@ func emit_cmake(spec) {
 		txt = txt + "#   " + kk + "  " + mt["name"] + "  (" + reason + ")\n"
 	}
 	txt = txt + "# Builtin ext   : " + S(spec["builtin_static"].length()) + " static (linked in), " + S(spec["builtin_shared"].length()) + " shared (loaded from stdlib/)\n"
-	txt = txt + "# Do not edit by hand; re-run: pycp --emit-cpp <entry>.pycp\n\n"
+	txt = txt + "# Do not edit by hand; re-run: pycp -m aot <entry> <out>\n\n"
 
 	txt = txt + "cmake_minimum_required(VERSION 3.15)\n"
 	txt = txt + "project(" + exe + " LANGUAGES CXX)\n\n"

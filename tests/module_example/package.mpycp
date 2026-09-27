@@ -7,7 +7,7 @@
 
 角色：
 	moduletools.as_program() / as_library() 显式声明；未声明时——`-m` 直接
-	执行按「程序」、被 import 按「库」、AOT（--emit-cpp）默认按「库」。
+	执行按「程序」、被 import 按「库」、AOT（pycp -m aot）默认按「库」。
 	声明与用途冲突即报错（program 不可被 import；library 无 main）。
 */
 

@@ -208,13 +208,12 @@ foreach(_case IN LISTS _cases)
 		file(REMOVE_RECURSE "${_proj}")
 
 		if(_mode STREQUAL "static")
-			set(_emit_args --static)
+			set(_emit_args --compile-runtime=static)
 		else()
-			set(_emit_args --shared)
+			set(_emit_args --compile-runtime=shared)
 		endif()
 		execute_process(
-			COMMAND "${PYCP}" --emit-cpp ${_emit_args}
-			        "${_case_abs}" -o "${_proj}"
+			COMMAND "${PYCP}" -m aot "${_case_abs}" "${_proj}" ${_emit_args}
 			WORKING_DIRECTORY "${_case_dir}"
 			RESULT_VARIABLE _emit_rc
 			OUTPUT_VARIABLE _emit_out
@@ -223,7 +222,7 @@ foreach(_case IN LISTS _cases)
 		if(NOT _emit_rc EQUAL 0)
 			math(EXPR _skipped "${_skipped} + 1")
 			string(APPEND _failure_report
-				"[SKIP] ${_case_name} [${_mode}]: --emit-cpp 失败 (rc=${_emit_rc})\n"
+				"[SKIP] ${_case_name} [${_mode}]: -m aot 失败 (rc=${_emit_rc})\n"
 				"       ${_emit_err}\n")
 			continue()
 		endif()

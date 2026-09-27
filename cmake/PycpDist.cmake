@@ -10,7 +10,7 @@
 #   <DIST_DIR>/stdlib/<name>.so     标准库原生扩展（运行时硬约束：
 #                                   PycpNativeExt::GetStdlibDir() 固定查找
 #                                   可执行文件旁的 stdlib/ 目录）
-#   <LIB_DIR>/libPycpExt_<name>.a   标准库扩展的静态库（AOT --static 链接用）
+#   <LIB_DIR>/libPycpExt_<name>.a   标准库扩展的静态库（AOT --compile-runtime=static 链接用）
 #   <LIB_DIR>/libPycpRuntime.a      运行时静态库（AOT 生成代码链接用）
 #   <LIB_DIR>/libPycpRuntime.so     运行时动态库（+ Windows 导入库）
 #   <INCLUDE_DIR>/*.h / *.hpp       AOT 与原生扩展所需的全部后端头文件
@@ -169,7 +169,7 @@ endforeach()
 # =====================================================================
 # 2b. 标准库扩展的静态库（libPycpExt_<name>.a）-> LIB_DIR
 # ---------------------------------------------------------------------
-# 供 AOT 的 --static 模式链接进产物 exe：扩展与主程序共享同一份运行时
+# 供 AOT 的 --compile-runtime=static 模式链接进产物 exe：扩展与主程序共享同一份运行时
 # 状态，不需要部署 stdlib/ 目录。
 # =====================================================================
 pycp_dist_split(_stdlib_static_files "${STDLIB_STATIC_FILES}")
@@ -275,12 +275,12 @@ if(WRITE_BUILD_INFO)
 		"Layout:\n"
 		"  pycp                Pycp executable (looks up <dir>/stdlib for native modules)\n"
 		"  stdlib/             Standard library native extensions (io / Pycp / classtools)\n"
-		"  lib/libPycpExt_*.a  Static native extensions (for AOT --static builds)\n"
+		"  lib/libPycpExt_*.a  Static native extensions (for AOT --compile-runtime=static builds)\n"
 		"  lib/libPycpRuntime* Runtime library (shared + static) for AOT-generated C++\n"
 		"  include/*.h *.hpp   Backend headers required to build AOT / native extensions\n"
 		"\n"
 		"AOT build (shared, default): -I <dir>/include -L <dir>/lib -lPycpRuntime\n"
-		"AOT build (static)         : pycp --emit-cpp --static app.pycp -o <out>\n"
+		"AOT build (static)         : pycp -m aot app.pycp <out> --compile-runtime=static\n"
 	)
 	math(EXPR _count "${PYCP_DIST_COUNT} + 1")
 	set(PYCP_DIST_COUNT ${_count})

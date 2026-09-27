@@ -151,13 +151,8 @@ pycp [options] <input_file>
 | `-c, --compile` | 将 `.pycp` 编译为 `.cpycp` 字节码（不执行） |
 | `-b, --bytecode` | 生成 `.cpycp` 字节码（`-c` 的别名） |
 | `-i, --interpret` | 解释执行（默认行为；接受 `.pycp` 或 `.cpycp`） |
-| `-o, --output <f>` | 指定输出路径：配合 `-c/-b` 为 `.cpycp` 文件路径；配合 `--emit-cpp` 为**项目目录**（默认 `./<入口名>/`）；配合 `-p` 为 `.pp.pycp` 文件路径 |
-| `--emit-cpp` | 将 `.pycp` 翻译为可直接编译的 **CMake 项目目录**（AOT 指令翻译，输出 `.gen.cpp` + `CMakeLists.txt`） |
-| `--compile-runtime=shared\|static` | 配合 `--emit-cpp`：运行时库 `libPycpRuntime` 的链接方式（默认 `shared`）。`static` 需 SDK 静态产物，且禁止存在任何动态模块（会生成两份运行时） |
-| `--compile-modules=shared\|static` | 配合 `--emit-cpp`：转译 `.pycp` 模块的**全局形态**（默认 `shared`：每个模块编成一个动态库运行期加载；`static`：编进主程序） |
-| `--compile-module:<name>=shared\|static` | 配合 `--emit-cpp`：**按模块覆盖**（内置扩展 io/pycp/classtools，或任一转译依赖模块）；覆盖与全局默认相同时为空操作（会给出提示） |
-| `--show-imports` | 配合 `--emit-cpp`：打印编译期 import 解析清单（translated / unresolved）**与逐模块形态决策表**（最终形态 + 决策来源） |
-| `--shared` / `--static` | `--compile-runtime=shared` / `static` 的**旧别名**（deprecated；不能与 `--compile-*` 参数混用） |
+| `-o, --output <f>` | 指定输出路径：配合 `-c/-b` 为 `.cpycp` 文件路径；配合 `-p` 为 `.pp.pycp` 文件路径 |
+| `-m, --module <name> ...` | 把 `<name>` 当作模块文件夹运行；`-m` **之后的参数原样交给该包的 `main(argv)`**，不再被 pycp 自身解析（如 `-o` / `--compile-*`）。AOT（`.pycp` → 可编译 C++ 项目）即经此进入：`pycp -m aot <entry.pycp \| module folder> [out_dir] [--compile-* ...]`（用法见 `pycp -m aot --help`） |
 | `-d, --dump` | 查看字节码内容（常量池 / 符号表 / 代码对象 / 指令与行号），接受 `.pycp` 或 `.cpycp` |
 
 ### 使用示例
@@ -238,9 +233,9 @@ pycp [options] <input_file>
 
 ```bash
 # 将 .pycp 及其全部 import 依赖翻译为一个 CMake 项目目录（默认 ./hello/）
-./build/pycp --emit-cpp hello.pycp
-# 或指定输出目录：-o <dir> 必须是目录
-./build/pycp --emit-cpp hello.pycp -o ./my_project
+./build/pycp -m aot hello.pycp
+# 或指定输出目录（位置参数，缺省 ./<入口名>/）
+./build/pycp -m aot hello.pycp ./my_project
 
 # 生成目录内含：
 #   __pycp_main.gen.cpp  （入口，含 main）
@@ -274,28 +269,28 @@ ABI 调用序列（常量内联为 `g_c[]`，控制流翻译为 `goto`，函数�
 
 **三档编译形态：`--compile-runtime` / `--compile-modules` / `--compile-module:<name>`**
 
-`--emit-cpp` 把「运行时库」「内置扩展（io/pycp/classtools）」「转译的 `.pycp` 依赖模块」
+`pycp -m aot` 把「运行时库」「内置扩展（io/pycp/classtools）」「转译的 `.pycp` 依赖模块」
 三类对象的链接方式拆开控制：
 
 ```bash
 # 默认：依赖模块各编成一个模块 DLL（kShared，运行期加载），运行时与内置扩展动态
-./build/pycp --emit-cpp hello.pycp
+./build/pycp -m aot hello.pycp
 
 # 全静态自包含：运行时 + 内置扩展 + 依赖模块全部静态链入，产物为单个 exe
 # （runtime 为 static 时不允许任何动态形态，故必须同时给出 --compile-modules=static）
-./build/pycp --emit-cpp --compile-runtime=static --compile-modules=static hello.pycp
+./build/pycp -m aot hello.pycp --compile-runtime=static --compile-modules=static
 
 # 依赖模块编进主程序（与历史行为一致）
-./build/pycp --emit-cpp --compile-modules=static hello.pycp
+./build/pycp -m aot hello.pycp --compile-modules=static
 
 # 按模块覆盖（内置扩展或某个依赖模块）：只有 b_dep 编进主程序，其余为 DLL
-./build/pycp --emit-cpp --compile-module:b_dep=static hello.pycp
+./build/pycp -m aot hello.pycp --compile-module:b_dep=static
 
 # 反过来的「只让某一个模块动态」：把全局默认设为 static 再覆盖该模块
-./build/pycp --emit-cpp --compile-modules=static --compile-module:b_dep=shared hello.pycp
+./build/pycp -m aot hello.pycp --compile-modules=static --compile-module:b_dep=shared
 
 # 查看逐模块的最终形态与决策来源（含被强制提升的模块）
-./build/pycp --emit-cpp --show-imports --compile-module:b_dep=static hello.pycp
+./build/pycp -m aot hello.pycp --show-imports --compile-module:b_dep=static
 ```
 
 形态决策规则：
@@ -318,9 +313,6 @@ ABI 调用序列（常量内联为 `g_c[]`，控制流翻译为 `goto`，函数�
   `[overrides --compile-module:<name>=static]` 标记，可用 `--show-imports` 查看。
 - **`--compile-runtime=static` 与任何动态模块组合都直接报错**——运行时若静态链接而
   又有动态库存在，进程内会出现两份运行时状态（GC 池 / 小整数池 / 句柄缓存）。
-- 旧 `--shared` / `--static` 保留为 `--compile-runtime=` 的兼容别名（deprecated）；
-  二者不能与 `--compile-*` 参数混用。
-
 | 维度 | `--compile-runtime=shared`（默认） | `--compile-runtime=static` |
 |------|------------------------------------|----------------------------|
 | 运行时 | 动态链接 `PycpRuntime`（DLL/so） | 静态链接 `libPycpRuntime.a` |
@@ -522,7 +514,7 @@ readonly(CONST)        # 等价于 @readonly CONST = 3（不可重赋值）
   同名动态库**——"所见即所得"，改源码即生效；也因此允许在 `stdlib/` 下放置与内置
   扩展同名的 `.pycp` 源码来覆盖内置扩展（与 Python 的"扩展优先"相反，是 Pycp 的
   刻意选择）。
-- **第 1 层主要针对编译产物**。AOT（`--emit-cpp`）生成的每个模块都导出
+- **第 1 层主要针对编译产物**。AOT（`pycp -m aot`）生成的每个模块都导出
   `PycpModule_<模块名>`（或经静态注册表登记），因此「编成静态库链接进主程序」、
   「编成动态库运行期加载」都能正常 `import`。该层由两级机制互为兜底：全局符号查找
   （`dlsym`）与静态初始化注册表。
@@ -575,7 +567,7 @@ from module_example import objA       # 子模块同理
 |----------|--------|----------------|----------------|
 | `pycp -m <pkg>`（解释执行） | 程序 | ❌ RuntimeError | 程序 |
 | `import <pkg>` | 库 | 库 | ❌ ImportError |
-| `--emit-cpp -m <pkg>`（AOT） | 库（打印 note） | 库 | 程序（生成可执行文件） |
+| `pycp -m aot <pkg>`（AOT） | 库（打印 note） | 库 | 程序（生成可执行文件） |
 
 **程序入口**为清单里的 `func main(argv)`：`argv` 同 `pycp.argv`，返回值经 `__integer__` 宽松转换后作为**进程退出码**（不写 `return` 即 0）。
 
@@ -592,7 +584,7 @@ from module_example import objA       # 子模块同理
 | `moduletools.role()` / `is_program()` / `is_library()` | 查询角色 |
 | `moduletools.Project()` | AOT 配置对象（见下） |
 
-**AOT 形态声明**：清单里的 `func __codegen__()` 在 `--emit-cpp` 期被求值一次（用独立 VM 执行清单顶层；清单既无 `__codegen__` 也未声明角色时完全不执行），返回 `moduletools.Project()`：
+**AOT 形态声明**：清单里的 `func __codegen__()` 在 `pycp -m aot` 期被求值一次（用独立 VM 执行清单顶层；清单既无 `__codegen__` 也未声明角色时完全不执行），返回 `moduletools.Project()`：
 
 ```pycp
 func __codegen__() {
@@ -667,7 +659,7 @@ build/dist/
 ├── lib/                     运行时库
 │   ├── libPycpRuntime.so    动态库（默认构建，pycp 动态链接它）
 │   ├── libPycpRuntime.a     静态库（AOT 生成代码静态链接用）
-│   ├── libPycpExt_io.a      原生扩展静态库（`--emit-cpp --static` 用）
+│   ├── libPycpExt_io.a      原生扩展静态库（`pycp -m aot ... --compile-runtime=static` 用）
 │   ├── libPycpExt_pycp.a
 │   ├── libPycpExt_classtools.a
 │                            Windows 下另有运行时 DLL 与导入库（MinGW：
@@ -908,8 +900,8 @@ cmake --build build -j
   （由内向外串联，`private` / `readonly` 等标志自然累加）。字节码 Minor 版本
   1 → 2（Minor 向后兼容：`minor < 2` 仍按旧单槽位格式读取）。
 
-- **AOT 支持 `--static` / `--shared` 两种链接模式 + 一致性回归测试**：
-  `--emit-cpp` 默认 `--shared`（动态链接，保持原有行为零改动）；`--static`
+- **AOT 支持 `--compile-runtime=static` / `--compile-runtime=shared` 两种链接模式 + 一致性回归测试**：
+  `pycp -m aot` 默认 `--compile-runtime=shared`（动态链接，保持原有行为零改动）；`--compile-runtime=static`
   改为静态链接运行时与三个原生扩展（io / Pycp / classtools），产物为单个
   自包含可执行文件。static 模式下生成器对 exe 发射 `target_compile_definitions
   PRIVATE PYCP_STATIC`（Windows 避免 `__imp__...` undefined reference），用
@@ -959,11 +951,11 @@ cmake --build build -j
   `InstanceObject`→`Instance`、`ModuleObject`→`Module`、`FileObject`→`File`，ABI 工厂/
   类型操作函数统一改为对应类型的静态方法（`Integer::FromLong`、`String::FromCString`、
   `List::New` 等），旧名与旧自由函数已完全移除。
-- **AOT（`--emit-cpp`）指令翻译补齐**：新增 `LOAD_ATTR`/`STORE_ATTR`/`BUILD_LIST`/
+- **AOT（`pycp -m aot`）指令翻译补齐**：新增 `LOAD_ATTR`/`STORE_ATTR`/`BUILD_LIST`/
   `GET_ITEM`/`SET_ITEM`/`MAKE_CLASS` 翻译，闭包通过 `BytecodeFunction` native 模式落地，
   内建库导入经 `LoadNativeModule` 缓存，生成的 C++ 可经 g++ 真正编译运行。
-- **`--emit-cpp` 升级为「生成可直接编译的 CMake 项目」+ AOT 模块化重构**：
-  `--emit-cpp hello.pycp` 现输出一个项目目录（默认 `./hello/`，`-o <dir>` 指定），
+- **AOT 升级为「生成可直接编译的 CMake 项目」+ AOT 模块化重构**（`--emit-cpp` 入口已收敛为 `pycp -m aot`）：
+  `pycp -m aot hello.pycp` 现输出一个项目目录（默认 `./hello/`，位置参数指定输出目录），
   内含入口 `__pycp_main.gen.cpp`、各依赖 `<name>.gen.cpp` 与一份开箱即用的
   `CMakeLists.txt`。该 CMake 项目动态链接 `PycpRuntime`、Linux 加 `-rdynamic`、
   设置 `BUILD_RPATH`/`INSTALL_RPATH`、构建期（`POST_BUILD`）复制 `stdlib/` 与 `lib/`
@@ -1030,7 +1022,7 @@ cmake --build build -j
 
 ## 免责声明
 
-本项目仍处于开发阶段，`--emit-cpp`（AOT）已实现真正的字节码指令翻译（输出依赖 PycpABI 的 `.cpp` 源文件），覆盖函数调用、类定义、属性访问、列表与下标、闭包（native 模式）等完整指令集。
+本项目仍处于开发阶段，`pycp -m aot`（AOT）已实现真正的字节码指令翻译（输出依赖 PycpABI 的 `.cpp` 源文件），覆盖函数调用、类定义、属性访问、列表与下标、闭包（native 模式）等完整指令集。
 
 已支持的面向对象特性（解释执行）：
 

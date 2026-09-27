@@ -2,7 +2,7 @@
 # =====================================================================
 # AOT 导入测试
 # ---------------------------------------------------------------------
-# 验证 --emit-cpp 生成的多个 .gen.cpp 在两种链接方式下都能正常 import：
+# 验证 `pycp -m aot` 生成的多个 .gen.cpp 在两种链接方式下都能正常 import：
 #   1) 所有 .gen.cpp 一起直接链接
 #   2) 依赖模块先编为静态库（.a），再与入口链接（不加 --whole-archive）
 #
@@ -39,8 +39,8 @@ cd "$WORK" || exit 2
 # 显式 --compile-modules=static：模块默认形态已改为 shared，而下面的场景 1/2
 # 要把 b_dep.gen.o 编成静态库（或直接一起）链接进主程序，依赖入口 .gen.cpp 里
 # 的「链接拉入桩」——该桩只对 kStatic 依赖生成（动态依赖的符号在独立 DLL 中）。
-"$PYCP" --emit-cpp --compile-modules=static "$ENTRY" >/dev/null || {
-	echo "ERROR: --emit-cpp 失败" >&2
+"$PYCP" -m aot "$ENTRY" a_entry --compile-modules=static >/dev/null || {
+	echo "ERROR: -m aot 失败" >&2
 	exit 2
 }
 
@@ -128,7 +128,7 @@ fi
 # --- 新增场景 5：-o 自定义目录应把全部文件（含 CMakeLists.txt）落到该目录 ---
 CUSTOM="$WORK/custom_out"
 rm -rf "$CUSTOM"
-"$PYCP" --emit-cpp --compile-modules=static "$ENTRY" -o "$CUSTOM" >/dev/null 2>&1
+"$PYCP" -m aot "$ENTRY" "$CUSTOM" --compile-modules=static >/dev/null 2>&1
 if [[ -f "$CUSTOM/CMakeLists.txt" && -f "$CUSTOM/__pycp_main.gen.cpp" && -f "$CUSTOM/b_dep.gen.cpp" ]]; then
 	echo "[PASS] -o 自定义目录包含 CMakeLists.txt 与全部 .gen.cpp"
 	pass=$((pass + 1))
@@ -143,10 +143,10 @@ emit_and_build() {
 	local out rc
 	rm -rf "$WORK/form"
 	# shellcheck disable=SC2086
-	out="$("$PYCP" --emit-cpp "$ENTRY" $opts -o "$WORK/form" 2>&1)"
+	out="$("$PYCP" -m aot "$ENTRY" "$WORK/form" $opts 2>&1)"
 	rc=$?
 	if [[ $rc -ne 0 ]]; then
-		echo "[FAIL] $label（--emit-cpp 失败）"
+		echo "[FAIL] $label（-m aot 失败）"
 		echo "$out"
 		fail=$((fail + 1))
 		return 1
@@ -180,8 +180,8 @@ emit_and_build "依赖模块编为动态库（--compile-modules=shared）" "a_en
 
 # --- 场景 8：runtime=static 与动态模块冲突必须报错（禁止两份运行时）---
 rm -rf "$WORK/form_bad"
-out="$("$PYCP" --emit-cpp "$ENTRY" --compile-runtime=static \
-	--compile-modules=shared -o "$WORK/form_bad" 2>&1)"
+out="$("$PYCP" -m aot "$ENTRY" "$WORK/form_bad" \
+	--compile-runtime=static --compile-modules=shared 2>&1)"
 rc=$?
 if [[ $rc -ne 0 && "$out" == *"statically linked"* ]]; then
 	echo "[PASS] runtime=static + 动态模块组合被拒（两份运行时防护）"
@@ -207,8 +207,8 @@ emit_and_build "内置扩展静态链入（--compile-module:io=static）" "a_ent
 
 # --- 场景 10：每个模块各自一个 CMake target（静态模块为独立归档）---
 rm -rf "$WORK/targets_out"
-if "$PYCP" --emit-cpp --compile-module:b_dep=static "$ENTRY" \
-		-o "$WORK/targets_out" >/dev/null 2>&1 &&
+if "$PYCP" -m aot "$ENTRY" "$WORK/targets_out" \
+		--compile-module:b_dep=static >/dev/null 2>&1 &&
    grep -q "add_library(pycp_mod_b_dep STATIC" "$WORK/targets_out/CMakeLists.txt"; then
 	echo "[PASS] 逐模块独立 CMake target（add_library(pycp_mod_b_dep STATIC)）"
 	pass=$((pass + 1))
@@ -219,8 +219,8 @@ fi
 
 # --- 场景 11：--show-imports 打印逐模块形态决策表 ---
 rm -rf "$WORK/plan_out"
-out="$("$PYCP" --emit-cpp --show-imports --compile-module:b_dep=static \
-	"$ENTRY" -o "$WORK/plan_out" 2>&1)"
+out="$("$PYCP" -m aot "$ENTRY" "$WORK/plan_out" \
+	--show-imports --compile-module:b_dep=static 2>&1)"
 if [[ "$out" == *"Module kinds (1):"* && "$out" == *"static  b_dep"* ]]; then
 	echo "[PASS] --show-imports 输出逐模块形态决策表"
 	pass=$((pass + 1))

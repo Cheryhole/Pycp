@@ -9,7 +9,7 @@
 #      包属性钩子（__get_attribute__ / __string__）生效且不递归。
 #   3) 用途错误：program 被 import → ImportError；-m 一个库包 → RuntimeError；
 #      入口 __name__ 可写（清单可用 __name__ = "..." 覆盖为模块名）。
-#   4) AOT：--emit-cpp -m <pkg> 生成可执行项目（exe 名取自
+#   4) AOT：pycp -m aot <pkg> 生成可执行项目（exe 名取自
 #      set_executable_name），构建运行与解释态输出/退出码一致。
 #   5) AOT 用途与形态错误：库角色写 set_executable_name → 中止；
 #      __codegen__ 指定的 static 被 ≥2 链接目标引用 → 报错中止；
@@ -73,7 +73,7 @@ check() {
 	check_in "$name" "$expect_rc" "$expect_msgs" "$SCRIPT_DIR" "$@"
 }
 
-# AOT 转译用例：只跑 --emit-cpp（不构建），校验退出码与输出片段。
+# AOT 转译用例：只跑 pycp -m aot（不构建），校验退出码与输出片段。
 # 直接转发给 check（调用方已带 '--' 分隔符）。
 check_emit() {
 	check "$@"
@@ -106,7 +106,7 @@ if [[ -d "$DIST/include" && -d "$DIST/lib" ]]; then
 	mkdir -p "$WORK"
 	check_emit "AOT 转译：角色为 program、子模块按点号全名" 0 \
 		"role=program|translated  prog_pkg.obj_a" \
-		-- "$PYCP" --emit-cpp -m prog_pkg -o "$WORK/prog_aot" --show-imports
+		-- "$PYCP" -m aot prog_pkg "$WORK/prog_aot" --show-imports
 	if [[ -f "$WORK/prog_aot/CMakeLists.txt" ]]; then
 		if grep -q "add_executable(prog_app" "$WORK/prog_aot/CMakeLists.txt"; then
 			echo "[PASS] 生成的 CMakeLists 使用脚本指定的可执行名 prog_app"
@@ -140,17 +140,17 @@ if [[ -d "$DIST/include" && -d "$DIST/lib" ]]; then
 	echo "== 5) AOT：用途与形态错误 =="
 	check_emit "库角色写 set_executable_name → 转译中止" 1 \
 		"translating as a library package" \
-		-- "$PYCP" --emit-cpp -m aot_badgen_pkg -o "$WORK/badgen_aot"
+		-- "$PYCP" -m aot aot_badgen_pkg "$WORK/badgen_aot"
 	check_emit "__codegen__ 指定的 static 被 ≥2 链接目标引用 → 转译中止" 1 \
 		"declared static by __codegen__" \
-		-- "$PYCP" --emit-cpp -m aot_conf_pkg -o "$WORK/conf_aot"
+		-- "$PYCP" -m aot aot_conf_pkg "$WORK/conf_aot"
 	check_emit "未声明角色 → 按库生成并打印 note" 0 \
 		"no role declared" \
-		-- "$PYCP" --emit-cpp -m lib_pkg -o "$WORK/lib_aot"
+		-- "$PYCP" -m aot lib_pkg "$WORK/lib_aot"
 
 	echo "== 6) AOT：包输出到 <pkg>/ 子目录并一起编译 =="
 	check_emit "AOT 转译导入了包的脚本" 0 "" \
-		-- "$PYCP" --emit-cpp use_lib.pycp -o "$WORK/pkg_aot"
+		-- "$PYCP" -m aot use_lib.pycp "$WORK/pkg_aot"
 	if [[ -f "$WORK/pkg_aot/lib_pkg/pycp.gen.cpp" &&
 	      -f "$WORK/pkg_aot/lib_pkg/util.gen.cpp" ]]; then
 		echo "[PASS] 包文件集中生成到 lib_pkg/（pycp.gen.cpp + util.gen.cpp）"
@@ -259,10 +259,10 @@ EOF
 			"LOCAL STDPKG" \
 			"$WORK" -- "$WORK/dist/pycp" -m stdpkg
 
-		check_in "--emit-cpp 也可从 stdlib 找到包并转译" 0 \
+		check_in "-m aot 也可从 stdlib 找到包并转译" 0 \
 			"Package: stdpkg|role=program" \
-			"$WORK" -- "$WORK/dist/pycp" --emit-cpp -m stdpkg \
-			-o "$WORK/stdpkg_aot" --show-imports
+			"$WORK" -- "$WORK/dist/pycp" -m aot stdpkg \
+			"$WORK/stdpkg_aot" --show-imports
 	else
 		echo "[SKIP] 缺少 $DIST（先执行 cmake --build build --target pycp-dist）"
 	fi

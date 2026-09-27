@@ -81,7 +81,7 @@ fi
 # （bash 的 /mnt/d/... 会被映射），相对路径可正确解析；绝对 POSIX 路径
 # （/mnt/d/...）它们无法识别。故以下统一 cd 到仓库根目录用相对路径操作。
 cd "$REPO_ROOT" || exit 2
-if "$PYCP" --emit-cpp tests/argv/argv_demo.pycp -o build/argv_work/aot >/dev/null 2>&1; then
+if "$PYCP" -m aot tests/argv/argv_demo.pycp build/argv_work/aot >/dev/null 2>&1; then
 	cp -r "$DIST/stdlib" build/argv_work/stdlib
 	CXXFLAGS="-std=c++17 -I build/dist/include"
 	# 与项目 aot_import/run.sh 一致的链接方式（共享运行时 + rpath）。
@@ -111,7 +111,7 @@ if "$PYCP" --emit-cpp tests/argv/argv_demo.pycp -o build/argv_work/aot >/dev/nul
 		fail=$((fail + 1))
 	fi
 else
-	echo "[FAIL] --emit-cpp 失败（argv_demo.pycp）"
+	echo "[FAIL] -m aot 失败（argv_demo.pycp）"
 	fail=$((fail + 1))
 fi
 

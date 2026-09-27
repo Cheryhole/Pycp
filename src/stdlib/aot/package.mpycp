@@ -1,7 +1,7 @@
 // aot/package.mpycp —— AOT 编译器的 pycp 实现（当前无 C++ AOT，纯 pycp 自举）。
 //
 // 用法：pycp -m aot <入口 .pycp | 模块文件夹> <输出目录> [形态选项]
-//   形态选项（与 CLI --emit-cpp 同名，由宿主转发）：
+//   形态选项（由 aot 模块直接解析，与 pycp -m aot 的调用参数同名）：
 //     --compile-runtime=shared|static   运行时库链接方式（默认 shared）
 //     --compile-modules=shared|static   依赖模块默认形态（默认 shared）
 //     --compile-module:<name>=shared|static   按模块覆盖形态
@@ -121,15 +121,102 @@ func write_all(out_dir, entry_name, sources, cmake_txt, pkgs) {
 	cf.close()
 }
 
+// 入口 basename：去掉目录前缀与扩展名，用作缺省输出目录（./<入口名>/）。
+func entry_basename(p) {
+	last_slash = -1
+	idx = 0
+	for ch in p {
+		if (ch == "/") {
+			last_slash = idx
+		} elif (ch == "\\") {
+			last_slash = idx
+		}
+		idx = idx + 1
+	}
+	if (last_slash < 0) {
+		name = p
+	} else {
+		name = substr(p, last_slash + 1, str_len(p))
+	}
+	last_dot = -1
+	idx = 0
+	for ch in name {
+		if (ch == ".") {
+			last_dot = idx
+		}
+		idx = idx + 1
+	}
+	if (last_dot <= 0) {
+		return name
+	}
+	return substr(name, 0, last_dot)
+}
+
+func print_help() {
+	io.print("usage: pycp -m aot <entry.pycp | module folder> [out_dir] [options]")
+	io.print("")
+	io.print("Translate a .pycp source (or a module folder / package) into a")
+	io.print("standalone, compilable C++ project (CMake). The generated <out_dir>/")
+	io.print("contains __pycp_main.gen.cpp (with main()), one <name>.gen.cpp per")
+	io.print("imported module, and a CMakeLists.txt.")
+	io.print("")
+	io.print("positional arguments:")
+	io.print("  entry      path to a .pycp file, or a module folder (directory")
+	io.print("             containing package.mpycp), or a package name resolved")
+	io.print("             from the import path.")
+	io.print("  out_dir    output directory (default: ./<entry basename>/).")
+	io.print("")
+	io.print("options:")
+	io.print("  --compile-runtime=shared|static       link mode of libPycpRuntime")
+	io.print("                                        (default shared).")
+	io.print("  --compile-modules=shared|static       global kind of translated modules")
+	io.print("                                        (default shared).")
+	io.print("  --compile-module:<name>=shared|static per-module override.")
+	io.print("  --show-imports                        print the import resolution")
+	io.print("                                        manifest and per-module link-kind table.")
+	io.print("  -h, --help                            show this help and exit.")
+	io.print("")
+	io.print("examples:")
+	io.print("  pycp -m aot hello.pycp")
+	io.print("  pycp -m aot hello.pycp hello_build --compile-modules=static")
+	io.print("  pycp -m aot my_pkg                   # module folder as a package")
+}
+
 func main(argv) {
-	if (argv.length() < 3) {
-		io.print("usage: pycp -m aot <entry.pycp | module folder> <out_dir> [--compile-* ...]")
+	n = argv.length()
+	// --help / -h：打印用法并退出 0（出现在任意位置）。
+	help = False
+	repeat n as hi {
+		a = argv[hi]
+		if (a == "--help") {
+			help = True
+		}
+		if (a == "-h") {
+			help = True
+		}
+	}
+	if (help == True) {
+		print_help()
+		return 0
+	}
+	// 参数不足（缺入口或输出目录）-> 打印用法并退出 2。
+	if (n < 3) {
+		print_help()
 		return 2
 	}
 	entry_path = argv[1]
-	out_dir = argv[2]
+	// 输出目录可选：缺省取入口 basename（对齐早期默认 ./<入口名>/）。
+	out_dir = ""
+	if (n >= 3) {
+		if (starts_with(argv[2], "-") == False) {
+			out_dir = argv[2]
+		}
+	}
+	if (out_dir == "") {
+		out_dir = entry_basename(entry_path)
+	}
 
-	// 0) 解析形态选项（宿主把 CLI 的 --compile-* / --show-imports 原样转发）。
+	// 0) 解析形态选项（由 `pycp -m aot` 之后的 argv 原样传入 main(argv)）。
 	runtime_link = "shared"
 	default_kind = "shared"
 	overrides = Map()

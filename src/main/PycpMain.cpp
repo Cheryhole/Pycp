@@ -12,19 +12,12 @@
 //   -b, --bytecode    生成 .cpycp 字节码文件（等价于 -c）
 //   -i, --interpret   解释执行（默认行为；可直接执行 .pycp 或 .cpycp）
 //   -o, --output <f>  指定输出文件路径（与 -c/-b 配合）
-//       --emit-cpp    将 .pycp 翻译为独立 C++ 源文件（AOT 预留接口）
+//   -m, --module      把位置参数当作【模块文件夹】执行（详见下方）
 //   -d, --dump        查看字节码内容（常量池/符号表/代码对象/指令及行号）
 //
-// 仅与 --emit-cpp 搭配的链接控制：
-//   --compile-runtime=shared|static    运行时库 libPycpRuntime 的链接方式
-//   --compile-modules=shared|static    转译 .pycp 模块的全局形态（默认 shared：
-//                                      编成动态库加载；static 表示编进主程序）
-//   --compile-module:<name>=shared|static
-//                                      按模块覆盖（内置扩展 io/Pycp/classtools
-//                                      或任一转译依赖模块）
-//   --shared / --static                旧别名，等价 --compile-runtime=shared/static
-//   --show-imports                     打印编译期 import 解析清单（translated /
-//                                      unresolved）与逐模块链接形态决策表
+// AOT（.pycp 翻译为可编译 C++ 项目）由标准库模块 aot 承担：
+//   pycp -m aot <entry.pycp | module folder> [out_dir] [--compile-* ...]
+//   -m 之后的参数原样交给该包的 main(argv)；用法见 `pycp -m aot --help`。
 //
 // 行为：
 //   * 默认（无 -c/-b）执行"解释运行"：若输入为 .pycp 则 解析->编译->执行；
@@ -77,42 +70,21 @@ extern int Pycp_parse_error_count;
 
 namespace {
 
-// --emit-cpp 的模块/运行时形态（原 AotModuleKind / LinkMode；C++ AOT
-// 自举为 pycp 版 aot 模块后，这里仅保留命令行解析用的本地枚举副本）。
-enum class AotModuleKind { kShared, kStatic };
-enum class AotLinkMode { kShared, kStatic };
-
 struct Options {
 	std::string input_file;
 	// 脚本参数（入口脚本之后的位置参数），传给 pycp.argv，不含 pycp 可执行
-	// 文件本身。仅解释执行路径消费；--emit-cpp/--compile 等无需参数。
+	// 文件本身。-m 之后的参数也会原样落入这里，转交包的 main(argv)。
+
 	std::vector<std::string> script_args;
 	std::string output_file;
 	bool compile = false;    // -c / -b
 	bool interpret = true;   // -i（默认解释执行）
-	bool emit_cpp = false;   // --emit-cpp
 	bool dump = false;       // -d / --dump
 	bool preprocess = false; // -p / --preprocess
 	bool show_help = false;
 	// -m / --module：把位置参数当作【模块文件夹】（目录 + package.mpycp 清单）
-	// 执行。默认角色为「程序」（解释执行语义），AOT 下默认仍为「库」。
+	// 执行。默认角色为「程序」（解释执行语义）。
 	bool module_mode = false;
-
-	// ---- --emit-cpp 的模块形态与运行时形态 ----
-	// 依赖模块（.pycp 转译产物）的全局默认形态：默认 kShared（编成模块
-	// DLL，运行期加载）。要编进主程序请用 --compile-modules=static。
-	AotModuleKind compile_modules = AotModuleKind::kShared;
-	// 运行时库（libPycpRuntime）形态：默认 kShared。
-	AotLinkMode compile_runtime = AotLinkMode::kShared;
-	// 是否显式指定过 --compile-modules / --compile-runtime（用于冲突检测）。
-	bool compile_modules_set = false;
-	bool compile_runtime_set = false;
-	// 旧兼容别名 --shared / --static 是否被使用（与 --compile-* 混用报错）。
-	bool legacy_link_set = false;
-	// --compile-module:<name>=shared|static 的按模块覆盖。
-	std::map<std::string, AotModuleKind> module_overrides;
-	// --show-imports：转译期打印 import 解析清单后继续。
-	bool show_imports = false;
 };
 
 void print_help(const char* prog) {
@@ -124,33 +96,14 @@ void print_help(const char* prog) {
 		<< "  -m, --module      Treat <input_file> as a module folder (a directory\n"
 		<< "                    containing package.mpycp); runs it as a program by\n"
 		<< "                    default (its manifest must define func main(argv)).\n"
-		<< "                    With --emit-cpp the folder defaults to a library\n"
-		<< "                    unless the manifest calls moduletools.as_program().\n"
+		<< "                    Arguments after the folder are passed verbatim to\n"
+		<< "                    the package's main(argv), not parsed by pycp itself.\n"
 		<< "  -h, --help        Show this help message\n"
 		<< "  -i, --interpret   Interpret & execute (default); accepts .pycp or .cpycp\n"
 		<< "  -c, --compile     Compile <input_file> (.pycp) to bytecode (.cpycp)\n"
 		<< "  -b, --bytecode    Generate .cpycp bytecode file (alias of -c)\n"
-		<< "      --emit-cpp    Translate .pycp to a compilable C++ project (CMake)\n"
-		<< "      --compile-runtime=shared|static\n"
-		<< "                    With --emit-cpp: how to link libPycpRuntime\n"
-		<< "                    (default shared). 'static' needs the SDK's static\n"
-		<< "                    artifacts and forbids any dynamic module.\n"
-		<< "      --compile-modules=shared|static\n"
-		<< "                    Global kind for translated .pycp modules (default\n"
-		<< "                    shared: compiled to a module DLL loaded at\n"
-		<< "                    runtime; static: baked into the main executable).\n"
-		<< "      --compile-module:<name>=shared|static\n"
-		<< "                    Per-module override (builtin io/Pycp/classtools or\n"
-		<< "                    any translated dependency module). Each module\n"
-		<< "                    becomes its own CMake target.\n"
-		<< "      --shared      Deprecated alias for --compile-runtime=shared.\n"
-		<< "      --static      Deprecated alias for --compile-runtime=static\n"
-		<< "                    (self-contained when no module is shared).\n"
-		<< "      --show-imports\n"
-		<< "                    Print the compile-time import resolution manifest\n"
-		<< "                    and the per-module link-kind decision table.\n"
 		<< "  -o, --output <f>  Output path/dir (with -c/-b: .cpycp file; with\n"
-		<< "                    --emit-cpp: project directory; with -p: .pp.pycp file)\n"
+		<< "                    -p: .pp.pycp file)\n"
 		<< "  -d, --dump        Dump bytecode (constant pool, symbols, code objects,\n"
 		<< "                    instructions & line numbers) of .pycp or .cpycp\n"
 		<< "  -p, --preprocess  Preprocess a .pycp file (no execution): writes\n"
@@ -172,38 +125,19 @@ void print_help(const char* prog) {
 		<< "    shadow a builtin extension). All misses raise ImportError.\n"
 		<< "  * import foo / import foo as bar  loads module foo and binds it in\n"
 		<< "    the current scope.\n"
-		<< "  * --emit-cpp generates a compilable C++ project directory (default\n"
-		<< "    ./<entry-name>/, or -o <dir>): it contains the entry\n"
-		<< "    <dir>/__pycp_main.gen.cpp (with main()), one <name>.gen.cpp per\n"
-		<< "    imported module, and a CMakeLists.txt. Build & run with:\n"
-		<< "      cd <dir> && cmake -S . -B build && cmake --build build && ./build/<entry>\n"
-		<< "    The CMake project links the PycpRuntime SDK (auto-located from the\n"
-		<< "    pycp install; override with -DPYCP_DIST=<path>), dynamically by\n"
-		<< "    default (--shared) or statically with --static. By default each\n"
-		<< "    imported module is compiled to its own module DLL; use\n"
-		<< "    --compile-modules=static to bake them into the executable.\n\n"
+		<< "  * AOT (.pycp -> compilable C++ project) is provided by the aot module:\n"
+		<< "    `pycp -m aot <entry.pycp | module folder> [out_dir] [--compile-* ...]`;\n"
+		<< "    see `pycp -m aot --help` for options and examples.\n\n"
 		<< "Examples:\n"
 		<< "  " << prog << " hello.pycp              # compile & run\n"
 		<< "  " << prog << " hello.cpycp             # run compiled bytecode directly\n"
 		<< "  " << prog << " -c hello.pycp -o hello.cpycp\n"
-		<< "  " << prog << " --emit-cpp hello.pycp   # -> hello/ project (CMake)\n"
-		<< "  " << prog << " --emit-cpp --static hello.pycp -o hello-static\n";
+		<< "  " << prog << " -m aot hello.pycp        # AOT: -> hello/ project (CMake)\n";
 }
 
 bool has_suffix(const std::string& s, const std::string& suffix) {
 	if (s.size() < suffix.size()) return false;
 	return s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
-}
-
-bool starts_with(const std::string& s, const std::string& prefix) {
-	return s.compare(0, prefix.size(), prefix) == 0;
-}
-
-// 解析 "shared" / "static" 取值。ok=true 表示 shared，ok=false 表示 static。
-bool parse_shared_static(const std::string& v, bool* ok) {
-	if (v == "shared") { *ok = true; return true; }
-	if (v == "static") { *ok = false; return true; }
-	return false;
 }
 
 // 解析命令行参数
@@ -226,86 +160,6 @@ bool parse_args(int argc, char** argv, Options& opt) {
 				return false;
 			}
 			opt.output_file = argv[++i];
-		} else if (arg == "--emit-cpp") {
-			opt.emit_cpp = true;
-			opt.compile = false;
-			opt.interpret = false;
-		} else if (arg == "--shared" || arg == "--static") {
-			// 兼容别名：--shared == --compile-runtime=shared（模块形态不变，
-			// 仍默认 kStatic）；--static == --compile-runtime=static。
-			const bool is_shared = (arg == "--shared");
-			if (opt.compile_runtime_set || opt.compile_modules_set ||
-			    !opt.module_overrides.empty()) {
-				std::cerr << "Error: " << arg
-				          << " (legacy alias) cannot be combined with "
-				             "--compile-modules / --compile-module:<name> / "
-				             "--compile-runtime; use the new --compile-* options."
-				          << std::endl;
-				return false;
-			}
-			if (opt.legacy_link_set &&
-			    opt.compile_runtime != (is_shared ? AotLinkMode::kShared
-			                                      : AotLinkMode::kStatic)) {
-				std::cerr << "Error: --static and --shared are mutually exclusive."
-				          << std::endl;
-				return false;
-			}
-			opt.compile_runtime =
-				is_shared ? AotLinkMode::kShared
-				          : AotLinkMode::kStatic;
-			opt.legacy_link_set = true;
-		} else if (starts_with(arg, "--compile-runtime=")) {
-			if (opt.legacy_link_set) {
-				std::cerr << "Error: --compile-runtime cannot be combined with the "
-				             "--shared/--static legacy aliases." << std::endl;
-				return false;
-			}
-			bool ok = false;
-			const std::string v = arg.substr(std::string("--compile-runtime=").size());
-			if (!parse_shared_static(v, &ok)) {
-				std::cerr << "Error: --compile-runtime accepts only 'shared' or "
-				             "'static' (got '" << v << "')." << std::endl;
-				return false;
-			}
-			opt.compile_runtime =
-				ok ? AotLinkMode::kShared : AotLinkMode::kStatic;
-			opt.compile_runtime_set = true;
-		} else if (starts_with(arg, "--compile-modules=")) {
-			if (opt.legacy_link_set) {
-				std::cerr << "Error: --compile-modules cannot be combined with the "
-				             "--shared/--static legacy aliases." << std::endl;
-				return false;
-			}
-			bool ok = false;
-			const std::string v = arg.substr(std::string("--compile-modules=").size());
-			if (!parse_shared_static(v, &ok)) {
-				std::cerr << "Error: --compile-modules accepts only 'shared' or "
-				             "'static' (got '" << v << "')." << std::endl;
-				return false;
-			}
-			opt.compile_modules =
-				ok ? AotModuleKind::kShared : AotModuleKind::kStatic;
-			opt.compile_modules_set = true;
-		} else if (starts_with(arg, "--compile-module:") && arg.find('=') != std::string::npos) {
-			if (opt.legacy_link_set) {
-				std::cerr << "Error: --compile-module:<name> cannot be combined with "
-				             "the --shared/--static legacy aliases." << std::endl;
-				return false;
-			}
-			const std::string body = arg.substr(std::string("--compile-module:").size());
-			const std::size_t eq = body.find('=');
-			const std::string name = body.substr(0, eq);
-			const std::string v = body.substr(eq + 1);
-			bool ok = false;
-			if (name.empty() || !parse_shared_static(v, &ok)) {
-				std::cerr << "Error: usage --compile-module:<name>=shared|static "
-				             "(got '" << arg << "')." << std::endl;
-				return false;
-			}
-			opt.module_overrides[name] =
-				ok ? AotModuleKind::kShared : AotModuleKind::kStatic;
-		} else if (arg == "--show-imports") {
-			opt.show_imports = true;
 		} else if (arg == "-d" || arg == "--dump") {
 			opt.dump = true;
 			opt.compile = false;
@@ -315,8 +169,21 @@ bool parse_args(int argc, char** argv, Options& opt) {
 			opt.compile = false;
 			opt.interpret = false;
 		} else if (arg == "-m" || arg == "--module") {
-			// 模块文件夹模式：位置参数指向目录（内含 package.mpycp 清单）。
+			// 模块文件夹模式：位置参数指向目录（内含 package.mpycp 清单），
+			// 以程序角色运行。-m 之后的 argv 原样交给包的 main(argv)，
+			// 不再被宿主当作自己的选项解析（如 -o / --compile-*）。
 			opt.module_mode = true;
+			if (i + 1 >= argc) {
+				std::cerr << "Error: -m/--module expects a module folder "
+				             "(a directory containing "
+				          << Pycp::MODULE_MANIFEST_FILENAME << ")." << std::endl;
+				return false;
+			}
+			opt.input_file = argv[++i];          // 模块名（包名或路径）
+			while (++i < argc) {                 // 其余参数原样交给包的 main
+				opt.script_args.push_back(argv[i]);
+			}
+			break;
 		} else if (!arg.empty() && arg[0] == '-') {
 			std::cerr << "Error: unknown option '" << arg << "'." << std::endl;
 			return false;
@@ -483,7 +350,7 @@ EntryResolution resolve_entry_path(const std::string& input,
 }
 
 // 校验 `-m/--module` 的入口解析结果，失败时打印可操作错误并返回 false。
-//   ctx_hint : 追加上下文提示（如 --emit-cpp 需要源码清单），可为 nullptr。
+//   ctx_hint : 额外的上下文提示（可为 nullptr；解释执行路径恒为 nullptr）。
 bool validate_module_entry(const EntryResolution& er, const std::string& input,
                            const char* ctx_hint) {
 	auto list_tried = [&]() {
@@ -871,20 +738,6 @@ int main(int argc, char** argv) {
 		run_repl();
 		return 0;
 	}
-	// --compile-* 与旧别名 --shared/--static 只影响 AOT 生成的 CMake 项目；
-	// --show-imports 打印编译期 import 解析清单。它们对解释执行、字节码
-	// 编译、dump、预处理都无意义。静默忽略会让用户误以为生效。
-	if ((opt.compile_modules_set || opt.compile_runtime_set ||
-	     opt.legacy_link_set || !opt.module_overrides.empty() ||
-	     opt.show_imports) &&
-	    !opt.emit_cpp) {
-		std::cerr
-			<< "Error: --compile-modules / --compile-module:<name> / "
-			   "--compile-runtime / --shared / --static / --show-imports "
-			   "can only be used with --emit-cpp." << std::endl;
-		return 2;
-	}
-
 	int ret = 0;
 	try {
 		initialize_runtime();
@@ -929,87 +782,6 @@ int main(int argc, char** argv) {
 				module = compile_source(opt.input_file);
 			}
 			Pycp::BC::DumpModule(module);
-		}
-		else if (opt.emit_cpp) {
-			// --emit-cpp 现已驱动 pycp 版原生 AOT 模块（stdlib/aot，自举实现）：
-			// 本分支只负责解析入口、确定输出目录，并把控制权交给 aot 模块的
-			// main(argv) = [入口源路径, 输出目录]；形态决策 / SDK 定位 / CMake
-			// 生成 / 落盘全部在 pycp 侧完成（src/stdlib/aot/{sdk,plan,project}.pycp）。
-			if (has_suffix(opt.input_file, Pycp::EXT_CPYCP)) {
-				std::cerr << "Error: --emit-cpp only works on .pycp source files "
-				          << "(got " << opt.input_file << ")." << std::endl;
-				ret = 2;
-			}
-			else {
-				// 入口解析（支持模块文件夹：-m 与 --emit-cpp 可组合）。
-				const EntryResolution er_aot_src =
-					resolve_entry_path(opt.input_file, opt.module_mode);
-				if (opt.module_mode &&
-					!validate_module_entry(er_aot_src, opt.input_file,
-							"AOT translation needs the package source "
-							"(the package.mpycp manifest).")) {
-					ret = 2;
-					Pycp::Finalize();
-					return ret;
-				}
-				// 输出目录：-o 指定则用之，否则默认 ./<入口名>/。
-				std::string out_dir = opt.output_file.empty()
-					? er_aot_src.entry_name
-					: opt.output_file;
-				// 解析 aot 包（stdlib/aot/package.mpycp），稍后以程序角色运行。
-				const EntryResolution er_aot_pkg =
-					resolve_entry_path("aot", /*module_mode=*/true);
-				if (!validate_module_entry(er_aot_pkg, "aot",
-						"The AOT module (stdlib/aot) is missing; make sure "
-						"dist/stdlib/aot is complete.")) {
-					ret = 2;
-					Pycp::Finalize();
-					return ret;
-				}
-				// 构建传给 aot 模块的 argv：与 `pycp -m aot` 完全一致，首元素是
-				// 程序/模块名（对应 -m 的 input_file="aot"），随后是
-				// [入口源路径, 输出目录]，故 aot 模块 main 里 argv[1]=入口、
-				// argv[2]=输出目录（缺一不可，否则 FixedList 越界）。
-				std::vector<std::string> aot_argv;
-				aot_argv.push_back(er_aot_pkg.entry_name);
-				// 与旧 C++ AOT 一致：写入 source_pycp 注释的是「原始输入」，
-				// 而非解析后的清单路径（模块文件夹模式下两者不同）。load_set
-				// 自身支持目录，故可直接使用原始输入。
-				aot_argv.push_back(opt.input_file);
-				aot_argv.push_back(out_dir);
-				// 追加形态选项：aot 模块自行解析这些 flag（与旧 C++ AOT 的
-				// Options 语义一一对应），仅转发「显式指定过」的项；默认值由
-				// 模块侧决定，避免覆盖模块的默认行为。
-				auto kind_str = [](AotModuleKind k) {
-					return k == AotModuleKind::kShared ? std::string("shared")
-					                                   : std::string("static");
-				};
-				if (opt.compile_runtime_set || opt.legacy_link_set) {
-					aot_argv.push_back(
-						std::string("--compile-runtime=") +
-						(opt.compile_runtime == AotLinkMode::kShared ? "shared"
-						                                             : "static"));
-				}
-				if (opt.compile_modules_set) {
-					aot_argv.push_back(std::string("--compile-modules=") +
-							   kind_str(opt.compile_modules));
-				}
-				for (const auto& kv : opt.module_overrides) {
-					aot_argv.push_back(std::string("--compile-module:") + kv.first +
-							   "=" + kind_str(kv.second));
-				}
-				if (opt.show_imports) {
-					aot_argv.push_back("--show-imports");
-				}
-				Pycp::SetArgv(aot_argv);
-				std::set<std::string> aot_pkgs;
-				std::map<std::string, Pycp::BC::Module> aot_modules =
-					Pycp::ModuleLoader::load_all(er_aot_pkg.entry_file, nullptr,
-								&aot_pkgs);
-				ret = execute_program(aot_modules, er_aot_pkg.entry_name,
-							aot_pkgs, /*module_mode=*/true, aot_argv,
-							er_aot_pkg.found_dir);
-			}
 		}
 		else if (opt.compile) {
 			// 编译模式：.pycp -> .cpycp

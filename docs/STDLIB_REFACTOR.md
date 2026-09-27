@@ -219,7 +219,7 @@ add_library(PycpBuiltin_io_static STATIC
 
 ### 6.3 语义与验收
 - `from pycp import X` 与 `pycp.X` 取到的是**同一对象**（模块命名空间中的类型类），调用语义完全一致。
-- AOT 只是**书写风格**变化，**不影响生成产物**；验收：改造前后 `pycp -m aot` / `--emit-cpp` 对同一输入产出的 `.gen.cpp` 与 `CMakeLists.txt` **逐字节一致**。
+- AOT 只是**书写风格**变化，**不影响生成产物**；验收：改造前后 `pycp -m aot` 对同一输入产出的 `.gen.cpp` 与 `CMakeLists.txt` **逐字节一致**。
 - 残留检查：改造后 `src/stdlib/aot/**` 中除上述两处例外外，不应再有 `pycp.` 前缀调用。
 
 ---
@@ -262,8 +262,8 @@ add_library(PycpBuiltin_io_static STATIC
 | 目标清单 | `dist/stdlib` = 8 个 `.so`（io/pycp/classtools/moduletools/ast/bytecode/filesystem/maths）+ `aot/`；`dist/lib` = 8 个 `libPycpExt_*.a` + runtime —— **与改造前一致** |
 | visibility 行为 | `tests/modules/import_tests/readonly_decorator.pycp`、`access_control.pycp`、`tests/classes_objects/stacked_decorator.pycp` 全 PASS |
 | File 行为 | `tests/native_args/ok_file.pycp` PASS；自建用例确认 `io.File == filesystem.File` 为 `True`（同一类型类对象） |
-| AOT 全静态（关键） | `--emit-cpp --compile-runtime=static --compile-modules=static` → 生成→构建→运行 `AOT IMPORT PASS`，**无 multiple definition** |
-| AOT 动态 | `--emit-cpp` → 生成→构建→运行 `AOT IMPORT PASS` |
+| AOT 全静态（关键） | `pycp -m aot ... --compile-runtime=static --compile-modules=static` → 生成→构建→运行 `AOT IMPORT PASS`，**无 multiple definition** |
+| AOT 动态 | `pycp -m aot` → 生成→构建→运行 `AOT IMPORT PASS` |
 | AOT `from pycp import X`（§6） | 已完成并验证（书写风格变化，产物语义不变） |
 
 ### 9.3 与 §3.1 的取舍对照

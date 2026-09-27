@@ -12,7 +12,7 @@
 #           import moduletools 时动态加载。
 #   静态库 PycpExt_moduletools（libPycpExt_moduletools.a），输出到 build/lib/。
 #     供 AOT 的 --static 模式链接进产物 exe；同时被 PycpAotSdkLocator 扫描
-#     lib/libPycpExt_*.a 时自动收录为「内置扩展」，--emit-cpp 不再把它当
+#     lib/libPycpExt_*.a 时自动收录为「内置扩展」，pycp -m aot 不再把它当
 #     未解析依赖告警。
 # 依赖：PycpRuntime。
 # =====================================================================
