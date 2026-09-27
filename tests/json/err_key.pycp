@@ -1,0 +1,5 @@
+// 错误路径：Map 的非字符串键应抛 TypeError（进程非零退出）。
+import json
+
+json.dump({1: 2})
+io.stdout.write("SHOULD HAVE RAISED TypeError\n")

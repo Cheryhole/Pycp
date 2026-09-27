@@ -1,0 +1,5 @@
+// 错误路径：非法 JSON 应抛 ValueError（进程非零退出）。
+import json
+
+json.load("{bad json")
+io.stdout.write("SHOULD HAVE RAISED ValueError\n")

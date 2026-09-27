@@ -1,0 +1,9 @@
+// 错误路径：不可序列化的类型（Class）应抛 TypeError（进程非零退出）。
+import json
+
+class Foo {
+	v = 1
+}
+
+json.dump(Foo)
+io.stdout.write("SHOULD HAVE RAISED TypeError\n")

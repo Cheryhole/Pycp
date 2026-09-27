@@ -1,0 +1,141 @@
+// json 模块功能验证：load/dump 双向、类型映射、格式化标志。
+// 通过条件：输出含 "JSON TEST PASS" 且退出码 0。
+// 注意：Pycp 的 String 仅实现 __equal__（==），不支持 !=；故断言用 == 配合 else 分支。
+import io
+import pycp
+import json
+
+func main() {
+	fails = 0
+
+	// ---- 标量：load -> 类型 -> dump 往返 ----
+	if (json.dump(json.load("123")) == "123") {
+	} else {
+		fails = fails + 1
+		io.stdout.write("FAIL int 123\n")
+	}
+	if (json.dump(json.load("-7")) == "-7") {
+	} else {
+		fails = fails + 1
+		io.stdout.write("FAIL int -7\n")
+	}
+	if (json.dump(json.load("true")) == "true") {
+	} else {
+		fails = fails + 1
+		io.stdout.write("FAIL bool true\n")
+	}
+	if (json.dump(json.load("false")) == "false") {
+	} else {
+		fails = fails + 1
+		io.stdout.write("FAIL bool false\n")
+	}
+	if (json.dump(json.load("null")) == "null") {
+	} else {
+		fails = fails + 1
+		io.stdout.write("FAIL null\n")
+	}
+	if (json.dump(json.load("\"hi\"")) == "\"hi\"") {
+	} else {
+		fails = fails + 1
+		io.stdout.write("FAIL string hi\n")
+	}
+	if (json.dump(json.load("\"a\\tb\"")) == "\"a\\tb\"") {
+	} else {
+		fails = fails + 1
+		io.stdout.write("FAIL string escape tab\n")
+	}
+	if (json.dump(json.load("\"\\u4e2d\"")) == "\"\\u4e2d\"") {
+	} else {
+		fails = fails + 1
+		io.stdout.write("FAIL unicode escape\n")
+	}
+
+	// ---- 数字：整数 -> Integer；小数/指数 -> Decimal（精确） ----
+	if (json.dump(json.load("1.5")) == "1.5") {
+	} else {
+		fails = fails + 1
+		io.stdout.write("FAIL decimal 1.5\n")
+	}
+	if (json.dump(json.load("5")) == "5") {
+	} else {
+		fails = fails + 1
+		io.stdout.write("FAIL int 5\n")
+	}
+	if (json.dump(json.load("5.0")) == "5.0") {
+	} else {
+		fails = fails + 1
+		io.stdout.write("FAIL decimal 5.0\n")
+	}
+	if (json.dump(json.load("0.3000000000000000000000000001")) == "0.3000000000000000000000000001") {
+	} else {
+		fails = fails + 1
+		io.stdout.write("FAIL decimal precision\n")
+	}
+	if (json.dump(json.load("1.5e3")) == "1500") {
+	} else {
+		fails = fails + 1
+		io.stdout.write("FAIL decimal exponent\n")
+	}
+
+	// ---- 数组：顺序保挌（List） ----
+	if (json.dump(json.load("[1,2,3]")) == "[1, 2, 3]") {
+	} else {
+		fails = fails + 1
+		io.stdout.write("FAIL array order\n")
+	}
+	if (json.dump(json.load("[[1],[2,3]]")) == "[[1], [2, 3]]") {
+	} else {
+		fails = fails + 1
+		io.stdout.write("FAIL nested array\n")
+	}
+
+	// ---- 对象：sort_keys 决定顺序（确定性往返） ----
+	rt = json.dump(json.load("{\"b\":2,\"a\":1,\"c\":{\"z\":3,\"y\":4}}"), sort_keys=True)
+	if (rt == "{\"a\": 1, \"b\": 2, \"c\": {\"y\": 4, \"z\": 3}}") {
+	} else {
+		fails = fails + 1
+		io.stdout.write("FAIL sorted roundtrip\n")
+		io.stdout.write(rt + "\n")
+	}
+
+	// ---- 格式化标志：indent ----
+	indent_out = json.dump(json.load("[1,2,3]"), indent=2)
+	if (indent_out == "[\n  1,\n  2,\n  3\n]") {
+	} else {
+		fails = fails + 1
+		io.stdout.write("FAIL indent 2\n")
+		io.stdout.write(indent_out + "\n")
+	}
+	tab_out = json.dump(json.load("[1,2]"), indent="tab")
+	if (tab_out == "[\n\t1,\n\t2\n]") {
+	} else {
+		fails = fails + 1
+		io.stdout.write("FAIL indent tab\n")
+		io.stdout.write(tab_out + "\n")
+	}
+
+	// ---- 格式化标志：separators ----
+	if (json.dump(json.load("{\"a\":1}"), separators=[",", ":"]) == "{\"a\":1}") {
+	} else {
+		fails = fails + 1
+		io.stdout.write("FAIL separators\n")
+	}
+
+	// ---- 综合往返（混合类型，sort_keys 确定顺序） ----
+	mixed = json.load("{\"name\":\"alice\",\"age\":30,\"score\":95.5,\"active\":true,\"tags\":[\"x\",\"y\"],\"meta\":{\"k\":1}}")
+	back = json.dump(mixed, sort_keys=True)
+	if (back == "{\"active\": true, \"age\": 30, \"meta\": {\"k\": 1}, \"name\": \"alice\", \"score\": 95.5, \"tags\": [\"x\", \"y\"]}") {
+	} else {
+		fails = fails + 1
+		io.stdout.write("FAIL mixed roundtrip\n")
+		io.stdout.write(back + "\n")
+	}
+
+	if (fails == 0) {
+		io.stdout.write("JSON TEST PASS\n")
+	} else {
+		io.stdout.write("JSON TEST FAIL (" + pycp.String(fails) + ")\n")
+	}
+}
+
+main()
