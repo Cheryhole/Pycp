@@ -728,6 +728,24 @@ Object* Instance::__greater_equal__(Object* other) {
 	return dispatch_magic("__greater_equal__", other);
 }
 
+Object* Instance::__contains__(Object* value) {
+	// 类定义了 __contains__ 时转发；否则回退基类默认（尝试迭代遍历，
+	// 不可迭代则抛 TypeError），与 List/FixedList/String 的覆写语义一致。
+	if (cls_ != nullptr && cls_->find_method("__contains__") != nullptr) {
+		return dispatch_magic("__contains__", value);
+	}
+	return Object::__contains__(value);
+}
+
+Object* Instance::__iterator__() {
+	// 类定义了 __iterator__ 时转发（使实例可被 for 遍历、被 in 回退遍历）；
+	// 否则沿用基类默认（抛 TypeError，表示不可迭代）。
+	if (cls_ != nullptr && cls_->find_method("__iterator__") != nullptr) {
+		return dispatch_magic("__iterator__", nullptr);
+	}
+	return Object::__iterator__();
+}
+
 Object* Instance::__get_item__(Object* key) {
 	// 下标访问：转发到类的 __get_item__(self, key) 方法。
 	if (cls_ == nullptr) {

@@ -34,6 +34,8 @@ class PYCP_API String : public Object{
 		Object* __get_item__(Object* key) override;
 	Object* __list__() override;
 	Object* __iterator__() override;
+	// 成员测试（`sub in s`）：子串语义（左操作数须为 String）。
+	Object* __contains__(Object* value) override;
 	Object* __inspect__() override;
 	Object* __hash__() override;
 

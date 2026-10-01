@@ -57,6 +57,31 @@ keys = m.keys()
 - `Map` conversion aligns with the `Map(...)` constructor and the `__map__` magic
   method.
 
+## Membership (`in`)
+
+Test membership with `in`:
+
+```pycp
+import io
+import pycp
+
+io.print(1 in [1, 2, 3])                  // True   (List)
+io.print(1 in pycp.FixedList([1, 2, 3]))  // True   (FixedList)
+io.print("ell" in "hello")                // True   (String substring)
+m = {"a": 1, "b": 2}
+io.print("a" in m.keys())                 // True   (Map key)
+io.print(1 in m.values())                 // True   (Map value)
+```
+
+- `List` / `FixedList` scan their elements with `==` (identity for nested containers).
+- `String` uses substring semantics; a non-String left operand raises `TypeError`.
+- `Map` itself does **not** support `in` (it is not iterable). Test keys/values via
+  `m.keys()` (returns a `FixedList`) or `m.values()` (returns a `List`).
+- A user class may define `__contains__`; otherwise an iterable object is scanned
+  element-wise. A non-iterable object without `__contains__` raises `TypeError`.
+
+See [operators.md](operators.md) and [magic-methods.md](magic-methods.md).
+
 ## Container literals & line continuation
 
 Inside `[]` and `{}`, newlines are ignored, so multi-line literals are allowed:

@@ -1,0 +1,5 @@
+// 非法：裸 Map 不支持成员测试（设计选择：仅 map.keys()/values()）→ TypeError
+import io
+
+m = {"a": 1}
+io.print("a" in m)

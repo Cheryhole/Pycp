@@ -25,6 +25,7 @@ static std::string binary_op_to_string(BinaryOp op) {
 		case BinaryOp::GREATER_EQUAL: return "GREATER_EQUAL";
 		case BinaryOp::EQUAL:         return "EQUAL";
 		case BinaryOp::NOT_EQUAL:     return "NOT_EQUAL";
+		case BinaryOp::IS_IN:         return "IS_IN";
 		default: return "UNKNOWN";
 	}
 }

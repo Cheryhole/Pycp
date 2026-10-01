@@ -66,7 +66,10 @@ enum class BinaryOp : uint16_t {
 	LESS_EQUAL = 7,
 	GREATER_EQUAL = 8,
 	EQUAL = 9,
-	NOT_EQUAL = 10
+	NOT_EQUAL = 10,
+	// 成员测试 `value in container`：左操作数为 value、右操作数为 container
+	// （与其它比较一致，左/右字段语义即字面顺序）。
+	IS_IN = 11
 };
 
 // ============================================================

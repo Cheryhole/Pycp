@@ -683,6 +683,19 @@ Object* VM::execute(CodeObject* co,
 				break;
 			}
 
+			// ---- 成员测试 ----
+			case Op::CONTAINS_OP: {
+				// 栈: value container -> Boolean。
+				// container.__contains__(value)；无 __contains__ 且可迭代则遍历
+				// 回退，皆无则 Contains 抛 TypeError。
+				Object* container = pop();
+				Object* value = pop();
+				Object* res = Contains(container, value);
+				Decref(container); Decref(value);
+				push(res); Decref(res);
+				break;
+			}
+
 			// ---- 类型断言 ----
 			case Op::CHECK_INT: {
 				// 校验栈顶是否为 Integer；仅校验不弹栈，保证栈平衡。

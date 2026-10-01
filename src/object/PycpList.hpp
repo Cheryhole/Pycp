@@ -68,6 +68,8 @@ public:
 	Object* __list__() override;
 	Object* __map__() override;  // 返回成员字典视图
 	Object* __addition__(Object* other) override;
+	// 成员测试（`x in list`）：遍历元素以 == 语义判定。
+	Object* __contains__(Object* value) override;
 	Object* __boolean__() override;
 	Object* __string__() override;
 	// repr：与 __string__ 同形（"[a, b, c]"，元素经各自 __raw_string__ 渲染）,

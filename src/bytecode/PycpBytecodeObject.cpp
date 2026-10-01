@@ -111,6 +111,7 @@ const char* OpName(Op op) {
 		case Op::BINARY_POW: return "BINARY_POW";
 		case Op::UNARY_NEG: return "UNARY_NEG";
 		case Op::COMPARE_OP: return "COMPARE_OP";
+		case Op::CONTAINS_OP: return "CONTAINS_OP";
 		case Op::JUMP: return "JUMP";
 		case Op::JUMP_IF_FALSE: return "JUMP_IF_FALSE";
 		case Op::JUMP_IF_TRUE: return "JUMP_IF_TRUE";

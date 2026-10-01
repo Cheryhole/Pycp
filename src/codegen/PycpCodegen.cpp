@@ -419,6 +419,7 @@ static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 				case BinaryOp::GREATER_EQUAL:em.emit(Op::COMPARE_OP, static_cast<int32_t>(CompareOp::GE)); break;
 				case BinaryOp::EQUAL:        em.emit(Op::COMPARE_OP, static_cast<int32_t>(CompareOp::EQ)); break;
 				case BinaryOp::NOT_EQUAL:    em.emit(Op::COMPARE_OP, static_cast<int32_t>(CompareOp::NE)); break;
+				case BinaryOp::IS_IN:        em.emit(Op::CONTAINS_OP); break;
 				default: throw Pycp::Exception("Codegen: unknown binary op.");
 			}
 			break;

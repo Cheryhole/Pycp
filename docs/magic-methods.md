@@ -1,7 +1,7 @@
 # Magic Methods
 
 Magic methods customize operator and protocol behavior for user-defined types. The
-authoritative list is `magic_thunks()` in `src/object/PycpMagic.cpp` (29 entries).
+authoritative list is `magic_thunks()` in `src/object/PycpMagic.cpp` (30 entries).
 
 ## Arithmetic & comparison (1 parameter `value`)
 
@@ -18,6 +18,12 @@ authoritative list is `magic_thunks()` in `src/object/PycpMagic.cpp` (29 entries
 | `__not_equal__` | `self != value` |
 | `__greater_than__` | `self > value` |
 | `__greater_equal__` | `self >= value` |
+| `__contains__` | `value in self` |
+
+`__contains__` returns a `Boolean`. When a type does not define it, the default
+implementation iterates the object (if it has `__iterator__`) and compares elements
+with `==`, raising `TypeError` if the object is not iterable. See
+[containers.md](containers.md) and [operators.md](operators.md).
 
 ## Indexing & attributes
 

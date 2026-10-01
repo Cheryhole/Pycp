@@ -1,0 +1,14 @@
+// 迭代回退：类仅实现 __iterator__（未实现 __contains__）→ 遍历比较
+import io
+
+class Bag {
+	func __iterator__(self) {
+		src = [10, 20, 30]
+		return src.__iterator__()
+	}
+}
+
+b = Bag()
+io.print("fallback_hit", 20 in b)
+io.print("fallback_miss", 40 in b)
+io.print("FALLBACK PASS")

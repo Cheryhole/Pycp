@@ -237,6 +237,11 @@ class PYCP_API Object{
 		virtual Object* __greater_than__(Object*);
 		virtual Object* __greater_equal__(Object*);
 
+		// 成员测试协议（`x in obj`，返回 Boolean）。
+		// 默认实现：obj 可迭代（Iterable 标志）时遍历比较（== 语义）；
+		// 否则抛 TypeError。List/FixedList/String/Instance 覆写以获得精确语义。
+		virtual Object* __contains__(Object* value);
+
 	// 下标运算（self[key] 与 self[key] = value）。
 	// 默认抛 TypeError；List 与 Instance（转发到类的
 	// __get_item__/__set_item__ 方法）override。

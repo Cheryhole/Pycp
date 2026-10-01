@@ -116,6 +116,8 @@ func estimate_stack_depth(co) {
 			if (depth > 0) { depth = depth - 1 }
 		} elif (op == "COMPARE_OP") {
 			if (depth > 0) { depth = depth - 1 }
+		} elif (op == "CONTAINS_OP") {
+			if (depth > 0) { depth = depth - 1 }
 		} elif (op == "UNARY_NEG") {
 			if (depth > 0) { depth = depth - 1 }
 		} elif (op == "POP_TOP") {
@@ -329,6 +331,12 @@ func emit_function(module, co, co_idx) {
 			out = out + "      Pycp::Object* lhs = st.back(); st.pop_back();\n"
 			out = out + "      Pycp::Object* res = Pycp::Compare(lhs, rhs, " + S(operand) + ");\n"
 			out = out + "      Pycp::Decref(lhs); Pycp::Decref(rhs);\n"
+			out = out + "      st.push_back(res); }\n"
+		} elif (op == "CONTAINS_OP") {
+			out = out + "    { Pycp::Object* container = st.back(); st.pop_back();\n"
+			out = out + "      Pycp::Object* value = st.back(); st.pop_back();\n"
+			out = out + "      Pycp::Object* res = Pycp::Contains(container, value);\n"
+			out = out + "      Pycp::Decref(container); Pycp::Decref(value);\n"
 			out = out + "      st.push_back(res); }\n"
 		} elif (op == "JUMP") {
 			out = out + "    goto L_" + S(pc + operand) + ";\n"

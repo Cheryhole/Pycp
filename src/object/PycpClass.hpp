@@ -248,6 +248,14 @@ public:
 	Object* __greater_than__(Object* other) override;
 	Object* __greater_equal__(Object* other) override;
 
+	// 成员测试：类定义 __contains__ 时转发；否则回退基类默认
+	// （尝试迭代遍历，不可迭代则抛 TypeError）。
+	Object* __contains__(Object* value) override;
+
+	// 迭代协议：类定义 __iterator__ 时转发（使实例可被 for 遍历、
+	// 以及被 in 的回退遍历使用）；否则沿用基类默认（抛 TypeError）。
+	Object* __iterator__() override;
+
 	// 下标运算：转发到类的 __get_item__ / __set_item__ 方法。
 	Object* __get_item__(Object* key) override;
 	Object* __set_item__(Object* key, Object* value) override;

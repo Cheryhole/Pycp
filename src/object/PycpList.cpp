@@ -163,15 +163,22 @@ Object* _list_count(Object* self, FixedList* args, Map* kwargs) {
 	return Integer::FromLong(c);
 }
 
+// 成员判定（值语义）：遍历元素，以 == 语义比较。
+// 供普通方法 contains 与魔术方法 __contains__ 共用。
+bool _list_contains_value(const List* l, Object* value) {
+	for (std::size_t i = 0; i < l->size(); ++i) {
+		if (_list_elem_eq(l->at(i), value)) return true;
+	}
+	return false;
+}
+
 Object* _list_contains(Object* self, FixedList* args, Map* kwargs) {
 	static const Extension::ArgTable spec = Extension::CompileArgs(
 		"contains", { Extension::Arg::Required("value") });
 	Extension::ArgResult r = spec.Bind(args, kwargs);
 	List* l = static_cast<List*>(self);
-	for (std::size_t i = 0; i < l->size(); ++i) {
-		if (_list_elem_eq(l->at(i), r["value"])) return Boolean::True();
-	}
-	return Boolean::False();
+	return _list_contains_value(l, r["value"]) ? Boolean::True()
+	                                           : Boolean::False();
 }
 
 Object* _list_reverse(Object* self, FixedList* args, Map* kwargs) {
@@ -241,6 +248,7 @@ const std::vector<MethodEntry>& List_method_table() {
 		{"__get_item__",         nullptr},
 		{"__set_item__",         nullptr},
 		{"__delete_item__",      nullptr},
+		{"__contains__",         nullptr},
 		{"__map__",              nullptr},
 		{"__inspect__",          nullptr},
 		{"__get_attribute__",    nullptr},
@@ -376,6 +384,12 @@ Object* List::__list__() {
 Object* List::__boolean__() {
 	// 非空列表为 True，空列表为 False。
 	return items_.empty() ? Boolean::False() : Boolean::True();
+}
+
+Object* List::__contains__(Object* value) {
+	// 成员测试（`value in list`）：遍历元素以 == 语义判定。
+	return _list_contains_value(this, value) ? Boolean::True()
+	                                         : Boolean::False();
 }
 
 Object* List::__iterator__() {

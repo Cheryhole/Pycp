@@ -62,15 +62,22 @@ Object* _fixedlist_count(Object* self, FixedList* args, Map* kwargs) {
 	return Integer::FromLong(c);
 }
 
+// 成员判定（值语义）：遍历元素，以 == 语义比较。
+// 供普通方法 contains 与魔术方法 __contains__ 共用。
+bool _fixedlist_contains_value(const FixedList* l, Object* value) {
+	for (std::size_t i = 0; i < l->size(); ++i) {
+		if (_fixedlist_elem_eq(l->at(i), value)) return true;
+	}
+	return false;
+}
+
 Object* _fixedlist_contains(Object* self, FixedList* args, Map* kwargs) {
 	static const Extension::ArgTable spec = Extension::CompileArgs(
 		"contains", { Extension::Arg::Required("value") });
 	Extension::ArgResult r = spec.Bind(args, kwargs);
 	FixedList* l = static_cast<FixedList*>(self);
-	for (std::size_t i = 0; i < l->size(); ++i) {
-		if (_fixedlist_elem_eq(l->at(i), r["value"])) return Boolean::True();
-	}
-	return Boolean::False();
+	return _fixedlist_contains_value(l, r["value"]) ? Boolean::True()
+	                                               : Boolean::False();
 }
 
 } // anonymous namespace
@@ -95,6 +102,7 @@ const std::vector<MethodEntry>& FixedList_method_table() {
 		{"__get_attribute__",    nullptr},
 		{"__set_attribute__",    nullptr},
 		{"__delete_attribute__", nullptr},
+		{"__contains__",         nullptr},
 	};
 	return table;
 }
@@ -170,6 +178,12 @@ Object* FixedList::__get_item__(Object* key) {
 Object* FixedList::__boolean__() {
 	// 非空为 True，空为 False。
 	return size_ == 0 ? Boolean::False() : Boolean::True();
+}
+
+Object* FixedList::__contains__(Object* value) {
+	// 成员测试（`value in fixedlist`）：遍历元素以 == 语义判定。
+	return _fixedlist_contains_value(this, value) ? Boolean::True()
+	                                             : Boolean::False();
 }
 
 Object* FixedList::__iterator__() {

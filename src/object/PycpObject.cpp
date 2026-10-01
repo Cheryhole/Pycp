@@ -7,6 +7,7 @@
 #include "object/PycpClass.hpp"
 #include "object/PycpGC.hpp"
 #include "object/PycpMagic.hpp"
+#include "abi/PycpABI.hpp"   // Compare / IsFalse（成员回退遍历的相等判定）
 
 #include <sstream>
 #include <unordered_set>
@@ -248,6 +249,42 @@ void Object::__delete_attribute__(const std::string& name){
 
 Object* Object::__delete_item__([[maybe_unused]] Object* key) {
   throw TypeError("object does not support item deletion.");
+}
+
+Object* Object::__contains__(Object* value){
+  // 默认成员协议（需求：未实现 __contains__ 且有 __iterator__ 时遍历回退）：
+  // 尝试取得迭代器并逐元素以 == 语义比较；不可迭代则报错。
+  // 各内置类型（List/FixedList/String/Instance）覆写以获得精确语义。
+  Object* iter = nullptr;
+  try {
+    iter = __iterator__();   // Owned；基类默认抛 TypeError 表示不可迭代
+  } catch (const TypeError&) {
+    iter = nullptr;
+  }
+  if (iter == nullptr) {
+    throw TypeError("argument of type '" + type_name_ + "' is not iterable.");
+  }
+  bool found = false;
+  try {
+    for (;;) {
+      Object* elem = nullptr;
+      try {
+        elem = iter->__next__();
+      } catch (const StopIteration&) {
+        break;
+      }
+      Object* eq = Compare(elem, value, 2);   // op 2 == EQ
+      found = !IsFalse(eq);
+      Decref(eq);
+      Decref(elem);
+      if (found) break;
+    }
+  } catch (...) {
+    Decref(iter);
+    throw;
+  }
+  Decref(iter);
+  return found ? Boolean::True() : Boolean::False();
 }
 
 Object* Object::__iterator__(){

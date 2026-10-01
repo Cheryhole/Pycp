@@ -1,0 +1,13 @@
+// 自定义类定义 __contains__ → `in` 通用分派到类方法
+import io
+
+class Box {
+	func __contains__(self, value) {
+		return value == 42
+	}
+}
+
+box = Box()
+io.print("user_hit", 42 in box)
+io.print("user_miss", 7 in box)
+io.print("USER PASS")

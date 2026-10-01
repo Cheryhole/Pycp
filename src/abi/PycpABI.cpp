@@ -324,6 +324,14 @@ Object* Compare(Object* lhs, Object* rhs, int op){
 	throw TypeError("cannot compare different types.");
 }
 
+Object* Contains(Object* container, Object* value){
+	if (container == nullptr || value == nullptr)
+		throw TypeError("Cannot test membership with null object.");
+	// 协议分派：由 container 的 __contains__ 决定（内置类型覆写为高效实现；
+	// Object 默认实现为「可迭代则遍历比较，否则抛 TypeError」）。
+	return container->__contains__(value);
+}
+
 bool IsFalse(Object* v){
 	if (v == nullptr) return true;
 	if (v->is_type("None")) return true;
@@ -706,6 +714,9 @@ PYCP_C_API void* PYCP_Pow(void* lhs, void* rhs){
 }
 PYCP_C_API void* PYCP_Compare(void* lhs, void* rhs, int op){
 	return static_cast<void*>(Pycp::Compare(static_cast<Pycp::Object*>(lhs), static_cast<Pycp::Object*>(rhs), op));
+}
+PYCP_C_API void* PYCP_Contains(void* container, void* value){
+	return static_cast<void*>(Pycp::Contains(static_cast<Pycp::Object*>(container), static_cast<Pycp::Object*>(value)));
 }
 PYCP_C_API int PYCP_IsFalse(void* v){
 	return Pycp::IsFalse(static_cast<Pycp::Object*>(v)) ? 1 : 0;

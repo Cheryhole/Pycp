@@ -154,6 +154,11 @@ std::string _arg_str(const char* fn, const char* name, Object* o) {
 	return static_cast<String*>(o)->get_value();
 }
 
+// 子串判定：v 是否包含 sub。供普通方法 contains 与魔术方法 __contains__ 共用。
+bool _str_has_substring(const std::string& v, const std::string& sub) {
+	return v.find(sub) != std::string::npos;
+}
+
 // 可选字符串参数：未给出或 None -> false；类型不符 -> TypeError。
 bool _opt_str(const char* fn, const char* name, Object* o, std::string* out) {
 	if (o == nullptr || o->type_id() == PycpTypeId::None) return false;
@@ -458,8 +463,7 @@ Object* _str_contains(Object* self, FixedList* args, Map* kwargs) {
 	Extension::ArgResult r = spec.Bind(args, kwargs);
 	const std::string sub = _arg_str("contains", "sub", r["sub"]);
 	const std::string v = static_cast<String*>(self)->get_value();
-	return (v.find(sub) != std::string::npos) ? Boolean::True()
-	                                          : Boolean::False();
+	return _str_has_substring(v, sub) ? Boolean::True() : Boolean::False();
 }
 
 } // anonymous namespace
@@ -484,6 +488,7 @@ const std::vector<MethodEntry>& String_method_table() {
 		{"startswith",           _str_startswith},
 		{"endswith",             _str_endswith},
 		{"contains",             _str_contains},
+		{"__contains__",         nullptr},
 		{"__integer__",          nullptr},
 		{"__string__",           nullptr},
 		{"__raw_string__",       nullptr},
@@ -516,6 +521,14 @@ Object* String::__inspect__() {
 	for (const MethodEntry& e : String_method_table()) CollectUniqueName(names, e.name);
 	for (const std::string& n : CommonInspectNames()) CollectUniqueName(names, n);
 	return FixedList::New(names);
+}
+
+Object* String::__contains__(Object* value) {
+	// 成员测试（`sub in s`）：子串语义，左操作数须为 String
+	// （非 String 时 _arg_str 抛 TypeError）。
+	const std::string sub = _arg_str("__contains__", "value", value);
+	return _str_has_substring(get_value(), sub) ? Boolean::True()
+	                                            : Boolean::False();
 }
 
 std::string EscapeForRepr(const std::string& value) {

@@ -94,6 +94,7 @@ const char* BinaryOpName(BinaryOp op) {
 		case BinaryOp::GREATER_EQUAL: return "GREATER_EQUAL";
 		case BinaryOp::EQUAL:         return "EQUAL";
 		case BinaryOp::NOT_EQUAL:     return "NOT_EQUAL";
+		case BinaryOp::IS_IN:         return "IS_IN";
 	}
 	return "UNKNOWN";
 }

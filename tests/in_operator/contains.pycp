@@ -1,0 +1,36 @@
+// `in` 运算符 / __contains__ 正向用例
+// 覆盖：List（存在/不存在/空/重复/嵌套/类型不匹配）、FixedList、
+//       Map.keys()/Map.values()、String 子串（含空子串）。
+import io
+import pycp
+
+// --- List ---
+l = [1, 2, 3]
+io.print("list_hit", 1 in l)
+io.print("list_miss", 4 in l)
+io.print("list_empty", 1 in [])
+io.print("list_dup", 1 in [1, 1, 2])
+io.print("list_nested", [1] in [[1], [2]])
+io.print("list_typemismatch", "1" in [1, 2])
+io.print("list_last", 3 in l)
+
+// --- FixedList ---
+f = pycp.FixedList([1, 2, 3])
+io.print("fixed_hit", 1 in f)
+io.print("fixed_miss", 9 in f)
+io.print("fixed_empty", 3 in pycp.FixedList([]))
+
+// --- Map.keys() / Map.values() ---
+m = {"a": 1, "b": 2}
+io.print("keys_hit", "a" in m.keys())
+io.print("keys_miss", "z" in m.keys())
+io.print("values_hit", 1 in m.values())
+io.print("values_miss", 9 in m.values())
+
+// --- String 子串 ---
+s = "hello"
+io.print("str_hit", "ell" in s)
+io.print("str_miss", "z" in s)
+io.print("str_empty_sub", "" in s)
+
+io.print("CONTAINS PASS")

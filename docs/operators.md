@@ -45,9 +45,32 @@ if a == b {
 - `<` `<=` `>` `>=` return an `Integer` of `1` or `0` (not a `Boolean`). This differs
   from Python, where ordering comparisons also return `bool`.
 
+## Membership
+
+| Operator | Meaning | Example |
+| --- | --- | --- |
+| `in` | membership test | `value in container` |
+
+```pycp
+if x in items {
+    // ...
+}
+```
+
+`x in obj` calls `obj.__contains__(x)`. If the object does not define
+`__contains__` but is iterable (has `__iterator__`), it is iterated and each element
+compared with `==` until a match is found. If neither applies, a `TypeError` is
+raised. The result is a `Boolean`.
+
+Supported right-hand operands: `List`, `FixedList`, `String` (substring semantics),
+the results of `Map.keys()` / `Map.values()`, and any user class defining
+`__contains__`. A bare `Map` is **not** iterable and does not support `in` — test
+`map.keys()` / `map.values()` instead. See [containers.md](containers.md) and
+[magic-methods.md](magic-methods.md).
+
 ## Precedence (low → high)
 
-1. Comparison (non-associative): `<` `>` `<=` `>=` `==` `!=`
+1. Comparison / membership (non-associative): `<` `>` `<=` `>=` `==` `!=` `in`
 2. Addition / subtraction (left-assoc): `+` `-`
 3. Multiplication / division (left-assoc): `*` `/`
 4. Power (right-assoc): `**`
@@ -66,3 +89,4 @@ Comparison binds looser than arithmetic, so `a + 1 > b * 2` parses as
 - Bitwise: `&` `|` `^` `~` `<<` `>>`.
 - Augmented assignment: `+=` `-=` etc. (see [variables-and-assignment.md](variables-and-assignment.md)).
 - Comparison chaining (`a < b < c`) and the ternary `a if c else b`.
+- `not in` (the `not` operator is not implemented — see [features.md](../features.md)).

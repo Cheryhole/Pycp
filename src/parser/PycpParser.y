@@ -203,7 +203,7 @@ static Pycp::Ast::FunctionExpression* make_func_expr(
 %right OP_POWER
 %right UMINUS
 %left OP_LPARENTHESES OP_RPARENTHESES
-%nonassoc OP_LT OP_GT OP_LE OP_GE OP_EQ OP_NE
+%nonassoc OP_LT OP_GT OP_LE OP_GE OP_EQ OP_NE KW_IN
 
 %type <node> program 
 %type <statements> statements
@@ -1092,6 +1092,16 @@ comparison_expression: additive_expression
 	| comparison_expression OP_NE additive_expression {
 		$$ = new BinaryExpression(
 			BinaryOp::NOT_EQUAL,
+			static_cast<Expression*>($1),
+			static_cast<Expression*>($3),
+			@$.first_line
+		);
+	}
+	// 成员测试：`value in container`（左=value、右=container）。
+	// 与其它比较同级、nonassoc（`a in b in c` 不合法，同现有比较链）。
+	| comparison_expression KW_IN additive_expression {
+		$$ = new BinaryExpression(
+			BinaryOp::IS_IN,
 			static_cast<Expression*>($1),
 			static_cast<Expression*>($3),
 			@$.first_line

@@ -67,6 +67,9 @@ enum class Op : uint8_t {
 
 	// ---- 比较（操作数: 子操作码 CompareOp）----
 	COMPARE_OP  = 0x20,  // a b -> Integer(0/1)
+	// 成员测试：value container -> Boolean(container.__contains__(value)，
+	// 无 __contains__ 时可迭代回退遍历，皆无抛 TypeError)。
+	CONTAINS_OP = 0x21,
 
 	// ---- 控制流 ----
 	JUMP          = 0x30, // 操作数: 相对偏移(有符号)

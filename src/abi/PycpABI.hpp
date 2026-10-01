@@ -116,6 +116,11 @@ PYCP_API Object* Pow(Object* lhs, Object* rhs);
 // 异类型时 EQ→0、NE→1、其余抛 TypeError（与 VM COMPARE_OP 语义一致）。
 PYCP_API Object* Compare(Object* lhs, Object* rhs, int op);
 
+// 成员测试（`in` 运算符）：转调 container->__contains__(value)，返回 Owned
+// Boolean。container 为右操作数、value 为左操作数；container 未实现
+// __contains__ 且不可迭代时抛 TypeError。
+PYCP_API Object* Contains(Object* container, Object* value);
+
 // 真值判定：nullptr / None / Integer 0 视为假，其余为真。
 PYCP_API bool IsFalse(Object* v);
 
@@ -286,6 +291,7 @@ PYCP_C_API void* PYCP_Pow(void* lhs, void* rhs);
 
 // 比较 / 真值
 PYCP_C_API void* PYCP_Compare(void* lhs, void* rhs, int op);
+PYCP_C_API void* PYCP_Contains(void* container, void* value);
 PYCP_C_API int PYCP_IsFalse(void* v);
 
 // 统一调用

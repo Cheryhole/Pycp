@@ -88,6 +88,7 @@ PYCP_MAGIC1(_magic_get_attribute,   "__get_attribute__",   self->__get_attribute
 PYCP_MAGIC1(_magic_delete_item,     "__delete_item__",     self->__delete_item__(v0))
 PYCP_MAGIC1(_magic_delete_attribute, "__delete_attribute__",
             (self->__delete_attribute__(AsString(v0)), None::instance))
+PYCP_MAGIC1(_magic_contains, "__contains__", self->__contains__(v0))
 
 // ---- 2 参（参数名 key / value）----
 PYCP_MAGIC2(_magic_set_item, "__set_item__", self->__set_item__(v0, v1))
@@ -129,6 +130,7 @@ const std::vector<MagicThunk>& magic_thunks() {
 		{"__not_equal__",        _magic_not_equal},
 		{"__greater_than__",     _magic_greater_than},
 		{"__greater_equal__",    _magic_greater_equal},
+		{"__contains__",         _magic_contains},
 		{"__get_item__",         _magic_get_item},
 		{"__get_attribute__",    _magic_get_attribute},
 		{"__delete_attribute__", _magic_delete_attribute},

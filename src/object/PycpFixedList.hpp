@@ -67,6 +67,8 @@ public:
 	// repr：与 __string__ 同形（"(a, b, c)"），故嵌套容器显示为自身形状。
 	Object* __raw_string__() override;
 	Object* __iterator__() override;
+	// 成员测试（`x in fixedlist`）：遍历元素以 == 语义判定。
+	Object* __contains__(Object* value) override;
 	Object* __addition__(Object* other) override;
 	Object* __hash__() override;
 	Object* __map__() override;
