@@ -31,11 +31,16 @@
 	`
 - [ ] 实现 `a of b` 的写法 （即 b.a）
 
-- [ ] 支持 `in` 运算符
+- [ ] 支持 `in` 运算符，例如 `a in b` 等。使用 `__contains__` 魔术方法实现（与 `for ... in ...` 区分）。
+- [ ] 支持 `not` 运算符，等于 `!`。
+- 支持 Type Hints
 
 ## Ideas
 
-- 
+- 支持更语义化的运算符表达，例如 `equals` `is greater than` `is not ...` 等
+- 支持网络库
+- 支持指定直接生成原生	C++，如 `Integer` -> `int64_t`， `func f(i, s) -> NoReturn` -> `void f(int64_t i, const std::string& s)`， `class obj{...}` -> `class obj{...};`
+- 对 `to` `by` `of` 关键字添加更多应用（更加语义化）
 
 ## Done
 

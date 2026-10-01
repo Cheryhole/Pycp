@@ -25,16 +25,6 @@ File* g_io_stdin = nullptr;
 File* g_io_stdout = nullptr;
 File* g_io_stderr = nullptr;
 
-// 参数拆箱辅助（业务侧自行判型：框架只校验个数与名字，不做类型检查）。
-std::string require_string(const char* fn, const char* param, Object* v) {
-	if (v == nullptr || !IsString(v)) {
-		throw TypeError(std::string(fn) + ": argument '" + param +
-		                "' expects a string, got '" +
-		                (v != nullptr ? v->type_name() : std::string("None")) + "'.");
-	}
-	return AsString(v);
-}
-
 // =============================================================
 // print(*args, sep=" ", end="\n", file=io.stdout, flush=False)
 // 对齐 Python 内建 print：
