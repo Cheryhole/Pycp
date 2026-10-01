@@ -85,7 +85,6 @@ set(BUILD_RUNTIME_STATIC ON CACHE BOOL "Build static PycpRuntime library")
 # （io/Pycp/classtools）需解析运行时 C++ 符号，而 Windows 不导出可执行文件
 # 符号，必须靠 PycpRuntime_shared.dll 导出。
 set(BUILD_RUNTIME_SHARED ON CACHE BOOL "Build shared PycpRuntime library")
-set(BUILD_PYTHON_BINDING OFF CACHE BOOL "" FORCE)
 # 运行时自测程序（pycp-selftest）：默认关闭。
 set(BUILD_TEST OFF CACHE BOOL "Build runtime self-test executable (pycp-selftest)")
 
