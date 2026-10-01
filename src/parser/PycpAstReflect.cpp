@@ -77,6 +77,7 @@ private:
 const char* UnaryOpName(UnaryOp op) {
 	switch (op) {
 		case UnaryOp::UMINUS: return "UMINUS";
+		case UnaryOp::NOT:    return "NOT";
 	}
 	return "UNKNOWN";
 }

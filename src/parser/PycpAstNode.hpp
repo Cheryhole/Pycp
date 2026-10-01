@@ -51,7 +51,8 @@ enum class NodeType : uint16_t {
 };
 
 enum class UnaryOp : uint16_t {
-	UMINUS = 0
+	UMINUS = 0,
+	NOT = 1   // 逻辑取反（not / !）
 };
 
 enum class BinaryOp : uint16_t {

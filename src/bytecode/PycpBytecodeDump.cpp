@@ -32,6 +32,7 @@ const char* op_name(Op op) {
 		case Op::BINARY_DIV:    return "BINARY_DIV";
 		case Op::BINARY_POW:    return "BINARY_POW";
 		case Op::UNARY_NEG:     return "UNARY_NEG";
+		case Op::UNARY_NOT:     return "UNARY_NOT";
 		case Op::COMPARE_OP:    return "COMPARE_OP";
 		case Op::CONTAINS_OP:   return "CONTAINS_OP";
 		case Op::JUMP:          return "JUMP";

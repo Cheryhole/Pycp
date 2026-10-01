@@ -190,12 +190,13 @@ static Pycp::Ast::FunctionExpression* make_func_expr(
 %token KW_FUNC KW_RETURN KW_IF KW_ELIF KW_ELSE KW_NONE KW_IMPORT KW_AS KW_CLASS KW_TRUE KW_FALSE
 %token KW_FROM KW_INHERITS KW_REPEAT KW_TO KW_BREAK KW_BY KW_DELETE
 %token KW_FOR KW_IN
+%token KW_NOT KW_OF
 %token OP_PLUS OP_MINUS OP_MULTIPLY OP_DIVIDE OP_POWER
 %token OP_LPARENTHESES OP_RPARENTHESES
 %token OP_LBRACKET OP_RBRACKET
 %token OP_LBRACE OP_RBRACE
 %token OP_EQUALS OP_COMMA OP_COLON
-%token OP_LT OP_GT OP_LE OP_GE OP_EQ OP_NE
+%token OP_LT OP_GT OP_LE OP_GE OP_EQ OP_NE OP_BANG
 %token OP_DOT OP_AT
 
 %left OP_PLUS OP_MINUS
@@ -247,11 +248,13 @@ static Pycp::Ast::FunctionExpression* make_func_expr(
 %type <node> for_statement
 
 %type <node> expression
+%type <node> not_expression
 %type <node> comparison_expression
 %type <node> additive_expression
 %type <node> multiplicative_expression
 %type <node> unary_expression
 %type <node> power_expression
+%type <node> of_expression
 %type <node> primary_expression
 
 %start program
@@ -1043,7 +1046,27 @@ assignment_statement: primary_expression OP_EQUALS expression {
 	}
 ;
 
-expression: comparison_expression
+expression: not_expression
+;
+
+// 逻辑取反：Python 风格优先级（低于比较表达式）。
+//   `not a == b` 解析为 `not (a == b)`；`not x in y` 解析为 `not (x in y)`。
+//   `!` 为 `not` 的完全别名（同优先级、同结果）；两者均可链式（`not not x` / `!!x`）。
+not_expression: comparison_expression
+	| KW_NOT not_expression {
+		$$ = new UnaryExpression(
+			UnaryOp::NOT,
+			static_cast<Expression*>($2),
+			@$.first_line
+		);
+	}
+	| OP_BANG not_expression {
+		$$ = new UnaryExpression(
+			UnaryOp::NOT,
+			static_cast<Expression*>($2),
+			@$.first_line
+		);
+	}
 ;
 
 // 比较表达式：用于条件判断。优先级低于算术运算，
@@ -1157,8 +1180,8 @@ unary_expression: power_expression
 			);
 		};
 
-power_expression: primary_expression
-		| primary_expression OP_POWER unary_expression {
+power_expression: of_expression
+		| of_expression OP_POWER unary_expression {
 			$$ = new BinaryExpression(
 				BinaryOp::POWER,
 				static_cast<Expression*>($1),
@@ -1166,6 +1189,19 @@ power_expression: primary_expression
 				@$.first_line
 			);
 		};
+
+// 反向成员访问：`a of b` 等价于 `b.a`（左操作数 a 必为裸标识符，作为属性名，
+// 不做变量求值）。右结合：`a of b of c` ≡ `a of (b of c)` ≡ `(c.b).a`。
+// 与 `.` 同优先级（最紧）——右操作数复用 primary_expression 的完整后缀链
+// （属性 / 调用 / 下标），故 `a of b.c`、`a of obj.method()`、`a of obj[0]` 均可用。
+of_expression: IDENTIFIER KW_OF of_expression {
+			$$ = new AttributeExpression(
+				static_cast<Expression*>($3),
+				$1,
+				@$.first_line
+			);
+		}
+		| primary_expression;
 
 primary_expression: LT_INTEGER {
 			$$ = new IntegerLiteral($1, @$.first_line);

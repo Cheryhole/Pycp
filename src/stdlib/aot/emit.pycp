@@ -120,6 +120,8 @@ func estimate_stack_depth(co) {
 			if (depth > 0) { depth = depth - 1 }
 		} elif (op == "UNARY_NEG") {
 			if (depth > 0) { depth = depth - 1 }
+		} elif (op == "UNARY_NOT") {
+			if (depth > 0) { depth = depth - 1 }
 		} elif (op == "POP_TOP") {
 			if (depth > 0) { depth = depth - 1 }
 		} elif (op == "RETURN") {
@@ -324,6 +326,11 @@ func emit_function(module, co, co_idx) {
 		} elif (op == "UNARY_NEG") {
 			out = out + "    { Pycp::Object* v = st.back(); st.pop_back();\n"
 			out = out + "      Pycp::Object* res = v->__negation__();\n"
+			out = out + "      Pycp::Decref(v);\n"
+			out = out + "      st.push_back(res); }\n"
+		} elif (op == "UNARY_NOT") {
+			out = out + "    { Pycp::Object* v = st.back(); st.pop_back();\n"
+			out = out + "      Pycp::Object* res = Pycp::Not(v);\n"
 			out = out + "      Pycp::Decref(v);\n"
 			out = out + "      st.push_back(res); }\n"
 		} elif (op == "COMPARE_OP") {

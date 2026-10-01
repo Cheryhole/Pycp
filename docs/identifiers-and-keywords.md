@@ -13,12 +13,12 @@ _func = func() {}
 
 ## Keywords (reserved words)
 
-The following 20 tokens are reserved and cannot be used as identifiers:
+The following 22 tokens are reserved and cannot be used as identifiers:
 
 ```
 func  return  if  elif  else  None  True  False
 import  from  as  class  inherits  repeat  to  break
-delete  by  for  in
+delete  by  for  in  not  of
 ```
 
 ## Not keywords (common pitfalls)
@@ -33,8 +33,9 @@ delete  by  for  in
   functions (`pycp.private` / `pycp.public` / `pycp.readonly`, also exported by
   `classtools`). Written as `@private` etc. they apply a binding-level visibility
   marker — see [decorators.md](decorators.md).
-- **`and` / `or` / `not`** are not language keywords. `not` exists only inside
-  preprocessor `#if` conditions.
+- **`and` / `or`** are not language keywords (and `&&` / `||` are not operators
+  either). Note: `not` **is** a keyword in the main language; inside preprocessor
+  `#if` conditions `not` is recognized separately by the preprocessor.
 
 ## Quirks
 

@@ -332,6 +332,13 @@ Object* Contains(Object* container, Object* value){
 	return container->__contains__(value);
 }
 
+Object* Not(Object* value){
+	if (value == nullptr)
+		throw TypeError("Cannot negate null object.");
+	// 真值经 IsFalse（统一调 __boolean__，None/0/空为假）→ 取反为 Boolean。
+	return IsFalse(value) ? Boolean::True() : Boolean::False();
+}
+
 bool IsFalse(Object* v){
 	if (v == nullptr) return true;
 	if (v->is_type("None")) return true;
@@ -717,6 +724,9 @@ PYCP_C_API void* PYCP_Compare(void* lhs, void* rhs, int op){
 }
 PYCP_C_API void* PYCP_Contains(void* container, void* value){
 	return static_cast<void*>(Pycp::Contains(static_cast<Pycp::Object*>(container), static_cast<Pycp::Object*>(value)));
+}
+PYCP_C_API void* PYCP_Not(void* value){
+	return static_cast<void*>(Pycp::Not(static_cast<Pycp::Object*>(value)));
 }
 PYCP_C_API int PYCP_IsFalse(void* v){
 	return Pycp::IsFalse(static_cast<Pycp::Object*>(v)) ? 1 : 0;

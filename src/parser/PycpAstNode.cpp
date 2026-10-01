@@ -8,6 +8,7 @@ namespace Pycp::Ast {
 static std::string unary_op_to_string(UnaryOp op) {
 	switch (op) {
 		case UnaryOp::UMINUS: return "UMINUS";
+		case UnaryOp::NOT:    return "NOT";
 		default: return "UNKNOWN";
 	}
 }

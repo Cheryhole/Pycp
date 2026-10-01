@@ -121,6 +121,10 @@ PYCP_API Object* Compare(Object* lhs, Object* rhs, int op);
 // __contains__ 且不可迭代时抛 TypeError。
 PYCP_API Object* Contains(Object* container, Object* value);
 
+// 逻辑取反（`not` / `!`）：按 value 的真值（IsFalse，统一经 __boolean__）
+// 返回 Owned Boolean —— value 为假返回 True，否则返回 False。
+PYCP_API Object* Not(Object* value);
+
 // 真值判定：nullptr / None / Integer 0 视为假，其余为真。
 PYCP_API bool IsFalse(Object* v);
 
@@ -292,6 +296,7 @@ PYCP_C_API void* PYCP_Pow(void* lhs, void* rhs);
 // 比较 / 真值
 PYCP_C_API void* PYCP_Compare(void* lhs, void* rhs, int op);
 PYCP_C_API void* PYCP_Contains(void* container, void* value);
+PYCP_C_API void* PYCP_Not(void* value);
 PYCP_C_API int PYCP_IsFalse(void* v);
 
 // 统一调用

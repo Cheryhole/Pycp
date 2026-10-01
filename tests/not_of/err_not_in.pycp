@@ -1,0 +1,4 @@
+// `a not in b` 未实现（不生成 not in）→ 语法错误
+import io
+
+io.print(1 not in [1, 2])

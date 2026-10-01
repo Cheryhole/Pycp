@@ -673,6 +673,14 @@ Object* VM::execute(CodeObject* co,
 				push(res); Decref(res);
 				break;
 			}
+			case Op::UNARY_NOT: {
+				// not / !：弹值，按真值取反为 Boolean。
+				Object* v = pop();
+				Object* res = Not(v);
+				Decref(v);
+				push(res); Decref(res);
+				break;
+			}
 
 			// ---- 比较 ----
 			case Op::COMPARE_OP: {

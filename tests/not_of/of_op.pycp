@@ -1,0 +1,38 @@
+// `of` 反向成员访问正向用例
+// 覆盖：`a of b` ≡ `b.a`、右结合 `a of b of c` ≡ `(c.b).a`、
+//       右侧后缀链（下标 / 调用）、与 not 组合。
+import io
+
+class Inner {
+	func __initialize__(self) {
+		self.val = 7
+	}
+}
+
+class Outer {
+	func __initialize__(self) {
+		self.inner = Inner()
+		self.child = [Inner(), Inner()]
+	}
+	func getVal(self) {
+		return 99
+	}
+}
+
+o = Outer()
+
+// a of b ≡ b.a
+io.print("of_attr", val of o.inner)
+io.print("of_eq_dot", (val of o.inner) == o.inner.val)
+
+// 右结合：a of b of c ≡ a of (b of c) ≡ (c.b).a
+io.print("of_chain", val of inner of o)
+
+// 右侧后缀链：下标 / 调用
+io.print("of_index", val of o.child[0])
+io.print("of_call", (getVal of o)())
+
+// 与 not 组合：not 低于比较 → not ((val of o.inner) == 8) → True
+io.print("not_of", not val of o.inner == 8)
+
+io.print("OF PASS")

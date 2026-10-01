@@ -64,6 +64,7 @@ enum class Op : uint8_t {
 	BINARY_DIV  = 0x13,
 	BINARY_POW  = 0x14,  // a b -> c = Pow(a,b)（乘方 **）
 	UNARY_NEG   = 0x15,  // a -> -a
+	UNARY_NOT   = 0x16,  // a -> Boolean(!IsFalse(a))（逻辑取反 not / !）
 
 	// ---- 比较（操作数: 子操作码 CompareOp）----
 	COMPARE_OP  = 0x20,  // a b -> Integer(0/1)

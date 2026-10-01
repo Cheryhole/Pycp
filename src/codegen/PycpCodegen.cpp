@@ -401,6 +401,7 @@ static void compile_expr(Emitter& em, Expression* e, Scope& scope) {
 			UnaryExpression* ue = static_cast<UnaryExpression*>(e);
 			compile_expr(em, ue->operand, scope);
 			if (ue->op == UnaryOp::UMINUS) em.emit(Op::UNARY_NEG);
+			else if (ue->op == UnaryOp::NOT) em.emit(Op::UNARY_NOT);
 			break;
 		}
 		case NodeType::BINARY_EXPRESSION: {

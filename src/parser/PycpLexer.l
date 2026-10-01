@@ -96,6 +96,8 @@ delete   { return KW_DELETE; }
 by       { return KW_BY; }
 for      { return KW_FOR; }
 in       { brk_expr_ctx = 1; return KW_IN; }
+not      { brk_expr_ctx = 1; return KW_NOT; }
+of       { brk_expr_ctx = 1; return KW_OF; }
 
 [a-zA-Z_][a-zA-Z0-9_]* { // identifier
 	Pycplval.text = new std::string(Pycptext);
@@ -214,6 +216,7 @@ in       { brk_expr_ctx = 1; return KW_IN; }
 "<="   { brk_expr_ctx = 1; return OP_LE; }
 ">="   { brk_expr_ctx = 1; return OP_GE; }
 ","    { brk_expr_ctx = 1; return OP_COMMA; }
+"!"    { brk_expr_ctx = 1; return OP_BANG; }
 ":"    { return OP_COLON; }
 "."    { BEGIN(MEMBER_ACCESS); return OP_DOT; }
 "@"    { return OP_AT; }

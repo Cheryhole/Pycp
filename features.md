@@ -29,9 +29,6 @@
 		l.append(i)
 	}
 	`
-- [ ] 实现 `a of b` 的写法 （即 b.a）
-
-- [ ] 支持 `not` 运算符，等于 `!`。
 - 支持 Type Hints
 
 ## Ideas
@@ -45,6 +42,8 @@
 
 - [x] json 模块：`json.load(s)` / `json.dump(obj, indent, sort_keys, separators)`，位于 `src/stdlib/json/`（2026-10-01）
 - [x] `in` 运算符与 `__contains__` 魔术方法：List/FixedList 遍历元素、String 子串、`map.keys()`/`map.values()`；自定义 class 通用分派 + 迭代回退；未实现且不可迭代抛 TypeError；VM 与 AOT 双路径（2026-10-01）
+- [x] `not` / `!` 一元逻辑取反运算符（Python 风格优先级，低于比较；`!` 为 `not` 别名；可链式），VM 与 AOT 双路径（2026-10-01）
+- [x] `of` 反向成员访问关键字：`a of b` ≡ `b.a`，左操作数仅裸标识符、右结合（`a of b of c` ≡ `(c.b).a`），VM 与 AOT 双路径（2026-10-01）
 
 关键字预算:新增可能的关键字有 of(第5)、not(第7),Ideas 还可能加 is/greater/than/equals。每加一个都压缩标识符空间,且要同步改语法的非终结符。建议严格限量,优先符号形式(!)而非新词。
 魔术方法表:__contains__ 是唯一需要动 src/object/PycpMagic.cpp(magic_thunks,29→30)的条目,还要更新 __inspect__ 与文档。

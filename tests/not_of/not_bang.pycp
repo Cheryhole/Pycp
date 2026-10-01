@@ -1,0 +1,27 @@
+// `not` / `!` 一元逻辑取反正向用例
+// 覆盖：真值（True/False/0/1/None/空串/非空串/空列表/0.0）、`!` 别名、
+//       链式（!!x / not not x）、Python 风格优先级（not 低于比较）。
+import io
+
+io.print("not_true", not True)
+io.print("not_false", not False)
+io.print("not_zero", not 0)
+io.print("not_one", not 1)
+io.print("not_none", not None)
+io.print("not_emptystr", not "")
+io.print("not_str", not "x")
+io.print("not_emptylist", not [])
+io.print("not_float0", not 0.0)
+
+io.print("bang_true", !True)
+io.print("bang_zero", !0)
+io.print("double_bang", !!True)
+io.print("not_not", not not True)
+
+// Python 风格优先级：`not` 低于比较 → `not 2 == 1` 即 `not (2 == 1)` = True
+// （若为 C 风格 `(!2) == 1` 会得 False，据此锁定语义）
+io.print("prec_python", not 2 == 1)
+io.print("prec_bang", !2 == 1)
+io.print("prec_eq", not 1 == 1)
+
+io.print("NOT BANG PASS")
